@@ -1,109 +1,118 @@
 # Pocket Fertilizer
 
-A single-file, offline-first gardening app. Open `index.html` in a browser — no install, no build step, no account.
+A gardener's pocket assistant: plan beds on a grid, track a seed bank, get a calendar built from your own frost dates, diagnose sick plants from a photo, read the weather for what it means to your plants, and ask for any of it by voice.
+
+**Live app → [bzeitel25.github.io/pocket-fertilizer](https://bzeitel25.github.io/pocket-fertilizer/)**
+
+Offline-first, no account, no server. Everything stays encrypted on the device.
 
 ---
 
-## Running it
+## Getting started
 
-**On a laptop:** double-click `index.html`. Everything works except the live camera feed.
+Open the link, enter a ZIP code, and everything else unlocks from there.
 
-**On a phone (recommended):** the app needs a *secure context* for the in-app camera and for IndexedDB storage. Two easy options:
-
-```bash
-# 1. Serve it from your computer, open the URL on your phone (same wifi)
-cd "Pocket Fertilizer"
-python3 -m http.server 8000
-# then visit http://<your-computer-ip>:8000 on the phone
-```
-
-Or drop `index.html` into a free static host (GitHub Pages, Netlify, Cloudflare Pages). You get HTTPS, the camera works, and "Add to Home Screen" makes it behave like a native app — full screen, own icon, offline.
-
-On first launch it asks for a ZIP code. Everything else unlocks from there.
+On a phone, use **Add to Home Screen**. It installs like a native app — own icon, full screen, no browser chrome — and the whole app shell is cached, so it works with no signal at the far end of the garden. Weather and web search need a connection; nothing else does.
 
 ---
 
-## What's in it
+## Features
 
-**Garden planner** — Plots contain beds; beds are adjustable grids (1–24 columns/rows, any square size, default 12″ square-foot method). Tap a square to plant it, or pick a crop and paint multiple squares. Live companion-conflict warnings flag antagonistic neighbours on the grid itself. Per-square plant counts come from real spacing data. Rotation history tracks which plant family occupied each bed and warns on repeats.
+### Garden planner
+Plots contain beds; beds are adjustable grids from 1×1 to 24×24, with any square size (12″ by default, the classic square-foot method). Tap a square to plant it, or arm a crop and paint across several. Per-square plant counts come from real spacing data — 1 tomato, 4 lettuce, 9 beets, 16 carrots. Companion conflicts are flagged on the grid itself as you plant, and rotation history tracks which plant family last occupied each bed so you get a warning when one comes back too soon.
 
-**Crop knowledge base** — 58 crops with sun hours, weekly water, spacing, sow depth, germination days and soil temps, days to maturity, pH range, feeder class, seed viability, succession interval, typical yield, plus companions, antagonists and written guidance on growing, feeding and harvesting.
+### Crop database
+58 crops with sun hours, weekly water, spacing, sow depth, germination days and soil temperatures, days to maturity, pH range, feeder class, seed viability, succession interval and typical yield — plus companions, antagonists, and written guidance on growing, feeding and harvesting each one.
 
-**Seed bank** — Photograph packets or type them in. Tracks quantity, brand, lot, packed year, printed expiry, germination rate and cost. Computes a viability level and expected germination percentage from crop-specific seed life, flags fading and expired packets, and includes the 10-seed paper-towel test calculator.
+### Seed bank
+Photograph packets or type them in. Tracks quantity, brand, lot, packed year, printed expiry, germination rate and cost. Each packet gets a viability level and an expected germination percentage derived from that crop's seed life, so fading and expired packets surface before they waste bed space. Includes the 10-seed paper-towel test calculator.
 
-**Grow calendar** — Builds itself. Every packet in the bank generates sow/transplant dates anchored to *your* frost dates, plus projected first-harvest dates for anything planted and seed-expiry warnings. Month grid, colour-coded timeline, plus your own tasks.
+### Grow calendar
+Builds itself. Every packet in the bank generates sow, transplant and fall-sowing dates anchored to your frost dates, plus projected first-harvest dates for anything planted and warnings as seed reaches its viability limit. Month grid, colour-coded timeline, and your own tasks alongside.
 
-**Plant doctor** — In-app camera capture (or upload). Analyses the image on-device for green/yellow/brown ratios and whether damage concentrates at the leaf margins, pre-ticks the matching symptoms, then runs 84 observations against 34 conditions — nutrient deficiencies, watering and light problems, fungal and bacterial disease, 14 pests, and cultural issues like herbicide drift and pH lockout. Returns ranked diagnoses with confidence, a 48-hour action plan and prevention, and tells you when the top two are too close to call. Saves to plant history.
+### Plant doctor
+Capture from the in-app camera or upload a photo. The image is analysed on-device for green/yellow/brown ratios and whether damage concentrates at the leaf margins, which pre-selects the matching symptoms. 84 observations then run against 34 conditions — nutrient deficiencies, watering and light problems, fungal and bacterial disease, 14 pests, and cultural issues like herbicide drift and pH lockout. You get ranked diagnoses with confidence, a 48-hour action plan, prevention, and a note when the top two are too close to call. Everything saves to plant history.
 
-**Weather** — Current conditions, the week ahead and the week just gone, sunrise/sunset and UV, plus a per-bed watering call that subtracts real rainfall from what each bed needs. Every forecast is read for what it means to plants: frost nights, heat above the 90°F threshold where tomato and pepper pollen goes sterile, wet spells that spread blight, dry weeks that need deep watering. **Snapshot** buttons render the day or the week as a shareable image — it opens the phone's share sheet, or downloads a PNG on a laptop.
+### Weather
+Current conditions, the week ahead and the week just gone, sunrise/sunset and UV, plus a per-bed watering call that subtracts actual rainfall from what each bed needs. Forecasts are read for what they mean to plants: frost nights, heat above the 90°F threshold where tomato and pepper pollen goes sterile, wet spells that spread blight, dry weeks that need deep watering. Snapshot buttons render the day or the week as a shareable image.
 
-**Ask (the assistant)** — A ✨ tab in the bottom bar. Type or hold the mic and talk. It runs on Google Gemini and is wired to the app's real functions, so it acts rather than just advises: "add tomatoes to plot A" opens Plot A with tomatoes armed and ready to place, and warns you if the bed is short on sun or already holds a bad neighbour. It can create beds, add seed packets, log harvests and watering, read the weather, pull any crop's full guide, run read-only SQL against your own database to answer things like "how much did I pick in July", and fall back to Google Search for anything the built-in data can't cover. Answers can be read aloud.
+### Ask — the assistant
+A tab in the bottom bar. Type, or hold the mic and talk. It's wired to the app's real functions, so it acts rather than just advises: *"add tomatoes to plot A"* opens Plot A with tomatoes ready to place, and warns you if the bed is short on sun or already holds a bad neighbour. It also creates beds, adds seed packets, logs harvests and watering, reads the weather, pulls any crop's full guide, answers questions about your own records, and searches the web when the built-in data falls short. Answers can be read aloud.
 
-**Journal & recap** — Log watering, feeding, amendments, treatments, weeding, soil tests, purchases and harvests with weight, count, value, cost and time. The season recap computes yield by crop, pounds per square foot by bed, cost per pound, spend breakdown, recurring problems, and written takeaways for next year. Exports CSV.
-
-**Live data, no API keys** — USDA hardiness zone by ZIP (phzmapi), place lookup and 7-day weather with frost alerts and rain-aware watering advice (Open-Meteo), and frost dates computed from **ten years of actual daily lows at your coordinates** rather than a zone average. Wikipedia lookups in the plant library. All of it degrades gracefully to bundled offline defaults.
-
----
-
-## On your question: SQL and security
-
-**The database is SQLite.** The app ships a full SQLite engine (sql.js — SQLite compiled to WebAssembly, public domain, the same library everything from Datasette to Observable uses). Your seeds, beds, plantings, harvests, journal and diagnoses live in eleven real tables. There's a **SQL console** in the menu where you can run arbitrary queries against your own garden, and Settings → Database exports a genuine `.sqlite` file that opens in DB Browser, Python, R, or Excel.
-
-**Everything is encrypted at rest.** Before anything touches disk it's sealed with **AES-256-GCM** via the browser's native WebCrypto — authenticated encryption, so tampering is detected, not just hidden. Set a passphrase in Settings and the data key is wrapped with **PBKDF2-SHA256 at 310,000 iterations** (OWASP's current recommendation); the passphrase itself is never stored or transmitted. The app auto-locks after 10 minutes in the background. The smoke test verifies the stored blob is genuinely unreadable ciphertext.
-
-**There's no server, which is the strongest security property here.** No account, no cloud, no telemetry, no third party holding your data. The only network calls are the weather/zone/Wikipedia lookups — read-only, no personal data attached, and the app works fully without them.
-
-**If you later want multi-device sync**, these are the open-source options I'd actually recommend:
-
-| Tool | License | Why |
-|---|---|---|
-| **PocketBase** | MIT | Single Go binary, SQLite inside, auth + REST + realtime + file storage built in. Deploy in minutes on a $5 VPS. The natural next step for this app. |
-| **Supabase** | Apache 2.0 | Postgres with row-level security, auth, storage, auto-generated REST/GraphQL. Self-host or use their cloud. Heavier, but scales. |
-| **SQLCipher** | BSD | If you go native (iOS/Android), this is the standard for transparently encrypted SQLite. |
-
-Either way the pattern stays the same: keep encryption client-side, so the server stores ciphertext it can't read. Migrating is straightforward — the schema is already relational and the export is already `.sqlite`.
+### Journal and season recap
+Log watering, feeding, amendments, treatments, weeding, soil tests, purchases and harvests with weight, count, value, cost and time. The recap computes yield by crop, pounds per square foot by bed, cost per pound, spend breakdown, recurring problems, and written takeaways for next season. Exports to CSV.
 
 ---
 
-## Connecting Gemini — what's actually needed
+## Live data
 
-Worth being precise, because Google uses the "Gemini" name for several different things:
+No API keys, no signup — all of it degrades gracefully to bundled offline defaults.
 
-- **Google Assistant is not involved.** It can't be linked into a web app, and it isn't needed. The voice input here uses the browser's own speech recognition — free, no account, works out of the box.
-- **A Gemini app subscription (Google One AI / AI Pro, including a family plan) does not cover API access.** Those plans cover the Gemini app and Workspace features. The API is a separate product with its own quota, so a family plan can't be pointed at this app. There's no way around that — it's how Google has drawn the line.
-- **What it does need is a Gemini API key**, free from [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Sign in with any Google account, click Create API key, paste it into the app. The free tier on `gemini-2.5-flash` is generous — normal garden use won't approach the limit, and no card is required.
-
-**Whose account?** Either works, and it's just a string in a settings field. Two reasonable setups:
-
-- **Her own key** on her own Google account — usage, quota and history stay hers. Cleanest if she's comfortable doing the two-minute AI Studio step.
-- **Your key**, pasted into her app — one setup, you own the billing. Fine for a family device; the tradeoff is that her queries run against your quota and appear in your project's usage.
-
-The key lives inside the encrypted vault on the device. It's still a browser-held key, so give it a spend cap in Google Cloud and delete it from Settings if it stops being used. Behind a real backend proxy you'd never expose it at all — that's the upgrade if this ever goes past family use.
-
-**Guardrails on the assistant.** It has no delete or wipe tools. Its database access is restricted to a single read-only `SELECT` — `DELETE`, `UPDATE`, `DROP` and piggybacked statements are rejected before they reach SQLite. Web search results are handed to it as reference material and explicitly flagged as something it must not take instructions from.
-
-## Optional: Claude for plant diagnosis
-
-Separate and optional. A Claude API key in Settings turns on reading seed packets from a photo and a second opinion on plant diagnosis from vision. Everything in the Plant Doctor works without it.
+| Source | Used for |
+|---|---|
+| [phzmapi.org](https://phzmapi.org) | USDA hardiness zone from a US ZIP |
+| [Open-Meteo Geocoding](https://open-meteo.com) | Place lookup worldwide |
+| [Open-Meteo Archive](https://open-meteo.com) | Frost dates from ten years of actual daily lows at your coordinates — not a zone average |
+| [Open-Meteo Forecast](https://open-meteo.com) | 7-day weather, frost alerts, rainfall for watering maths |
+| [Wikipedia REST](https://en.wikipedia.org/api/rest_v1/) | Plant reference in the library |
 
 ---
 
-## Honest limits
+## Data and security
 
-- Frost dates are ten-year medians. Your specific microclimate — a south wall, a frost pocket, a hilltop — can shift them a week or more in either direction. Override them in Settings.
-- Image analysis measures colour and pattern. It cannot identify a species or a pathogen; the symptom answers do the real diagnostic work. For anything that spreads — late blight, bacterial wilt, a virus — your county extension office will confirm it free or nearly free.
+**Storage is a real SQLite database.** The app ships [sql.js](https://sql.js.org) — SQLite compiled to WebAssembly — with eleven tables covering plots, beds, plantings, seeds, events, journal, harvests, diagnoses, observations and photos. A SQL console in the menu runs queries against your own garden, and Settings exports a genuine `.sqlite` file that opens in DB Browser, Python, R or Excel. A plain-JSON backup export is also available.
+
+**Everything is encrypted at rest.** Data is sealed with AES-256-GCM through the browser's native WebCrypto before it is written to storage. Setting a passphrase in Settings wraps the data key with PBKDF2-SHA256 at 310,000 iterations; the passphrase is never stored or transmitted, and the app auto-locks after ten minutes in the background.
+
+**Nothing is uploaded.** No account, no cloud, no telemetry. The only outbound calls are the read-only lookups in the table above, which carry no personal data.
+
+**Assistant guardrails.** No delete or wipe functions are exposed to it. Database access is restricted to a single read-only `SELECT` — `DELETE`, `UPDATE`, `DROP` and piggybacked statements are rejected before they reach SQLite. Web search results are passed to it as reference material and explicitly marked as something it must not take instructions from.
+
+---
+
+## Connecting the assistant
+
+The assistant runs on Google Gemini and needs an API key, which is free:
+
+1. Open [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and sign in with a Google account.
+2. Click **Create API key**.
+3. Paste it into the app under Settings → Gardening assistant.
+
+Note that a Gemini app subscription (Google One AI / AI Pro) does not include API access — the API is a separate product with its own free tier. `gemini-2.5-flash` is the default and normal garden use stays well within the free limit; no card is required.
+
+The key is stored inside the encrypted vault on the device. It is still a browser-held key, so it's worth setting a spend cap in Google Cloud and removing it from Settings when no longer needed.
+
+Voice input uses the browser's built-in speech recognition and needs no key or account.
+
+Optionally, a Claude API key can also be added to enable reading seed packets from a photo and a second opinion on plant diagnosis. Every part of the Plant Doctor works without it.
+
+---
+
+## Limits worth knowing
+
+- Frost dates are ten-year medians. A south wall, a frost pocket or a hilltop can shift them by a week or more — override them in Settings.
+- Image analysis measures colour and pattern. It cannot identify a species or a pathogen; the symptom answers do the diagnostic work. For anything that spreads — late blight, bacterial wilt, a virus — a county extension office will confirm it free or nearly free.
 - Companion planting evidence ranges from well-documented (marigolds and root-knot nematodes, trap crops, the Three Sisters) to traditional. Conflicts flagged here lean on the well-supported cases: shared pests, shared disease, allelopathy and competition.
 - Storage is per-browser. Export a backup before clearing site data or switching devices.
-- Photos are downscaled to 900px to keep the vault small. On browsers without IndexedDB it falls back to localStorage, which caps out around 5MB — the app warns you.
+- Photos are downscaled to 900px to keep the vault small. Where IndexedDB is unavailable the app falls back to localStorage, which caps out around 5MB and will warn you.
 
 ---
 
-## Installing on her phone
+## Technical notes
 
-Open the site, then **Add to Home Screen**. It installs like a native app — own icon, full screen, no browser chrome — and the service worker caches the whole app shell, so it works with no signal at the far end of the garden. Weather and search need a connection; everything else doesn't.
+Single self-contained `index.html` — no build step, no dependencies to install. Only sql.js is loaded from a CDN, and it's cached by the service worker after first run.
 
-## Verified
+```
+index.html              the entire app
+sw.js                   service worker, offline app shell
+manifest.webmanifest    PWA install metadata
+icon-*.png              app icons
+```
 
-86 automated checks pass against a headless DOM: boot and decryption round-trip, season maths, companion logic in both directions, grid placement and resize pruning, seed viability, calendar generation and idempotent rebuild, four diagnostic scenarios ranking correctly, unit conversion, every screen and every modal rendering, demo data, CSV and JSON export, confirmation that the persisted vault is unreadable ciphertext, every assistant tool executing against real data, the SQL guard rejecting DELETE/UPDATE/DROP and piggybacked statements, and the weather snapshot renderer actually drawing and emitting a PNG.
+For local development, serve rather than opening the file directly — the camera and IndexedDB both need a secure context:
 
-`_build/` holds the source parts the single file is assembled from, plus the test.
+```bash
+python3 -m http.server 8000
+```
+
+89 automated checks run against a headless DOM covering boot and decryption round-trip, season maths, companion logic, grid placement and resize pruning, seed viability, calendar generation, diagnostic ranking, every screen and modal, assistant tool execution, the SQL guard, snapshot rendering, and confirmation that the persisted vault is unreadable ciphertext.
