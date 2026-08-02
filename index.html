@@ -217,7 +217,7 @@ textarea{min-height:80px;resize:vertical}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 
 .bedwrap{overflow:auto;padding:6px;background:var(--surface-2);border-radius:var(--radius);border:1px solid var(--line)}
-.bed{display:grid;gap:3px;margin:0 auto;width:max-content;
+.bed{display:grid;gap:3px;margin:0 auto;width:max-content;position:relative;
   background:linear-gradient(135deg,#6b4f38,#8a6a4f);padding:6px;border-radius:10px;
   box-shadow:inset 0 0 0 3px rgba(0,0,0,.12);
 }
@@ -234,13 +234,13 @@ textarea{min-height:80px;resize:vertical}
 .cell .qty{position:absolute;bottom:1px;right:2px;font-size:9px;background:rgba(0,0,0,.55);color:#fff;border-radius:4px;padding:0 3px;font-weight:700}
 .cell .warnflag{position:absolute;top:0;left:2px;font-size:10px}
 .cell .loveflag{position:absolute;top:0;left:2px;font-size:10px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.4))}
-.cell{touch-action:manipulation;-webkit-user-select:none;user-select:none}
-.bed.dragging-bed{touch-action:none}
-.bed.dragging-bed .cell{touch-action:none}
-.cell.lifted{opacity:.9;z-index:20;transform-origin:center;transition:none;
-  box-shadow:0 10px 26px rgba(0,0,0,.45);outline:3px solid var(--sun);outline-offset:-2px;pointer-events:none}
+.cell{-webkit-user-select:none;user-select:none}
+.cell.filled{touch-action:pan-y}
+.cell.lifted{z-index:30;transition:none;opacity:.92;
+  box-shadow:0 12px 28px rgba(0,0,0,.5);outline:3px solid var(--sun);outline-offset:-2px}
+.cell.lifted:active{transform:none}
 .cell.dragging{opacity:.55;z-index:9;box-shadow:0 8px 20px rgba(0,0,0,.4);transition:none}
-.dropghost{position:absolute;border-radius:7px;pointer-events:none;z-index:8;transition:left .05s,top .05s}
+.dropghost{position:absolute;border-radius:7px;pointer-events:none;z-index:8;transition:left .06s ease,top .06s ease}
 .dropghost.ok{border:2.5px dashed var(--green-500);background:rgba(55,168,112,.18)}
 .dropghost.swap{border:2.5px dashed var(--sun);background:rgba(240,165,0,.20)}
 .dropghost.bad{border:2.5px dashed var(--danger);background:rgba(201,69,60,.16)}
@@ -3831,104 +3831,129 @@ Object.assign(Garden, {
     return true;
   },
 
-  /* ---------- press, hold, drag ---------- */
+  /* ---------- press, hold, drag ----------
+     Three things had to be right for this to work on a phone:
+     · the lifted tile must NOT be pointer-events:none — that releases
+       the pointer capture and the browser fires pointercancel, which
+       read as "snap back the instant you move";
+     · scrolling has to be stopped with preventDefault on touchmove.
+       Changing touch-action mid-gesture is ignored; the browser has
+       already decided. touch-action:pan-y up front lets a scroll
+       start normally, and the movement that implies cancels the lift;
+     · the drop ghost is absolutely positioned, so its container needs
+       position:relative or it lands somewhere else entirely.
+  */
   liftStart(ev, id){
     if(Garden.paint || Garden.erase || Garden.clip) return;
+    if(ev.button !== undefined && ev.button > 0) return;
     if(ev.target && ev.target.classList && ev.target.classList.contains("grip")) return;
     const p = DB.find("plantings", id); if(!p) return;
     const bed = DB.find("beds", p.bed_id); if(!bed) return;
 
     const el = ev.currentTarget;
-    const plot = el.parentNode;
+    const plot = (el.closest && el.closest(".bed")) || el.parentNode;
     const cs = Garden._cs, gap = 3, step = cs + gap;
+    const W = Garden.W(p), H = Garden.H(p);
     const sx = ev.clientX, sy = ev.clientY;
     const ox = num(p.x), oy = num(p.y);
-    let lifted = false, cancelled = false, plan = null, cell = null;
+    const maxX = Math.max(0, num(bed.cols) - W), maxY = Math.max(0, num(bed.rows) - H);
+
+    let lifted = false, dead = false, cell = null, plan = null, rect = null;
+
+    /* only blocks the page once the tile is actually in hand */
+    const blockScroll = e => { if(lifted) e.preventDefault(); };
+    document.addEventListener("touchmove", blockScroll, { passive:false });
 
     const ghost = () => {
-      let g = $("#dropghost");
-      if(!g){ g = document.createElement("div"); g.id = "dropghost"; plot.appendChild(g); }
+      let g = plot.querySelector(".dropghost");
+      if(!g){ g = document.createElement("div"); g.className = "dropghost"; plot.appendChild(g); }
       if(!cell){ g.style.display = "none"; return; }
-      const w = Garden.W(p), hh = Garden.H(p);
       g.style.display = "block";
       g.style.left = (cell.x * step) + "px";
       g.style.top = (cell.y * step) + "px";
-      g.style.width = (w * cs + (w - 1) * gap) + "px";
-      g.style.height = (hh * cs + (hh - 1) * gap) + "px";
+      g.style.width = (W * cs + (W - 1) * gap) + "px";
+      g.style.height = (H * cs + (H - 1) * gap) + "px";
       g.className = "dropghost " + (plan && plan.ok ? (plan.swap ? "swap" : "ok") : "bad");
     };
 
+    const track = (cx, cy) => {
+      const dx = cx - sx, dy = cy - sy;
+      el.style.transform = "translate(" + dx + "px," + dy + "px)";
+      /* far outside the bed means "put it back", which is what she asked for */
+      const outside = rect && (cx < rect.left - 70 || cx > rect.right + 70 ||
+                               cy < rect.top - 70 || cy > rect.bottom + 70);
+      if(outside){ cell = null; plan = null; ghost(); return; }
+      const nx = clamp(ox + Math.round(dx / step), 0, maxX);
+      const ny = clamp(oy + Math.round(dy / step), 0, maxY);
+      if(!cell || cell.x !== nx || cell.y !== ny){
+        cell = { x: nx, y: ny };
+        plan = Garden.planMove(id, nx, ny);
+      }
+      ghost();
+    };
+
     const lift = () => {
-      if(cancelled) return;
+      if(dead) return;
       lifted = true;
       Garden.lifted = id;
+      rect = plot.getBoundingClientRect();
       el.classList.add("lifted");
-      if(plot) plot.classList.add("dragging-bed");
-      try{ el.setPointerCapture(ev.pointerId); }catch(e){}
       haptic();
       cell = { x: ox, y: oy };
       plan = { ok:true, noop:true };
       ghost();
     };
-    const timer = setTimeout(lift, 220);
+    const timer = setTimeout(lift, 200);
 
     const move = e => {
-      const dx = e.clientX - sx, dy = e.clientY - sy;
       if(!lifted){
-        /* still deciding: a real drag before the hold completes is a scroll */
-        if(Math.abs(dx) > 10 || Math.abs(dy) > 10){ cancelled = true; clearTimeout(timer); cleanup(); }
+        /* movement before the hold completes is a scroll, not a drag */
+        if(Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10){
+          dead = true; clearTimeout(timer); finish(false);
+        }
         return;
       }
-      e.preventDefault();
-      el.style.transform = "translate(" + dx + "px," + dy + "px)";
-      const nx = clamp(ox + Math.round(dx / step), -2, num(bed.cols) + 1);
-      const ny = clamp(oy + Math.round(dy / step), -2, num(bed.rows) + 1);
-      if(!cell || cell.x !== nx || cell.y !== ny){
-        cell = { x: nx, y: ny };
-        plan = Garden.planMove(id, nx, ny);
-        ghost();
-      }
+      if(e.cancelable) e.preventDefault();
+      track(e.clientX, e.clientY);
     };
 
-    const cleanup = () => {
+    const finish = (drop) => {
       clearTimeout(timer);
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", up);
-      const g = $("#dropghost"); if(g) g.remove();
+      window.removeEventListener("pointerup", onUp);
+      document.removeEventListener("touchmove", blockScroll);
+      const g = plot.querySelector(".dropghost"); if(g) g.remove();
       el.style.transform = "";
       el.classList.remove("lifted");
-      if(plot) plot.classList.remove("dragging-bed");
       Garden.lifted = null;
-    };
 
-    const up = () => {
-      const wasLifted = lifted, target = cell;
-      cleanup();
-      if(!wasLifted) return;                       /* a plain tap — let the click through */
+      if(!drop || !lifted) return;
       el._dragged = true;
-      setTimeout(() => { el._dragged = false; }, 260);
-      if(!target){ Garden.render(); return; }
+      setTimeout(() => { el._dragged = false; }, 300);
 
-      const final = Garden.nearestDrop(id, target.x, target.y);
+      if(!cell){ Garden.render(); toast("Put back where it was"); return; }
+      const final = Garden.nearestDrop(id, cell.x, cell.y);
       if(final.ok && !final.noop){
         const swapped = !!final.swap, other = final.with;
-        const moved = Math.abs(final.move.x - target.x) + Math.abs(final.move.y - target.y);
+        const slid = Math.abs(final.move.x - cell.x) + Math.abs(final.move.y - cell.y);
         Garden.applyMove(final);
         Garden.sel = id;
         Garden.render();
         toast(swapped ? "Swapped with " + cropName(other.crop_id)
-                      : (moved ? "Dropped nearby — that exact spot was taken"
-                               : cropName(p.crop_id) + " moved"));
+                      : (slid ? "Dropped nearby — that square was taken"
+                              : cropName(p.crop_id) + " moved"));
       } else {
         Garden.render();
-        toast(final.noop ? "" : "Put back — nothing nearby had room");
+        if(!final.noop) toast("Put back — nothing nearby had room");
       }
     };
 
-    window.addEventListener("pointermove", move, { passive:false });
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
+    const onUp = () => finish(true);
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", onUp);
+    /* pointercancel is deliberately NOT treated as an abort: if the browser
+       takes the pointer away mid-drag we still honour the last good target */
   },
 
   /* ---------- copy and paste ---------- */
@@ -7610,7 +7635,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-02.12";
+const BUILD = "2026-08-02.13";
 
 const Updater = {
   prompt: null, installed: false,
