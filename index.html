@@ -6944,14 +6944,21 @@ const Assist = {
             }
           }
         }
-        Garden.paint = c.id; Garden.erase = false;
+        /* Arming placement mode after a successful planting was a trap: paint
+           mode blocks press-and-hold, so the whole bed silently went stiff and
+           nothing could be dragged until she backed out of it and in again.
+           Only arm it when nothing was placed and she still needs a way to put
+           the crop down herself. */
+        Garden.erase = false;
+        Garden.paint = placed ? null : c.id;
         APP.bedId = bed.id; go("garden");
         const conflicts = DB.where("plantings", p => p.bed_id === bed.id && p.status !== "removed")
           .map(p => p.crop_id).filter((v, i, a) => a.indexOf(v) === i)
           .map(o => ({ o:o, r: pairRating(c.id, o) })).filter(z => z.r.score <= -2)
           .map(z => cropName(z.o));
         return { ok:true, bed: bed.name, crop: c.n, placed: placed, sized: sized,
-          armed:"Placement mode is on — tapping any square drops in " + c.n + ".",
+          armed: placed ? "Planted. The bed is still fully editable — press and hold any planting to drag it somewhere else."
+                        : "Placement mode is on — tapping any square drops in " + c.n + ".",
           sun_check: num(bed.sun_hours, 8) >= c.sun ? "Sun is fine (" + bed.sun_hours + "h, wants " + c.sun + "h)."
                      : "Warning: bed gets " + bed.sun_hours + "h sun but " + c.n + " wants " + c.sun + "h.",
           conflicts: conflicts.length ? "Already in this bed and a poor neighbour: " + conflicts.join(", ") : "No companion conflicts." };
