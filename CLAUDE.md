@@ -15,6 +15,21 @@ so a push goes live within a minute or two with no extra configuration.
 
 ## The build
 
+```bash
+node build.mjs                        # src/ -> dist/index.html
+node src/smoke.mjs dist/index.html    # 326 checks
+node verify_camera.mjs dist/index.html # 26 checks on the camera -> AI -> form path
+```
+
+`build.mjs` reads the order from `src/ORDER.txt` (not from the list below — that list
+is documentation and has drifted before) and applies both post-processing steps.
+It warns about any `p*` file on disk that is missing from `ORDER.txt`.
+
+`apply_camera_fix.mjs` reapplies the camera/AI work to `src/` and is idempotent.
+It exists because a OneDrive sync silently rolled every edited source file back
+mid-session. **If a change you just made to `src/` seems to vanish, that is why** —
+re-run it rather than redoing the edits by hand.
+
 `index.html` is assembled by concatenating the parts in `src/` **in this exact order**:
 
 ```
@@ -39,13 +54,36 @@ After concatenating, two post-processing steps are applied to `index.html`:
 live `index.html`, greps that constant, and compares — if it doesn't change, the app tells the
 user they're already current and never refreshes.
 
+## Camera and AI vision
+
+Both camera features — the seed packet reader and the Plant Doctor's second opinion —
+go through **`Vision`** in `p15b_providers.js`. It follows whichever provider the
+assistant is connected to. Do not call a provider endpoint directly from a feature
+file; that is exactly how the packet reader ended up Anthropic-only and invisible to
+Gemini users. Gate UI on `Vision.ready()`, never on `DB.get("aiKey")`.
+
+Photographing a packet reads it immediately — no button press. A manual re-read
+button is offered in every state as a fallback. Values from the model are coerced
+(`Seeds._num/_year/_date/_unit`) before being written, because a `number` or `date`
+input silently discards anything it cannot parse, which looks exactly like the
+feature being broken. Fields the app filled get `.ai-filled`; fields the gardener
+typed are never overwritten.
+
+The reading copy of a packet photo is 1500px but is **never stored** — only the
+900px thumbnail goes into the vault, or the encrypted store blows past the
+localStorage fallback after a dozen packets.
+
+All camera access goes through **`Cam.rear()`** in `p3_core.js`. `facingMode:{ideal:…}`
+is only a hint and some Android builds hand back the selfie camera anyway, so it tries
+a device labelled "back" first, then `exact`, then `ideal`, then anything.
+
 ## Testing — do not skip
 
 ```bash
 node src/smoke.mjs dist/index.html
 ```
 
-180 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
+326 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
 round-trips, season maths, companion logic, grid spans, seed and maturity maths, the SQL guard,
 every screen and modal, assistant tool execution, and data-accuracy invariants. It has caught
 real bugs — an infinite retry loop, a data-truncating patch, stale-task rendering. Run it
