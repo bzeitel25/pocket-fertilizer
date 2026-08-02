@@ -3085,12 +3085,12 @@ const Varieties = {
   /* ---------- assistant lookup ---------- */
   async lookup(cropId, name, onPick){
     const key = DB.get("gemKey");
-    if(!key) return toast("Connect the assistant in Settings first");
+    if(!key) return toast("Variety lookup uses Gemini — connect it in Settings");
     if(!name) return toast("Type the variety name first");
     const out = $("#vp-out");
     out.innerHTML = '<div class="row"><span class="spinner"></span><span class="sm muted">Searching for ' + esc(name) + '…</span></div>';
     try{
-      const r = await fetch(GEM_URL + DB.get("gemModel", "gemini-2.5-flash") + ":generateContent?key=" + encodeURIComponent(key), {
+      const r = await fetch(GEM_URL + DB.get("gemModel", PROVIDERS.gemini.def) + ":generateContent?key=" + encodeURIComponent(key), {
         method:"POST", headers:{ "content-type":"application/json" },
         body: JSON.stringify({
           contents:[{ role:"user", parts:[{ text:
@@ -3409,7 +3409,7 @@ const Seeds = {
     toast("Reading packet…");
     try{
       const body = {
-        model: DB.get("aiModel", "claude-sonnet-5"), max_tokens: 700,
+        model: DB.get("claudeModel", "claude-sonnet-5"), max_tokens: 700,
         messages: [{ role: "user", content: [
           { type: "image", source: { type: "base64", media_type: p.mime, data: p.data } },
           { type: "text", text:
@@ -4234,7 +4234,7 @@ const Doctor = {
         headers:{ "content-type":"application/json", "x-api-key": key,
                   "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
         body: JSON.stringify({
-          model: DB.get("aiModel", "claude-sonnet-5"), max_tokens: 900,
+          model: DB.get("claudeModel", "claude-sonnet-5"), max_tokens: 900,
           messages:[{ role:"user", content:[
             { type:"image", source:{ type:"base64", media_type: p.mime, data: p.data } },
             { type:"text", text:
@@ -4907,9 +4907,9 @@ const Settings = {
     h += '</div>';
 
     h += '<div class="sec"><h2>Gardening assistant</h2></div><div class="card">';
-    h += '<div class="row between"><div class="grow"><div class="b">Google Gemini</div>' +
-      '<div class="tiny muted">' + (DB.get("gemKey") ? "Connected · " + esc(DB.get("gemModel","gemini-2.5-flash")) : "Not connected") + '</div></div>' +
-      '<button class="btn sm" onclick="Assist.setup()">' + (DB.get("gemKey") ? "Change" : "Connect") + '</button></div>';
+    h += '<div class="row between"><div class="grow"><div class="b">' + esc(Assist.providerName()) + '</div>' +
+      '<div class="tiny muted">' + (Assist.ready() ? "Connected · " + esc(Assist.modelName()) : "Not connected") + '</div></div>' +
+      '<button class="btn sm" onclick="Assist.setup()">' + (Assist.ready() ? "Change" : "Connect") + '</button></div>';
     h += '<div class="tiny muted" style="margin-top:8px">Powers the \u2728 Ask tab \u2014 voice and text commands, questions about your own data, and web search.</div></div>';
 
     h += '<div class="sec"><h2>Plant Doctor AI (optional)</h2></div><div class="card">';
@@ -5763,17 +5763,17 @@ const Assist = {
   draw(scroll){
     const box = $("#s-assist");
     if(!box) return;
-    const key = DB.get("gemKey");
+    const key = Assist.ready ? (Assist.ready() ? "1" : "") : DB.get("gemKey");
     let h = '';
 
     if(!key){
-      h += '<div class="card"><div class="empty"><span class="e">✨</span><div class="b">Connect your Gemini account</div>' +
+      h += '<div class="card"><div class="empty"><span class="e">✨</span><div class="b">Connect ' + esc(Assist.providerName ? Assist.providerName() : "an AI provider") + '</div>' +
         '<div class="tiny">Then you can just say what you want — “add tomatoes to plot A”, “what should I plant this week”, “how much did I pick last month” — by typing or by voice.</div></div>' +
         '<button class="btn block" onclick="Assist.setup()">Set up the assistant</button></div>';
       h += '<div class="note i" style="margin-top:12px"><b>What it can do</b><ul style="margin:6px 0 0;padding-left:18px">' +
         '<li>Open a bed with a crop armed and ready to place</li><li>Create beds, add seed packets, log harvests and watering</li>' +
         '<li>Query your own garden database in plain language</li><li>Read the weather and tell you what it means for your plants</li>' +
-        '<li>Search Google when the built-in database falls short</li></ul></div>';
+        '<li>Search the web when the built-in database falls short</li></ul></div>';
       box.innerHTML = h; return;
     }
 
@@ -5860,9 +5860,288 @@ function mdLite(t){
 </script>
 <script>
 /* ============================================================
+   ASSISTANT PROVIDERS — Google Gemini or Anthropic Claude
+   Model names move. Rather than hardcode one and break later,
+   the app ships current defaults AND can ask the API which
+   models the key can actually use.
+   ============================================================ */
+const CLAUDE_URL = "https://api.anthropic.com/v1/messages";
+
+const PROVIDERS = {
+  gemini: {
+    n:"Google Gemini", key:"gemKey", model:"gemModel",
+    def:"gemini-3.6-flash",
+    models:[
+      ["gemini-3.6-flash","Fast, cheap, handles everything here"],
+      ["gemini-3.5-flash","Previous Flash generation"],
+      ["gemini-3.5-flash-lite","Cheapest, lowest latency"],
+      ["gemini-3.1-pro","Slower and stronger"]
+    ],
+    getKey:"https://aistudio.google.com/apikey",
+    hint:"Free tier is generous. No card required."
+  },
+  claude: {
+    n:"Anthropic Claude", key:"aiKey", model:"claudeModel",
+    def:"claude-sonnet-5",
+    models:[
+      ["claude-sonnet-5","Balanced — the default"],
+      ["claude-opus-5","Most capable, slower and dearer"],
+      ["claude-haiku-4-5-20251001","Fastest and cheapest"]
+    ],
+    getKey:"https://console.anthropic.com/settings/keys",
+    hint:"Pay as you go. Set a spend cap in the console."
+  }
+};
+
+/* retire model names that Google has since withdrawn */
+(function migrateModels(){
+  const dead = /^(gemini-2\.|gemini-1\.|models\/gemini-2\.)/;
+  const m = DB.get("gemModel", "");
+  if(m && dead.test(m)) DB.set("gemModel", PROVIDERS.gemini.def);
+  if(!DB.get("aiProvider")) DB.set("aiProvider", "gemini");
+})();
+
+Object.assign(Assist, {
+  prov(){ return PROVIDERS[DB.get("aiProvider", "gemini")] || PROVIDERS.gemini; },
+  apiKey(){ return DB.get(Assist.prov().key, ""); },
+  modelName(){ const p = Assist.prov(); return DB.get(p.model, p.def) || p.def; },
+  ready(){ return !!Assist.apiKey(); },
+
+  /* ---- ask the API which models this key can use ---- */
+  async fetchModels(){
+    const p = Assist.prov(), key = Assist.apiKey();
+    if(!key) throw new Error("Add a key first");
+    if(DB.get("aiProvider") === "gemini"){
+      const r = await fetch(GEM_URL.replace(/models\/$/, "models") + "?key=" + encodeURIComponent(key));
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      return (j.models || [])
+        .filter(m => (m.supportedGenerationMethods || []).indexOf("generateContent") >= 0)
+        .map(m => String(m.name || "").replace(/^models\//, ""))
+        .filter(n => n && n.indexOf("embedding") < 0)
+        .sort();
+    }
+    const r = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+      headers:{ "x-api-key": key, "anthropic-version":"2023-06-01",
+                "anthropic-dangerous-direct-browser-access":"true" }
+    });
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    return (j.data || []).map(m => m.id).filter(Boolean);
+  },
+
+  /* ---- tool schema conversion ---- */
+  claudeTools(){
+    const lower = o => {
+      if(!o || typeof o !== "object") return o;
+      const out = Array.isArray(o) ? [] : {};
+      Object.keys(o).forEach(k => {
+        let v = o[k];
+        if(k === "type" && typeof v === "string") v = v.toLowerCase();
+        else v = lower(v);
+        out[k] = v;
+      });
+      return out;
+    };
+    return AI_TOOLS.map(t => ({
+      name: t.name, description: t.description,
+      input_schema: Object.assign({ type:"object", properties:{} }, lower(t.parameters))
+    }));
+  },
+
+  /* ---- one turn against whichever provider is selected ---- */
+  async send(text){
+    if(Assist.busy) return;
+    if(!Assist.ready()){ Assist.setup(); return; }
+    text = String(text || "").trim(); if(!text) return;
+
+    Assist.msgs.push({ who:"me", text: text });
+    Assist.busy = true; Assist.draw(true);
+    try{
+      if(DB.get("aiProvider") === "claude") await Assist.turnClaude(text);
+      else await Assist.turnGemini(text);
+    }catch(e){
+      Assist.msgs.push({ who:"err", text: Assist.explain(e) });
+    }
+    Assist.busy = false; Assist.draw(true);
+  },
+
+  explain(e){
+    const m = String(e && e.message || e || "");
+    if(/404/.test(m)) return "That model is no longer available on your key. Open Settings → Gardening assistant and tap “Refresh models from my key” to pick a current one.";
+    if(/401|403/.test(m)) return "The API key was rejected. Check it in Settings.";
+    if(/429/.test(m)) return "Rate limited. Wait a moment and try again.";
+    if(/Failed to fetch|NetworkError/i.test(m)) return "Could not reach the service — you may be offline. Everything else in the app still works.";
+    return m || "Something went wrong.";
+  },
+
+  async turnGemini(text){
+    Assist.history.push({ role:"user", parts:[{ text: text }] });
+    let hops = 0;
+    while(hops++ < 5){
+      const r = await fetch(GEM_URL + Assist.modelName() + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
+        method:"POST", headers:{ "content-type":"application/json" },
+        body: JSON.stringify({
+          systemInstruction:{ parts:[{ text: Assist.system() }] },
+          contents: Assist.history,
+          tools:[{ functionDeclarations: AI_TOOLS }],
+          generationConfig:{ temperature:0.3, maxOutputTokens:1200 }
+        })
+      });
+      if(!r.ok){ const b = await r.text().catch(() => ""); throw new Error("Gemini " + r.status + " " + b.slice(0, 160)); }
+      const j = await r.json();
+      const cand = (j.candidates || [])[0];
+      if(!cand) throw new Error("Gemini returned nothing.");
+      const parts = (cand.content || {}).parts || [];
+      Assist.history.push({ role:"model", parts: parts });
+      const calls = parts.filter(p => p.functionCall).map(p => p.functionCall);
+      const say = parts.map(p => p.text || "").join("").trim();
+      if(calls.length){
+        if(say) Assist.msgs.push({ who:"ai", text: say });
+        const responses = [];
+        for(const call of calls){
+          Assist.msgs.push({ who:"act", text: Assist.label(call) });
+          Assist.draw(true);
+          responses.push({ functionResponse:{ name: call.name, response: await Assist.run(call.name, call.args) } });
+        }
+        Assist.history.push({ role:"user", parts: responses });
+        continue;
+      }
+      Assist.msgs.push({ who:"ai", text: say || "…" });
+      if(DB.get("gemSpeak")) Assist.speak(say);
+      return;
+    }
+  },
+
+  async turnClaude(text){
+    Assist.history.push({ role:"user", content:[{ type:"text", text: text }] });
+    let hops = 0, allowSearch = true;
+    while(hops++ < 5){
+      const body = {
+        model: Assist.modelName(), max_tokens: 1500,
+        system: Assist.system(),
+        messages: Assist.history,
+        tools: Assist.claudeTools()
+      };
+      if(allowSearch) body.tools = body.tools.concat([{ type:"web_search_20250305", name:"web_search", max_uses: 3 }]);
+      const r = await fetch(CLAUDE_URL, {
+        method:"POST",
+        headers:{ "content-type":"application/json", "x-api-key": Assist.apiKey(),
+                  "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+        body: JSON.stringify(body)
+      });
+      if(!r.ok){
+        const b = await r.text().catch(() => "");
+        /* older keys or models may not have the server-side search tool — drop it and retry once */
+        if(allowSearch && r.status === 400 && /web_search/.test(b)){ allowSearch = false; hops--; continue; }
+        throw new Error("Claude " + r.status + " " + b.slice(0, 160));
+      }
+      const j = await r.json();
+      const content = j.content || [];
+      Assist.history.push({ role:"assistant", content: content });
+      const calls = content.filter(c => c.type === "tool_use");
+      const say = content.filter(c => c.type === "text").map(c => c.text).join("").trim();
+      if(calls.length){
+        if(say) Assist.msgs.push({ who:"ai", text: say });
+        const results = [];
+        for(const call of calls){
+          Assist.msgs.push({ who:"act", text: Assist.label({ name: call.name, args: call.input }) });
+          Assist.draw(true);
+          const out = await Assist.run(call.name, call.input);
+          results.push({ type:"tool_result", tool_use_id: call.id, content: JSON.stringify(out) });
+        }
+        Assist.history.push({ role:"user", content: results });
+        continue;
+      }
+      Assist.msgs.push({ who:"ai", text: say || "…" });
+      if(DB.get("gemSpeak")) Assist.speak(say);
+      return;
+    }
+  },
+
+  /* ---- setup sheet ---- */
+  setup(){
+    const pk = DB.get("aiProvider", "gemini"), p = PROVIDERS[pk];
+    const cur = Assist.modelName();
+    const custom = DB.get(p.model + "List", null);
+    const list = custom && custom.length ? custom.map(m => [m, ""]) : p.models;
+    const has = list.some(m => m[0] === cur);
+
+    openSheet("Gardening assistant",
+      '<div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Provider</div>' +
+      '<div class="seg">' +
+        Object.keys(PROVIDERS).map(k => '<button class="' + (k === pk ? "on" : "") + '" onclick="Assist.setProvider(\'' + k + '\')">' +
+          esc(PROVIDERS[k].n) + '</button>').join("") +
+      '</div>' +
+      '<p class="muted sm" style="margin-top:12px">Runs on your own account, so usage bills to you. ' + esc(p.hint) + '</p>' +
+      '<div class="note g"><b>Getting a key</b><br>Open <a href="' + esc(p.getKey) + '" target="_blank" rel="noopener noreferrer">' +
+        esc(p.getKey.replace("https://", "")) + ' ↗</a>, create a key, and paste it below.</div>' +
+      '<div class="field" style="margin-top:12px"><label class="f">' + esc(p.n) + ' API key</label>' +
+        '<input type="password" id="gm-key" placeholder="' + (pk === "gemini" ? "AIza…" : "sk-ant-…") + '" value="' + esc(DB.get(p.key, "")) + '"></div>' +
+      '<div class="field"><label class="f">Model</label><select id="gm-model">' +
+        list.map(m => '<option value="' + esc(m[0]) + '"' + (m[0] === cur ? " selected" : "") + '>' +
+          esc(m[0]) + (m[1] ? " — " + m[1] : "") + '</option>').join("") +
+        (has ? "" : '<option value="' + esc(cur) + '" selected>' + esc(cur) + ' (saved)</option>') +
+      '</select></div>' +
+      '<button class="btn ghost block sm" style="margin-top:8px" onclick="Assist.refreshModels()">↻ Refresh models from my key</button>' +
+      '<div id="gm-models" class="tiny muted" style="margin-top:6px">Model names change over time. This asks the API what your key can actually use right now.</div>' +
+      '<div class="row between" style="margin-top:14px"><div class="b sm">Read answers aloud</div>' +
+        '<button class="switch ' + (DB.get("gemSpeak") ? "on" : "") + '" id="gm-speak"></button></div>' +
+      '<div class="note w" style="margin-top:14px">The key is stored inside your encrypted vault on this device. It is still a browser-held key, so give it a spend cap and remove it here when you stop using it.</div>' +
+      '<button class="btn block" style="margin-top:12px" onclick="Assist.saveKey()">Save and start</button>' +
+      (DB.get(p.key) ? '<button class="btn ghost block" style="margin-top:8px" onclick="DB.set(\'' + p.key + '\',\'\');closeSheet();Assist.draw();toast(\'Disconnected\')">Disconnect</button>' : ''));
+    const sw = $("#gm-speak"); if(sw) sw.onclick = () => sw.classList.toggle("on");
+  },
+
+  setProvider(k){
+    const keep = $("#gm-key") ? $("#gm-key").value.trim() : null;
+    if(keep !== null) DB.set(Assist.prov().key, keep);
+    DB.set("aiProvider", k);
+    Assist.setup();
+  },
+
+  async refreshModels(){
+    const out = $("#gm-models");
+    const p = Assist.prov();
+    const typed = $("#gm-key") ? $("#gm-key").value.trim() : "";
+    if(typed) DB.set(p.key, typed);
+    out.innerHTML = '<span class="spinner"></span> Asking the API…';
+    try{
+      const models = await Assist.fetchModels();
+      if(!models.length) throw new Error("none returned");
+      DB.set(p.model + "List", models);
+      const sel = $("#gm-model"), cur = sel.value;
+      sel.innerHTML = models.map(m => '<option value="' + esc(m) + '"' + (m === cur ? " selected" : "") + '>' + esc(m) + '</option>').join("");
+      if(models.indexOf(cur) < 0){
+        const pick = models.find(m => /flash/.test(m) && !/lite|embedding/.test(m)) ||
+                     models.find(m => /sonnet/.test(m)) || models[0];
+        sel.value = pick;
+      }
+      out.innerHTML = '<span style="color:var(--green-600)">✅ ' + models.length + ' models available on your key.</span>';
+    }catch(e){
+      out.innerHTML = '<span style="color:var(--danger)">Could not list models: ' + esc(Assist.explain(e)) + '</span>';
+    }
+  },
+
+  saveKey(){
+    const p = Assist.prov();
+    const k = $("#gm-key").value.trim();
+    DB.set(p.key, k);
+    DB.set(p.model, $("#gm-model").value || p.def);
+    DB.set("gemSpeak", $("#gm-speak").classList.contains("on"));
+    closeSheet(); Assist.draw();
+    toast(k ? "Assistant ready ✨" : "Key cleared");
+  }
+});
+
+/* the empty-state copy should name whichever provider is selected */
+Assist.providerName = () => Assist.prov().n;
+</script>
+<script>
+/* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-02.4";
+const BUILD = "2026-08-02.3";
 
 const Updater = {
   prompt: null, installed: false,
