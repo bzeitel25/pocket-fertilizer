@@ -19,7 +19,19 @@ On a phone, use **Add to Home Screen**. It installs like a native app — own ic
 ## Features
 
 ### Garden planner
-Plots contain beds; beds are adjustable grids from 1×1 to 24×24, with any square size (12″ by default, the classic square-foot method). Tap a square to plant it, or arm a crop and paint across several. Per-square plant counts come from real spacing data — 1 tomato, 4 lettuce, 9 beets, 16 carrots. Companion conflicts are flagged on the grid itself as you plant, and rotation history tracks which plant family last occupied each bed so you get a warning when one comes back too soon.
+Plots contain beds; beds are adjustable grids from 1×1 to 24×24, with any square size (12″ by default, the classic square-foot method). Tap a square to plant it, or arm a crop and paint across several.
+
+**Plantings stretch to any shape.** Select one and drag its corner handle, or use the width and height steppers, to cover 1×2, 2×3, 1×10 — whatever the plant actually takes. Each spanning planting is one of two things, and the app tracks which:
+
+- **One plant, sprawling** — a single cucumber that ate six square feet. Recording it this way means the app remembers that footprint and offers it the next time you plant that crop.
+- **Filled with plants** — the area packed at proper spacing, auto-populated from real per-square-foot data (1 tomato, 4 lettuce, 9 beets, 16 carrots per square foot).
+
+Either way it works out how many seeds to sow, adjusted for the germination rate of the actual packet you linked — an old packet at 40% viability asks for more seed than a fresh one.
+
+Companion conflicts are flagged on the grid as you plant, measured edge-to-edge between plantings, and rotation history tracks which plant family last occupied each bed.
+
+### Varieties
+Every planting and seed packet can carry a variety. The app ships a reference list of long-established varieties with days to maturity, growth habit, disease-resistance codes and a note on what makes each one distinctive — Sungold, Cherokee Purple, Marketmore 76, Waltham Butternut, Provider, Lacinato and dozens more. Anything not on the list can be typed in by hand, or looked up: with the assistant connected, **Look it up** searches the web and fills in the details for review before saving. Saved varieties are reusable across plantings and packets. Where a variety's days to maturity differs sharply from the crop average, the planting sheet says so.
 
 ### Crop database
 60 crops with sun hours, weekly water, spacing, sow depth, germination days and soil temperatures, days to maturity, pH range, feeder class, seed viability, succession interval and typical yield — plus companions, antagonists, and written guidance on growing, feeding and harvesting each one.

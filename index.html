@@ -233,6 +233,13 @@ textarea{min-height:80px;resize:vertical}
 .cell.sel{outline:3px solid var(--sun);outline-offset:-3px;z-index:2}
 .cell .qty{position:absolute;bottom:1px;right:2px;font-size:9px;background:rgba(0,0,0,.55);color:#fff;border-radius:4px;padding:0 3px;font-weight:700}
 .cell .warnflag{position:absolute;top:0;left:2px;font-size:10px}
+.cell .one{position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:9px;
+  color:rgba(255,255,255,.82);font-weight:700;letter-spacing:.02em;text-transform:uppercase}
+.cell .grip{position:absolute;right:-6px;bottom:-6px;width:22px;height:22px;border-radius:50%;
+  background:var(--sun);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);cursor:nwse-resize;
+  touch-action:none;z-index:5}
+.cell .grip:after{content:"⤢";position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:#4a3200}
+.bed{align-items:start;justify-items:start}
 .bedtitle{display:flex;align-items:center;gap:8px;justify-content:space-between;margin-bottom:8px}
 
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
@@ -542,7 +549,8 @@ const Blobs = (() => {
 const SCHEMA = {
   plots:      ["id","name","notes","created"],
   beds:       ["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil","irrigation","notes","created"],
-  plantings:  ["id","bed_id","x","y","crop_id","variety","seed_id","qty","status","sown_on","transplant_on","harvest_from","harvest_to","removed_on","notes","created"],
+  plantings:  ["id","bed_id","x","y","w","h","span_mode","crop_id","variety","variety_id","seed_id","qty","status","sown_on","transplant_on","harvest_from","harvest_to","removed_on","notes","created"],
+  varieties:  ["id","crop_id","name","dtm","habit","resistance","spacing_in","notes","source","created"],
   seeds:      ["id","crop_id","name","variety","brand","lot","qty","unit","packed_year","exp_date","germ_rate","cost","photo_id","source","notes","created"],
   events:     ["id","date","type","title","crop_id","seed_id","bed_id","planting_id","notes","done","auto","created"],
   journal:    ["id","date","type","bed_id","planting_id","crop_id","amount","unit","cost","minutes","product","notes","photo_id","created"],
@@ -2122,19 +2130,12 @@ const Garden = {
     }
     h += '</div><div class="tiny muted" style="margin-top:8px">Tap any square to plant it or see what is growing there.</div></div>';
 
-    /* the grid */
+    /* the grid — spans are drawn as single stretched cells */
     const cs = clamp(Math.floor((Math.min(window.innerWidth, 520) - 64) / cols), 22, 62);
-    h += '<div class="bedwrap" style="margin-top:12px"><div class="bed" style="grid-template-columns:repeat(' + cols + ',' + cs + 'px);--cs:' + cs + 'px">';
-    for(let y = 0; y < rows; y++) for(let x = 0; x < cols; x++){
-      const p = map[x + "," + y];
-      const bad = conflictCells[x + "," + y];
-      h += '<button class="cell ' + (p ? "filled" : "") + '" onclick="Garden.tapCell(' + x + ',' + y + ')" aria-label="row ' + (y+1) + ' column ' + (x+1) + '">' +
-        (p ? cropEmoji(p.crop_id) : "") +
-        (p && num(p.qty) > 1 ? '<span class="qty">' + p.qty + '</span>' : '') +
-        (bad ? '<span class="warnflag">⚠️</span>' : '') +
-        '</button>';
-    }
-    h += '</div></div>';
+    Garden._cs = cs;
+    h += '<div class="bedwrap" style="margin-top:12px">' +
+      Garden.gridHTML(b, { cs: cs, gap: 3, interactive: true, conflicts: conflicts }) + '</div>';
+    h += '<div class="tiny muted center" style="margin-top:6px">Tap a planting to select it, then drag its corner handle — or use the width and height steppers — to cover more ground.</div>';
 
     /* conflicts */
     if(conflicts.length){
@@ -2163,6 +2164,8 @@ const Garden = {
           '<div class="grow"><div class="b">' + esc(cropName(id)) + ' <span class="muted tiny">×' + qty + ' plants</span></div>' +
           '<div class="tiny muted">' + (sown ? 'Sown ' + fmt(sown) : 'No sow date') +
             (harv ? ' · harvest ~' + fmt(harv) : '') + '</div>' +
+          '<div class="tiny muted">' + arr.map(x => Garden.W(x) + '×' + Garden.H(x) +
+            (x.span_mode === "single" && (Garden.W(x)*Garden.H(x)) > 1 ? ' (one plant)' : '')).join(", ") + '</div>' +
           (!sunOk ? '<div class="tiny" style="color:var(--warn)">Wants ' + c.sun + 'h sun, bed gets ' + esc(b.sun_hours) + 'h</div>' : '') +
           '</div><span class="go">›</span></button>';
       });
@@ -2484,6 +2487,659 @@ const Garden = {
 </script>
 <script>
 /* ============================================================
+   MULTI-CELL PLANTINGS
+   A planting occupies a w x h rectangle of squares. It is either
+   ONE plant sprawling over that area (a cucumber that ate six
+   square feet) or a BLOCK filled with several plants of the same
+   crop. Both are real gardening situations and the app tracks
+   which is which, because they mean different things for spacing,
+   seed counts and yield per square foot.
+   ============================================================ */
+Object.assign(Garden, {
+  _cs: 46, sel: null,
+
+  /* ---------- geometry ---------- */
+  W(p){ return clamp(num(p.w, 1) || 1, 1, 24); },
+  H(p){ return clamp(num(p.h, 1) || 1, 1, 24); },
+  live(bedId){ return DB.where("plantings", p => p.bed_id === bedId && p.status !== "removed"); },
+
+  covers(p, x, y){
+    const px = num(p.x), py = num(p.y);
+    return x >= px && x < px + Garden.W(p) && y >= py && y < py + Garden.H(p);
+  },
+  at(bedId, x, y){ return Garden.live(bedId).find(p => Garden.covers(p, x, y)) || null; },
+
+  /* would a w x h rectangle at (x,y) hit anything or run off the bed? */
+  blocked(bed, x, y, w, h, ignoreId){
+    if(x < 0 || y < 0 || x + w > num(bed.cols) || y + h > num(bed.rows)) return "outside";
+    const hit = Garden.live(bed.id).find(p => {
+      if(p.id === ignoreId) return false;
+      return !(num(p.x) + Garden.W(p) <= x || x + w <= num(p.x) ||
+               num(p.y) + Garden.H(p) <= y || y + h <= num(p.y));
+    });
+    return hit ? hit : null;
+  },
+
+  /* ---------- planting maths ---------- */
+  sqFt(bed, w, h){ const c = num(bed.cell_in, 12) / 12; return w * h * c * c; },
+
+  /* how many plants fit in this area at proper spacing */
+  fitPlants(cropId, bed, w, h){
+    const c = crop(cropId); if(!c) return w * h;
+    return Math.max(1, Math.round(c.psf * Garden.sqFt(bed, w, h)));
+  },
+
+  /* seeds to sow for a target number of plants, allowing for germination */
+  seedsNeeded(cropId, plants, seedId){
+    let pct = 85;
+    const s = seedId ? DB.find("seeds", seedId) : null;
+    if(s){
+      const v = Seeds.viability(s);
+      if(v.pct) pct = v.pct;
+      else if(num(s.germ_rate)) pct = num(s.germ_rate);
+    }
+    pct = clamp(pct, 5, 100);
+    return { seeds: Math.ceil(plants / (pct / 100) * 1.15), pct: Math.round(pct) };
+  },
+
+  /* what has this crop actually done in this garden before? */
+  observedSpread(cropId){
+    const list = DB.where("plantings", p => p.crop_id === cropId &&
+      p.span_mode === "single" && (Garden.W(p) * Garden.H(p)) > 1);
+    if(!list.length) return null;
+    let best = list[0];
+    list.forEach(p => { if(Garden.W(p) * Garden.H(p) > Garden.W(best) * Garden.H(best)) best = p; });
+    const bed = DB.find("beds", best.bed_id);
+    return { w: Garden.W(best), h: Garden.H(best), n: list.length,
+             sqft: bed ? Math.round(Garden.sqFt(bed, Garden.W(best), Garden.H(best)) * 10) / 10 : null,
+             when: best.sown_on || (best.created || "").slice(0, 10) };
+  },
+
+  /* ---------- placing ---------- */
+  place(bed, x, y, cropId, silent, opts){
+    const o = opts || {};
+    const w = clamp(num(o.w, 1), 1, num(bed.cols)), h = clamp(num(o.h, 1), 1, num(bed.rows));
+    const mode = o.mode || "fill";
+    const qty = o.qty !== undefined ? num(o.qty)
+      : (mode === "single" ? 1 : Garden.fitPlants(cropId, bed, w, h));
+    const p = DB.insert("plantings", {
+      bed_id: bed.id, x: x, y: y, w: w, h: h, span_mode: mode,
+      crop_id: cropId, qty: qty, status: "planned", sown_on: iso(today())
+    });
+    if(!silent) toast(cropName(cropId) + " placed");
+    Cal.forPlanting(p);
+    return p;
+  },
+
+  /* ---------- grid rendering with spans ---------- */
+  gridHTML(bed, opts){
+    const o = opts || {};
+    const cols = num(bed.cols, 4), rows = num(bed.rows, 4);
+    const cs = o.cs || 46;
+    const gap = o.gap === undefined ? 3 : o.gap;
+    const ps = Garden.live(bed.id);
+    const conflictCells = {};
+    if(o.conflicts) o.conflicts.forEach(c => {
+      conflictCells[c.a.x + "," + c.a.y] = 1; conflictCells[c.b.x + "," + c.b.y] = 1; });
+
+    const start = {}; ps.forEach(p => start[num(p.x) + "," + num(p.y)] = p);
+    const taken = {};
+    ps.forEach(p => { for(let dy = 0; dy < Garden.H(p); dy++) for(let dx = 0; dx < Garden.W(p); dx++)
+      taken[(num(p.x) + dx) + "," + (num(p.y) + dy)] = p.id; });
+
+    let h = '<div class="bed" style="grid-template-columns:repeat(' + cols + ',' + cs + 'px);' +
+      'grid-auto-rows:' + cs + 'px;gap:' + gap + 'px;--cs:' + cs + 'px">';
+    for(let y = 0; y < rows; y++) for(let x = 0; x < cols; x++){
+      const k = x + "," + y, p = start[k];
+      if(p){
+        const w = Garden.W(p), hh = Garden.H(p);
+        const pw = w * cs + (w - 1) * gap, ph = hh * cs + (hh - 1) * gap;
+        const big = w > 1 || hh > 1;
+        const isSel = Garden.sel === p.id;
+        h += '<button class="cell filled ' + (isSel ? "sel" : "") + '" ' +
+          (o.interactive ? 'onclick="Garden.tapCell(' + x + ',' + y + ')" ' : '') +
+          'style="grid-column:span ' + w + ';grid-row:span ' + hh + ';width:' + pw + 'px;height:' + ph + 'px;' +
+          'font-size:' + Math.round(Math.min(pw, ph) * (big ? 0.42 : 0.5)) + 'px">' +
+          cropEmoji(p.crop_id) +
+          (num(p.qty) > 1 ? '<span class="qty">' + p.qty + '</span>' : '') +
+          (p.span_mode === "single" && big ? '<span class="one">1 plant</span>' : '') +
+          (conflictCells[k] ? '<span class="warnflag">⚠️</span>' : '') +
+          (isSel && o.interactive ? '<span class="grip" onpointerdown="Garden.gripStart(event,\'' + p.id + '\')"></span>' : '') +
+          '</button>';
+      } else if(!taken[k]){
+        h += '<button class="cell" ' + (o.interactive ? 'onclick="Garden.tapCell(' + x + ',' + y + ')"' : '') +
+          ' style="width:' + cs + 'px;height:' + cs + 'px"></button>';
+      }
+    }
+    return h + '</div>';
+  },
+
+  miniGrid(b){
+    const cols = num(b.cols, 4);
+    const cs = clamp(Math.floor(260 / cols), 10, 26);
+    return '<div class="bedwrap" style="padding:4px">' + Garden.gridHTML(b, { cs: cs, gap: 2 }) + '</div>';
+  },
+
+  /* ---------- drag-to-resize ---------- */
+  gripStart(ev, id){
+    ev.preventDefault(); ev.stopPropagation();
+    const p = DB.find("plantings", id); if(!p) return;
+    const bed = DB.find("beds", p.bed_id);
+    const startX = ev.clientX, startY = ev.clientY;
+    const w0 = Garden.W(p), h0 = Garden.H(p);
+    const step = Garden._cs + 3;
+    let lastW = w0, lastH = h0;
+    const move = e => {
+      const dw = Math.round((e.clientX - startX) / step), dh = Math.round((e.clientY - startY) / step);
+      const w = clamp(w0 + dw, 1, num(bed.cols) - num(p.x));
+      const h = clamp(h0 + dh, 1, num(bed.rows) - num(p.y));
+      if(w === lastW && h === lastH) return;
+      if(Garden.blocked(bed, num(p.x), num(p.y), w, h, p.id)) return;
+      lastW = w; lastH = h;
+      DB.update("plantings", p.id, { w: w, h: h });
+      Garden.syncQty(p.id);
+      Garden.render();
+      haptic();
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      const f = DB.find("plantings", id);
+      if(f) toast(Garden.W(f) + "×" + Garden.H(f) + " · " + f.qty + " plant" + (num(f.qty) === 1 ? "" : "s"));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  },
+
+  /* keep plant count sensible when the area changes */
+  syncQty(id){
+    const p = DB.find("plantings", id); if(!p) return;
+    const bed = DB.find("beds", p.bed_id);
+    if(p.span_mode === "single"){ DB.update("plantings", id, { qty: 1 }); return; }
+    DB.update("plantings", id, { qty: Garden.fitPlants(p.crop_id, bed, Garden.W(p), Garden.H(p)) });
+  },
+
+  resizeBy(id, dw, dh){
+    const p = DB.find("plantings", id); if(!p) return;
+    const bed = DB.find("beds", p.bed_id);
+    const w = clamp(Garden.W(p) + dw, 1, num(bed.cols) - num(p.x));
+    const h = clamp(Garden.H(p) + dh, 1, num(bed.rows) - num(p.y));
+    const hit = Garden.blocked(bed, num(p.x), num(p.y), w, h, p.id);
+    if(hit === "outside") return toast("That runs off the edge of the bed");
+    if(hit) return toast("Blocked by " + cropName(hit.crop_id));
+    DB.update("plantings", id, { w: w, h: h });
+    Garden.syncQty(id);
+    Garden.plantingSheet(DB.find("plantings", id));
+    Garden.render();
+  },
+
+  setMode(id, mode){
+    DB.update("plantings", id, { span_mode: mode });
+    Garden.syncQty(id);
+    Garden.plantingSheet(DB.find("plantings", id));
+    Garden.render();
+  },
+
+  /* ---------- tap handling ---------- */
+  tapCell(x, y){
+    haptic();
+    const bed = DB.find("beds", APP.bedId);
+    const ex = Garden.at(bed.id, x, y);
+    if(Garden.erase){ if(ex){ Garden.removePlanting(ex.id, true); Garden.render(); } return; }
+    if(Garden.paint){
+      if(ex){ if(ex.crop_id === Garden.paint) return; Garden.removePlanting(ex.id, true); }
+      Garden.place(bed, x, y, Garden.paint, true);
+      Garden.render(); return;
+    }
+    if(ex){
+      Garden.sel = (Garden.sel === ex.id) ? null : ex.id;
+      Garden.render();
+      if(Garden.sel) Garden.plantingSheet(ex);
+      return;
+    }
+    Garden.sel = null;
+    Garden.pickCrop(x, y);
+  },
+
+  removePlanting(id, silent){
+    DB.update("plantings", id, { status:"removed", removed_on: iso(today()) });
+    DB.bulkRemove("events", e => e.planting_id === id && e.done !== "1");
+    if(Garden.sel === id) Garden.sel = null;
+    if(!silent){ closeSheet(); Garden.render(); toast("Square cleared"); }
+  },
+
+  /* ---------- the planting sheet ---------- */
+  plantingSheet(p){
+    if(!p) return;
+    const c = crop(p.crop_id), bed = DB.find("beds", p.bed_id);
+    const w = Garden.W(p), hh = Garden.H(p);
+    const area = Garden.sqFt(bed, w, hh);
+    const single = p.span_mode === "single";
+    const seeds = DB.where("seeds", s => s.crop_id === p.crop_id);
+    const fit = Garden.fitPlants(p.crop_id, bed, w, hh);
+    const sn = Garden.seedsNeeded(p.crop_id, num(p.qty, 1), p.seed_id);
+    const obs = Garden.observedSpread(p.crop_id);
+
+    let h = '<div class="row" style="gap:12px;margin-bottom:12px"><div style="font-size:2.4rem">' + cropEmoji(p.crop_id) + '</div>' +
+      '<div class="grow"><div class="b" style="font-size:1.1rem">' + esc(cropName(p.crop_id)) + '</div>' +
+      '<div class="tiny muted">Row ' + (num(p.y)+1) + ', column ' + (num(p.x)+1) + ' of ' + esc(bed.name) +
+      ' · ' + w + '×' + hh + ' (' + (Math.round(area*10)/10) + ' sq ft)</div></div></div>';
+
+    /* size */
+    h += '<div class="card"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Area it covers</div>' +
+      '<div class="row between" style="gap:14px">' +
+      '<div><div class="tiny muted">Width</div><div class="stepper">' +
+        '<button onclick="Garden.resizeBy(\'' + p.id + '\',-1,0)">−</button><span class="v">' + w + '</span>' +
+        '<button onclick="Garden.resizeBy(\'' + p.id + '\',1,0)">＋</button></div></div>' +
+      '<div><div class="tiny muted">Height</div><div class="stepper">' +
+        '<button onclick="Garden.resizeBy(\'' + p.id + '\',0,-1)">−</button><span class="v">' + hh + '</span>' +
+        '<button onclick="Garden.resizeBy(\'' + p.id + '\',0,1)">＋</button></div></div>' +
+      '</div>' +
+      '<div class="tiny muted" style="margin-top:8px">Tap the square on the grid to select it, then drag the corner handle to stretch it.</div></div>';
+
+    /* mode */
+    h += '<div class="card" style="margin-top:12px"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">What is in this area</div>' +
+      '<div class="seg">' +
+      '<button class="' + (single ? "on" : "") + '" onclick="Garden.setMode(\'' + p.id + '\',\'single\')">One plant, sprawling</button>' +
+      '<button class="' + (!single ? "on" : "") + '" onclick="Garden.setMode(\'' + p.id + '\',\'fill\')">Filled with plants</button>' +
+      '</div>';
+    h += single
+      ? '<div class="note i" style="margin-top:10px">One ' + esc(cropName(p.crop_id)) + ' claiming ' + (Math.round(area*10)/10) +
+        ' sq ft. This is how you record a plant that grew far bigger than the book says — and the app remembers it for next season.</div>'
+      : '<div class="note g" style="margin-top:10px">At ' + esc(c ? c.sp + '" spacing' : 'normal spacing') + ', ' +
+        (Math.round(area*10)/10) + ' sq ft holds about <b>' + fit + ' plant' + (fit === 1 ? "" : "s") + '</b>.</div>';
+    h += '<div class="field" style="margin-top:12px"><label class="f">Plants here</label>' +
+      '<input type="number" id="pl-qty" min="1" value="' + esc(p.qty || 1) + '"></div>';
+    const vv = p.variety ? Varieties.find(p.crop_id, p.variety) : null;
+    h += '<div class="field"><label class="f">Variety</label>' +
+      '<button class="item" style="border:1px solid var(--line);border-radius:12px;width:100%" onclick="Garden.pickVariety(\'' + p.id + '\')">' +
+        '<div class="av">' + (p.variety ? "🏷️" : "＋") + '</div>' +
+        '<div class="grow"><div class="b">' + (p.variety ? esc(p.variety) : "Choose a variety") + '</div>' +
+        '<div class="tiny muted">' + (vv
+            ? ((vv.dtm ? vv.dtm + " days · " : "") + esc(vv.habit || "") + (vv.resistance ? " · " + esc(vv.resistance) : ""))
+            : (p.variety ? "Tap to change" : "Pick from the list, or look one up")) + '</div></div>' +
+        '<span class="go">›</span></button>' +
+      '<input type="hidden" id="pl-var" value="' + esc(p.variety || "") + '"></div>';
+    if(vv && vv.notes) h += '<div class="note i" style="margin-top:8px">🏷️ <b>' + esc(vv.name) + '.</b> ' + esc(vv.notes) +
+      (vv.dtm && c && Math.abs(num(vv.dtm) - c.dtm) >= 10
+        ? '<br><br>This variety matures in about ' + vv.dtm + ' days, against ' + c.dtm + ' for ' + esc(c.n) +
+          ' generally — the calendar uses the crop figure, so adjust your expectations by roughly ' +
+          Math.abs(Math.round(num(vv.dtm) - c.dtm)) + ' days.'
+        : '') + '</div>';
+    if(!single && num(p.qty) !== fit)
+      h += '<button class="btn ghost block sm" style="margin-top:8px" onclick="Garden.syncQty(\'' + p.id + '\');Garden.plantingSheet(DB.find(\'plantings\',\'' + p.id + '\'));Garden.render()">Reset to recommended (' + fit + ')</button>';
+    h += '</div>';
+
+    /* seeds */
+    h += '<div class="card" style="margin-top:12px"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Seeds to sow</div>' +
+      '<div class="row between"><div><div class="b" style="font-size:1.3rem">' + sn.seeds + ' seeds</div>' +
+      '<div class="tiny muted">for ' + num(p.qty, 1) + ' plant' + (num(p.qty,1) === 1 ? "" : "s") + ' at ~' + sn.pct + '% germination, plus a little spare</div></div>' +
+      '<div style="font-size:1.8rem">🌰</div></div>';
+    if(seeds.length) h += '<div class="field" style="margin-top:10px"><label class="f">From packet</label><select id="pl-seed"><option value="">— none —</option>' +
+      seeds.map(s => '<option value="' + s.id + '"' + (p.seed_id === s.id ? " selected" : "") + '>' +
+        esc(s.name + (s.variety ? " · " + s.variety : "")) + '</option>').join("") + '</select></div>';
+    else h += '<input type="hidden" id="pl-seed" value="">';
+    h += '</div>';
+
+    /* what she has seen before */
+    if(obs) h += '<div class="note w" style="margin-top:12px">📐 <b>From your own garden.</b> You recorded ' + esc(cropName(p.crop_id)) +
+      ' covering ' + obs.w + '×' + obs.h + (obs.sqft ? ' (' + obs.sqft + ' sq ft)' : '') + ' as a single plant' +
+      (obs.when ? ', ' + fmtY(obs.when) : '') + '. Worth allowing that much room again.</div>';
+
+    /* status & dates */
+    h += '<div class="grid2" style="margin-top:12px">' +
+      '<div><label class="f">Status</label><select id="pl-status">' +
+        ["planned","seeded","growing","harvesting","done"].map(s => '<option value="' + s + '"' + (p.status === s ? " selected" : "") + '>' + s + '</option>').join("") +
+      '</select></div>' +
+      '<div><label class="f">Sown / planted</label><input type="date" id="pl-sown" value="' + esc(p.sown_on || "") + '"></div></div>';
+    h += '<div class="field"><label class="f">Notes</label><textarea id="pl-notes" placeholder="How big it actually got, flavour, what you would change">' + esc(p.notes || "") + '</textarea></div>';
+
+    if(c){
+      const harv = p.sown_on ? Season.harvestFrom(p.crop_id, p.sown_on, "seed") : null;
+      if(harv) h += '<div class="note i" style="margin-top:10px">🗓️ About ' + c.dtm + ' days to maturity — first harvest around <b>' + fmtY(harv) + '</b>' +
+        (Season.firstFrost() && harv > Season.firstFrost() ? '. That lands after your first frost, so this planting may not finish outdoors.' : '.') + '</div>';
+      const occ = Garden.live(bed.id).filter(x => x.id !== p.id);
+      const bad = [], good = [];
+      occ.forEach(o => { const r = pairRating(p.crop_id, o.crop_id);
+        if(r.score <= -2) bad.push(cropName(o.crop_id)); else if(r.score >= 1) good.push(cropName(o.crop_id)); });
+      if(good.length) h += '<div class="note g" style="margin-top:8px">💚 Happy neighbours: ' + esc(good.filter((v,i,a)=>a.indexOf(v)===i).join(", ")) + '</div>';
+      if(bad.length) h += '<div class="note d" style="margin-top:8px">⚠️ Poor neighbours: ' + esc(bad.filter((v,i,a)=>a.indexOf(v)===i).join(", ")) + '</div>';
+    }
+
+    h += '<div class="row" style="gap:8px;margin-top:16px">' +
+      '<button class="btn ghost" onclick="Garden.removePlanting(\'' + p.id + '\')">Clear</button>' +
+      '<button class="btn grow" onclick="Garden.savePlanting(\'' + p.id + '\')">Save</button></div>';
+    h += '<button class="btn ghost block" style="margin-top:8px" onclick="closeSheet();setTimeout(function(){Library.open(\'' + p.crop_id + '\')},250)">Full growing guide →</button>';
+    h += '<button class="btn ghost block" style="margin-top:8px" onclick="closeSheet();setTimeout(function(){Journal.quick(\'harvest\',\'' + bed.id + '\',\'' + p.id + '\')},250)">🧺 Log a harvest from this plant</button>';
+
+    openSheet("Planting", h);
+  },
+
+  savePlanting(id){
+    const p = DB.find("plantings", id); if(!p) return;
+    DB.update("plantings", id, {
+      variety: $("#pl-var") ? $("#pl-var").value.trim() : p.variety,
+      qty: $("#pl-qty") ? Math.max(1, num($("#pl-qty").value, 1)) : p.qty,
+      status: $("#pl-status") ? $("#pl-status").value : p.status,
+      sown_on: $("#pl-sown") ? $("#pl-sown").value : p.sown_on,
+      seed_id: ($("#pl-seed") && $("#pl-seed").value) || null,
+      notes: $("#pl-notes") ? $("#pl-notes").value.trim() : p.notes
+    });
+    Cal.forPlanting(DB.find("plantings", id));
+    closeSheet(); Garden.render(); toast("Saved");
+  },
+
+  /* placing into a chosen square, then straight into sizing */
+  pickCrop(x, y){
+    const bed = DB.find("beds", APP.bedId);
+    Garden.cropPicker("Plant row " + (y+1) + ", column " + (x+1), id => {
+      closeSheet();
+      const obs = Garden.observedSpread(id);
+      const p = Garden.place(bed, x, y, id, true,
+        obs ? { w: Math.min(obs.w, num(bed.cols) - x), h: Math.min(obs.h, num(bed.rows) - y), mode:"single", qty:1 } : {});
+      Garden.sel = p.id;
+      Garden.render();
+      if(obs) toast("Sized to the " + obs.w + "×" + obs.h + " you recorded before");
+      setTimeout(() => Garden.plantingSheet(DB.find("plantings", p.id)), 250);
+    }, bed);
+  }
+});
+
+/* conflicts now measure rectangle-to-rectangle distance, not corner-to-corner */
+Recommend.conflicts = function(bedId){
+  const ps = Garden.live(bedId), out = [];
+  const gap = (a, b) => {
+    const ax2 = num(a.x) + Garden.W(a) - 1, ay2 = num(a.y) + Garden.H(a) - 1;
+    const bx2 = num(b.x) + Garden.W(b) - 1, by2 = num(b.y) + Garden.H(b) - 1;
+    const dx = Math.max(0, Math.max(num(a.x) - bx2, num(b.x) - ax2));
+    const dy = Math.max(0, Math.max(num(a.y) - by2, num(b.y) - ay2));
+    return dx + dy;
+  };
+  for(let i = 0; i < ps.length; i++) for(let j = i + 1; j < ps.length; j++){
+    if(ps[i].crop_id === ps[j].crop_id) continue;
+    const r = pairRating(ps[i].crop_id, ps[j].crop_id);
+    if(r.score <= -2 && gap(ps[i], ps[j]) <= 2) out.push({ a: ps[i], b: ps[j], why: r.why, dist: gap(ps[i], ps[j]) });
+  }
+  return out;
+};
+
+/* resizing a bed must not orphan the far edge of a span */
+Garden.resize = function(dc, dr){
+  const b = DB.find("beds", APP.bedId);
+  const cols = clamp(num(b.cols) + dc, 1, 24), rows = clamp(num(b.rows) + dr, 1, 24);
+  const orphan = Garden.live(b.id).filter(p =>
+    num(p.x) + Garden.W(p) > cols || num(p.y) + Garden.H(p) > rows);
+  const apply = () => {
+    orphan.forEach(p => {
+      const w = Math.min(Garden.W(p), cols - num(p.x)), h = Math.min(Garden.H(p), rows - num(p.y));
+      if(w >= 1 && h >= 1){ DB.update("plantings", p.id, { w: w, h: h }); Garden.syncQty(p.id); }
+      else DB.update("plantings", p.id, { status:"removed", removed_on: iso(today()) });
+    });
+    DB.update("beds", b.id, { cols: cols, rows: rows });
+    Garden.render();
+  };
+  if(orphan.length) confirmSheet("Shrink the bed?",
+    orphan.length + " planting" + (orphan.length > 1 ? "s" : "") + " will be trimmed or cleared to fit the new size.",
+    "Shrink anyway", apply, true);
+  else apply();
+};
+</script>
+<script>
+/* ============================================================
+   VARIETIES
+   A reference list of long-established varieties, plus anything
+   the gardener adds herself or looks up with the assistant.
+
+   Days to maturity here is the figure seed catalogues broadly
+   agree on for these varieties. It still shifts with climate and
+   season — the packet in her hand always wins. Disease-resistance
+   codes are only listed where they are a settled part of the
+   variety's identity; Cornell's list is the authority:
+   https://www.vegetables.cornell.edu/pest-management/disease-factsheets/disease-resistant-vegetable-varieties/
+   ============================================================ */
+const VARIETY_REF = [
+/* tomato */
+["tomato","Sungold",57,"Indeterminate cherry","","Orange cherry, exceptionally sweet. Prone to splitting after rain — pick promptly."],
+["tomato","Sweet 100",65,"Indeterminate cherry","","Enormous trusses of small red cherries. Needs a tall support."],
+["tomato","Early Girl",57,"Indeterminate","","The reliable early slicer. First ripe fruit weeks before the big beefsteaks."],
+["tomato","Better Boy",75,"Indeterminate","VFN","Classic big red slicer. Stake heavily."],
+["tomato","Big Beef",73,"Indeterminate","VFFNTA","Beefsteak size with unusually broad disease resistance."],
+["tomato","Celebrity",70,"Determinate","VFFNT","Compact and dependable — a good choice for containers and short seasons."],
+["tomato","Roma",75,"Determinate paste","VF","Dense, low-moisture paste tomato. Watch for blossom end rot in dry spells."],
+["tomato","San Marzano",80,"Indeterminate paste","","The classic sauce tomato. Long season, worth the wait."],
+["tomato","Amish Paste",85,"Indeterminate paste","","Larger and meatier than Roma, better flavour raw."],
+["tomato","Cherokee Purple",80,"Indeterminate heirloom","","Dusky rose beefsteak, outstanding flavour. Soft skin, cracks easily."],
+["tomato","Brandywine",85,"Indeterminate heirloom","","Benchmark heirloom flavour. Low yields and late — grow it for taste, not volume."],
+["tomato","Black Krim",80,"Indeterminate heirloom","","Dark, slightly salty flavour. Shoulders stay green when ripe."],
+["tomato","Green Zebra",78,"Indeterminate heirloom","","Ripe when green with yellow stripes and slightly soft — trust feel, not colour."],
+["tomato","Mortgage Lifter",85,"Indeterminate heirloom","","Very large mild pink fruit. Needs serious support."],
+/* peppers */
+["pepper","California Wonder",75,"Bell","","The standard blocky green-to-red bell."],
+["pepper","Banana (sweet)",70,"Sweet frying","","Long yellow tapering fruit, heavy yields, very early."],
+["pepper","Shishito",60,"Frying","","Pick green and blister in a hot pan. Roughly one in ten is unexpectedly hot."],
+["hotpepper","Jalapeño",75,"Hot","","Pick green for crunch, red for sweetness and more heat."],
+["hotpepper","Serrano",75,"Hot","","Hotter and thinner-walled than jalapeño. Excellent fresh in salsa."],
+["hotpepper","Cayenne, Long Slim",70,"Hot","","Dries beautifully on the plant or on a string."],
+["hotpepper","Poblano / Ancho",75,"Mild hot","","Mild and meaty fresh; called ancho once dried."],
+["hotpepper","Habanero",90,"Very hot","","Needs a long hot season. Start earliest of anything in the tray."],
+/* cucumber */
+["cucumber","Marketmore 76",65,"Slicing","Scab, CMV, DM, PM","The standard garden slicer, bred at Cornell for disease resistance."],
+["cucumber","Straight Eight",58,"Slicing","","Long-time favourite. Trellis it for straight fruit."],
+["cucumber","Boston Pickling",55,"Pickling","","Heavy set of small blocky fruit. Pick daily at 3–4 inches."],
+["cucumber","Lemon",65,"Slicing heirloom","","Round yellow fruit, mild and never bitter."],
+["cucumber","Suyo Long",60,"Asian slicing","","Long ribbed burpless fruit — needs a trellis to grow straight."],
+["cucumber","Diva",58,"Slicing","","Seedless and bitter-free without pollination. Thin tender skin."],
+/* squash */
+["zucchini","Black Beauty",50,"Bush zucchini","","The dark green standard. Check daily once it starts."],
+["zucchini","Costata Romanesco",52,"Bush zucchini","","Ribbed Italian type, far better flavour, lower yield."],
+["zucchini","Yellow Crookneck",50,"Bush summer squash","","Best picked small, under 6 inches."],
+["wintersquash","Waltham Butternut",105,"Vining winter squash","","Stores for months. Solid stems resist squash vine borer."],
+["wintersquash","Delicata",100,"Semi-bush winter squash","","Edible skin, no peeling. Stores a shorter time than butternut."],
+["wintersquash","Spaghetti",90,"Vining winter squash","","Flesh separates into strands when baked."],
+["pumpkin","Sugar Pie",100,"Vining pie pumpkin","","Small and sweet — the one to actually cook with."],
+["pumpkin","Connecticut Field",110,"Vining","","The classic large jack-o'-lantern. Give it serious room."],
+/* beans & peas */
+["bushbean","Provider",50,"Bush snap","","Germinates in cooler soil than most beans. Very dependable."],
+["bushbean","Blue Lake 274",58,"Bush snap","","Straight round pods, excellent for freezing and canning."],
+["bushbean","Contender",50,"Bush snap","","Early and heat-tolerant."],
+["polebean","Kentucky Wonder",65,"Pole snap","","The classic pole bean. Keeps producing if picked constantly."],
+["polebean","Scarlet Runner",70,"Pole","","Grown for scarlet flowers as much as beans. Hummingbirds love it."],
+["pea","Sugar Snap",65,"Vining snap pea","","Eat pod and all. Needs 6 feet of support."],
+["pea","Oregon Sugar Pod II",60,"Semi-dwarf snow pea","","Flat edible pods, compact vines."],
+["pea","Little Marvel",60,"Bush shelling pea","","Compact, good for small beds."],
+/* roots */
+["carrot","Danvers 126",75,"Storage carrot","","Broad-shouldered and tapered — copes with heavier soil than most."],
+["carrot","Scarlet Nantes",68,"Fresh carrot","","Sweet, blunt-tipped, wants loose soil."],
+["carrot","Little Finger",55,"Baby carrot","","Short roots for containers and shallow beds."],
+["carrot","Chantenay Red Core",70,"Storage carrot","","Short and thick — the best choice for clay."],
+["beet","Detroit Dark Red",60,"Storage beet","","The all-purpose standard, roots and greens both good."],
+["beet","Chioggia",55,"Heirloom beet","","Pink and white rings inside, milder flavour."],
+["beet","Golden",55,"Golden beet","","Does not bleed. Germinates less reliably than red types — sow thicker."],
+["radish","Cherry Belle",22,"Round red","","Ready in three weeks. The fastest thing in the garden."],
+["radish","French Breakfast",25,"Oblong","","Mild and crisp; goes woody fast in heat."],
+["radish","Daikon",60,"Winter radish","","Long white root, best as a fall crop."],
+/* greens */
+["lettuce","Black Seeded Simpson",45,"Loose leaf","","Very fast, cut-and-come-again. Bolts early in heat."],
+["lettuce","Buttercrunch",55,"Butterhead","","Holds longer before bolting than most butterheads."],
+["lettuce","Parris Island Cos",68,"Romaine","","The standard romaine. Upright heads, good heat tolerance."],
+["lettuce","Little Gem",55,"Mini romaine","","Small dense heads, good for tight spacing."],
+["lettuce","Salad Bowl",50,"Loose leaf","","Deeply lobed leaves, slow to bolt."],
+["spinach","Bloomsdale Long Standing",45,"Savoyed","","Crinkled leaves, the classic. Slower to bolt than smooth types."],
+["spinach","Space",40,"Smooth leaf","","Fast and upright, easy to wash."],
+["kale","Lacinato (Toscano)",60,"Dinosaur kale","","Dark strappy leaves, sweetens hard after frost."],
+["kale","Red Russian",50,"Flat leaf","","Tender enough to eat raw young. Very cold hardy."],
+["kale","Winterbor",60,"Curly","","Heavily curled and extremely hardy — stands through snow."],
+["chard","Fordhook Giant",55,"White stem","","Heavy yields, the most productive chard."],
+["chard","Bright Lights",55,"Mixed stems","","Stems in yellow, pink, orange and red. Slightly milder."],
+/* brassicas */
+["broccoli","Waltham 29",75,"Fall broccoli","","Bred for autumn. Large main head, good side shoots."],
+["broccoli","De Cicco",50,"Sprouting","","Small main head then weeks of side shoots — better for home gardens."],
+["cabbage","Early Jersey Wakefield",63,"Pointed head","","Small conical heads, resists splitting."],
+["cabbage","Copenhagen Market",70,"Round head","","Compact uniform round heads."],
+["cabbage","Red Acre",75,"Red","","Stores well, resists splitting."],
+/* alliums */
+["onion","Walla Walla",125,"Long day sweet","","Grow north of about 36°N. Very sweet, poor keeper — eat it fresh."],
+["onion","Candy",100,"Intermediate day","","The safest choice if unsure of your day length."],
+["onion","Texas Early Grano",110,"Short day","","For southern gardens. Sweet, mild, does not store long."],
+["garlic","Music",240,"Porcelain hardneck","","Large easy-peel cloves, strong flavour, produces scapes."],
+["garlic","German Extra Hardy",240,"Porcelain hardneck","","Very cold hardy, excellent keeper."],
+["garlic","Inchelium Red",240,"Softneck","","Mild, braidable, best in milder winters."],
+/* melons */
+["melon","Hale's Best Jumbo",85,"Cantaloupe","","Reliable heirloom muskmelon. Slips from the vine when ripe."],
+["watermelon","Sugar Baby",75,"Icebox watermelon","","Small round fruit, the best bet for short seasons."],
+["watermelon","Crimson Sweet",85,"Picnic watermelon","","Large striped fruit, classic flavour. Needs heat and space."],
+/* herbs */
+["basil","Genovese",68,"Sweet basil","","The pesto basil. Pinch constantly to delay flowering."],
+["basil","Thai",64,"Thai basil","","Anise flavour, holds up to cooking, handles heat better."],
+["basil","Lemon",60,"Citrus basil","","Strong lemon scent, good with fish and in tea."],
+["cilantro","Santo",45,"Slow bolt","","Slower to bolt than generic cilantro, but still fast in heat."],
+["dill","Bouquet",45,"Seed and leaf","","Large heads, the standard for pickling."],
+["parsley","Italian Flat Leaf",75,"Flat leaf","","Better flavour than curled types."]
+];
+
+const Varieties = {
+  /* bundled + saved, for one crop */
+  forCrop(cropId){
+    const ref = VARIETY_REF.filter(v => v[0] === cropId).map(v => ({
+      id: "ref:" + cropId + ":" + v[1], crop_id: v[0], name: v[1], dtm: v[2],
+      habit: v[3], resistance: v[4], notes: v[5], source: "reference"
+    }));
+    const mine = DB.where("varieties", v => v.crop_id === cropId)
+      .map(v => Object.assign({}, v, { source: v.source || "saved" }));
+    return mine.concat(ref);
+  },
+  find(cropId, name){
+    if(!name) return null;
+    const n = String(name).toLowerCase().trim();
+    return Varieties.forCrop(cropId).find(v => v.name.toLowerCase() === n) ||
+           Varieties.forCrop(cropId).find(v => v.name.toLowerCase().indexOf(n) >= 0) || null;
+  },
+  save(v){
+    const ex = DB.where("varieties", x => x.crop_id === v.crop_id &&
+      (x.name || "").toLowerCase() === String(v.name || "").toLowerCase())[0];
+    if(ex) return DB.update("varieties", ex.id, v);
+    return DB.insert("varieties", v);
+  },
+
+  /* ---------- picker ---------- */
+  pick(cropId, onPick){
+    const list = Varieties.forCrop(cropId);
+    let h = '<p class="muted sm" style="margin-top:0">Varieties of ' + esc(cropName(cropId)) +
+      '. Days to maturity is the figure catalogues broadly agree on — your seed packet is the authority.</p>';
+    h += '<input type="search" id="vp-q" placeholder="Search or type a new variety name…">';
+    h += '<div id="vp-list" style="margin-top:10px"></div>';
+    h += '<div class="row" style="gap:8px;margin-top:12px">' +
+      '<button class="btn ghost grow" id="vp-add">＋ Add manually</button>' +
+      (DB.get("gemKey") ? '<button class="btn grow" id="vp-ai">✨ Look it up</button>' : '') + '</div>';
+    if(!DB.get("gemKey")) h += '<div class="tiny muted" style="margin-top:8px">Connect the assistant in Settings and this can search the web for any variety and fill in the details.</div>';
+    h += '<div id="vp-out" style="margin-top:12px"></div>';
+    openSheet("Choose a variety", h);
+
+    const draw = q => {
+      const f = list.filter(v => !q || v.name.toLowerCase().indexOf(q) >= 0);
+      let o = '<div class="card pad0"><div class="list">';
+      o += '<button class="item" data-v=""><div class="av">—</div><div class="grow"><div class="b">No variety</div>' +
+           '<div class="tiny muted">Just the crop</div></div></button>';
+      if(!f.length) o += '<div class="empty sm">Nothing matches — add it manually or look it up.</div>';
+      f.forEach(v => {
+        o += '<button class="item" data-v="' + esc(v.name) + '"><div class="av">' + cropEmoji(cropId) + '</div>' +
+          '<div class="grow"><div class="b">' + esc(v.name) + (v.source !== "reference" ? ' <span class="chip good tiny">yours</span>' : '') + '</div>' +
+          '<div class="tiny muted">' + (v.dtm ? v.dtm + ' days · ' : '') + esc(v.habit || "") +
+          (v.resistance ? ' · ' + esc(v.resistance) : '') + '</div>' +
+          (v.notes ? '<div class="tiny muted" style="margin-top:2px">' + esc(v.notes) + '</div>' : '') +
+          '</div><span class="go">›</span></button>';
+      });
+      o += '</div></div>';
+      $("#vp-list").innerHTML = o;
+      $$("#vp-list .item").forEach(el => el.onclick = () => onPick(el.dataset.v, Varieties.find(cropId, el.dataset.v)));
+    };
+    $("#vp-q").oninput = e => draw(e.target.value.toLowerCase().trim());
+    $("#vp-add").onclick = () => Varieties.form(cropId, $("#vp-q").value.trim(), onPick);
+    if($("#vp-ai")) $("#vp-ai").onclick = () => Varieties.lookup(cropId, $("#vp-q").value.trim(), onPick);
+    draw("");
+  },
+
+  form(cropId, name, onPick, prefill){
+    const p = prefill || {};
+    openSheet("Add a variety",
+      '<div class="field"><label class="f">Variety name</label><input type="text" id="vf-name" value="' + esc(p.name || name || "") + '"></div>' +
+      '<div class="grid2" style="margin-top:12px">' +
+      '<div><label class="f">Days to maturity</label><input type="number" id="vf-dtm" value="' + esc(p.dtm || "") + '"></div>' +
+      '<div><label class="f">Habit / type</label><input type="text" id="vf-habit" value="' + esc(p.habit || "") + '" placeholder="Indeterminate"></div></div>' +
+      '<div class="field"><label class="f">Disease resistance</label><input type="text" id="vf-res" value="' + esc(p.resistance || "") + '" placeholder="VFN"></div>' +
+      '<div class="field"><label class="f">Notes</label><textarea id="vf-notes">' + esc(p.notes || "") + '</textarea></div>' +
+      (p.source ? '<div class="note i" style="margin-top:10px">Filled in from a web search. Check it against your packet before trusting the numbers.</div>' : '') +
+      '<a class="chip info" style="margin-top:10px" href="https://www.vegetables.cornell.edu/pest-management/disease-factsheets/disease-resistant-vegetable-varieties/" target="_blank" rel="noopener noreferrer">🔗 What the resistance codes mean (Cornell) ↗</a>' +
+      '<button class="btn block" style="margin-top:14px" id="vf-save">Save variety</button>');
+    $("#vf-save").onclick = () => {
+      const n = $("#vf-name").value.trim();
+      if(!n) return toast("Give it a name");
+      Varieties.save({ crop_id: cropId, name: n, dtm: num($("#vf-dtm").value) || null,
+        habit: $("#vf-habit").value.trim(), resistance: $("#vf-res").value.trim(),
+        notes: $("#vf-notes").value.trim(), source: p.source || "manual" });
+      toast("Variety saved");
+      onPick(n, Varieties.find(cropId, n));
+    };
+  },
+
+  /* ---------- assistant lookup ---------- */
+  async lookup(cropId, name, onPick){
+    const key = DB.get("gemKey");
+    if(!key) return toast("Connect the assistant in Settings first");
+    if(!name) return toast("Type the variety name first");
+    const out = $("#vp-out");
+    out.innerHTML = '<div class="row"><span class="spinner"></span><span class="sm muted">Searching for ' + esc(name) + '…</span></div>';
+    try{
+      const r = await fetch(GEM_URL + DB.get("gemModel", "gemini-2.5-flash") + ":generateContent?key=" + encodeURIComponent(key), {
+        method:"POST", headers:{ "content-type":"application/json" },
+        body: JSON.stringify({
+          contents:[{ role:"user", parts:[{ text:
+            "Look up the vegetable variety '" + name + "' of " + cropName(cropId) + ". " +
+            "Return ONLY a JSON object with keys: name, dtm (days to maturity as a number), habit (e.g. Indeterminate, Bush, Determinate paste), " +
+            "resistance (standard disease-resistance letter codes if the variety is known for them, else empty string), " +
+            "notes (two short sentences a home gardener would want: flavour, growth habit, any quirk). " +
+            "If you cannot find reliable information, return {\\\"error\\\":\\\"not found\\\"}. Do not invent numbers." }] }],
+          tools:[{ google_search:{} }]
+        })
+      });
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      const cand = (j.candidates || [])[0] || {};
+      const txt = ((cand.content || {}).parts || []).map(p => p.text || "").join("");
+      const m = txt.match(/\{[\s\S]*\}/);
+      if(!m) throw new Error("No result");
+      const d = JSON.parse(m[0]);
+      if(d.error) throw new Error("Nothing reliable found for that name");
+      const gm = cand.groundingMetadata || {};
+      const srcs = (gm.groundingChunks || []).map(g => (g.web || {}).title).filter(Boolean).slice(0, 3);
+      out.innerHTML = '<div class="note g"><b>' + esc(d.name || name) + '</b><br>' +
+        (d.dtm ? d.dtm + ' days to maturity · ' : '') + esc(d.habit || "") +
+        (d.resistance ? '<br>Resistance: ' + esc(d.resistance) : '') +
+        (d.notes ? '<br><br>' + esc(d.notes) : '') +
+        (srcs.length ? '<div class="tiny" style="margin-top:6px;opacity:.8">Sources: ' + esc(srcs.join(" · ")) + '</div>' : '') +
+        '</div>' +
+        '<div class="note w" style="margin-top:8px">From a web search, not a checked reference. Confirm against your seed packet.</div>' +
+        '<button class="btn block" style="margin-top:10px" id="vp-use">Review and save</button>';
+      $("#vp-use").onclick = () => Varieties.form(cropId, d.name || name, onPick,
+        { name: d.name || name, dtm: d.dtm, habit: d.habit, resistance: d.resistance, notes: d.notes, source:"web search" });
+    }catch(e){
+      out.innerHTML = '<div class="note d">' + esc(e.message || "Lookup failed") + '. You can still add it manually.</div>';
+    }
+  }
+};
+
+/* wire the variety picker into the planting sheet */
+Garden.pickVariety = function(plantingId){
+  const p = DB.find("plantings", plantingId); if(!p) return;
+  Varieties.pick(p.crop_id, (name, v) => {
+    DB.update("plantings", plantingId, { variety: name || null, variety_id: v ? v.id : null });
+    closeSheet();
+    setTimeout(() => { Garden.plantingSheet(DB.find("plantings", plantingId)); Garden.render(); }, 220);
+  });
+};
+</script>
+<script>
+/* ============================================================
    SEED BANK — inventory, viability, packet photos
    ============================================================ */
 const Seeds = {
@@ -2603,7 +3259,9 @@ const Seeds = {
       '<input type="hidden" id="sd-crop" value="' + esc(cur.crop_id || "") + '"></div>';
     h += '<div class="field"><label class="f">Packet name</label><input type="text" id="sd-name" value="' + esc(cur.name || "") + '" placeholder="Cherry Tomato"></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
-      '<div><label class="f">Variety</label><input type="text" id="sd-var" value="' + esc(cur.variety || "") + '" placeholder="Sungold"></div>' +
+      '<div><label class="f">Variety</label><div class="row" style="gap:6px">' +
+        '<input type="text" id="sd-var" value="' + esc(cur.variety || "") + '" placeholder="Sungold">' +
+        (cur.crop_id ? '<button class="btn ghost sm" onclick="Seeds.pickVariety()">▾</button>' : '') + '</div></div>' +
       '<div><label class="f">Brand</label><input type="text" id="sd-brand" value="' + esc(cur.brand || "") + '" placeholder="Baker Creek"></div></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Quantity</label><input type="number" id="sd-qty" value="' + esc(cur.qty || "") + '" placeholder="50"></div>' +
@@ -2661,6 +3319,20 @@ const Seeds = {
       }catch(e){ toast("Could not read that image"); }
     };
     inp.click();
+  },
+
+  pickVariety(){
+    const d = Seeds.readForm();
+    if(!d.crop_id) return toast("Pick a crop first");
+    Seeds._draft = d;
+    const editId = Seeds._editId;
+    Varieties.pick(d.crop_id, name => {
+      closeSheet();
+      setTimeout(() => {
+        Seeds.form(editId ? DB.find("seeds", editId) : null,
+          Object.assign({}, Seeds._draft, { variety: name || "" }));
+      }, 220);
+    });
   },
 
   pickCrop(){
@@ -4698,7 +5370,10 @@ const AI_TOOLS = [
     parameters:{ type:"OBJECT", properties:{
       bed:{ type:"STRING", description:"Bed or plot name, e.g. 'Plot A' or 'raised bed 1'." },
       crop:{ type:"STRING", description:"Crop name, e.g. 'tomatoes'." },
-      squares:{ type:"NUMBER", description:"How many empty squares to fill automatically. Omit to just arm placement." }
+      squares:{ type:"NUMBER", description:"How many empty squares to fill automatically. Omit to just arm placement." },
+      width:{ type:"NUMBER", description:"Width in grid squares for a single sprawling planting, e.g. 2." },
+      height:{ type:"NUMBER", description:"Height in grid squares, e.g. 3." },
+      mode:{ type:"STRING", enum:["single","fill"], description:"'single' = one plant covering the whole area; 'fill' = the area packed with plants at proper spacing." }
     }, required:["crop"] } },
 
   { name:"create_bed", description:"Create a new garden bed as a grid.",
@@ -4797,12 +5472,25 @@ const Assist = {
         let bed = Assist.findBed(args.bed);
         if(!bed) return { ok:false, error: DB.count("beds") ? "No bed matching '" + args.bed + "'. Beds: " +
           DB.all("beds").map(b => b.name).join(", ") : "There are no beds yet — create one first." };
-        let placed = 0;
-        const want = Math.max(0, Math.min(num(args.squares, 0), 40));
-        if(want){
-          const free = Assist.emptySquares(bed);
-          for(let i = 0; i < Math.min(want, free.length); i++){
-            Garden.place(bed, free[i].x, free[i].y, c.id, true); placed++;
+        let placed = 0, sized = null;
+        const W = Math.max(0, num(args.width, 0)), H = Math.max(0, num(args.height, 0));
+        if(W > 0 || H > 0){
+          const w = clamp(W || 1, 1, num(bed.cols)), h = clamp(H || 1, 1, num(bed.rows));
+          const free = Assist.emptySquares(bed).find(s => !Garden.blocked(bed, s.x, s.y, w, h));
+          if(free){
+            const p = Garden.place(bed, free.x, free.y, c.id, true,
+              { w:w, h:h, mode: args.mode === "fill" ? "fill" : "single" });
+            Garden.sel = p.id; placed = num(p.qty, 1);
+            sized = w + "x" + h + " covering " + (Math.round(Garden.sqFt(bed, w, h)*10)/10) + " sq ft, " +
+              (p.span_mode === "single" ? "recorded as one sprawling plant" : p.qty + " plants at proper spacing");
+          }
+        } else {
+          const want = Math.max(0, Math.min(num(args.squares, 0), 40));
+          if(want){
+            const free = Assist.emptySquares(bed);
+            for(let i = 0; i < Math.min(want, free.length); i++){
+              Garden.place(bed, free[i].x, free[i].y, c.id, true); placed++;
+            }
           }
         }
         Garden.paint = c.id; Garden.erase = false;
@@ -4811,7 +5499,7 @@ const Assist = {
           .map(p => p.crop_id).filter((v, i, a) => a.indexOf(v) === i)
           .map(o => ({ o:o, r: pairRating(c.id, o) })).filter(z => z.r.score <= -2)
           .map(z => cropName(z.o));
-        return { ok:true, bed: bed.name, crop: c.n, placed: placed,
+        return { ok:true, bed: bed.name, crop: c.n, placed: placed, sized: sized,
           armed:"Placement mode is on — tapping any square drops in " + c.n + ".",
           sun_check: num(bed.sun_hours, 8) >= c.sun ? "Sun is fine (" + bed.sun_hours + "h, wants " + c.sun + "h)."
                      : "Warning: bed gets " + bed.sun_hours + "h sun but " + c.n + " wants " + c.sun + "h.",
@@ -5174,7 +5862,7 @@ function mdLite(t){
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-02.3";
+const BUILD = "2026-08-02.4";
 
 const Updater = {
   prompt: null, installed: false,
