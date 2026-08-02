@@ -1572,8 +1572,14 @@ const Home = {
     const left = Season.daysLeft();
     const beds = DB.all("beds"), plantings = DB.where("plantings", p => p.status !== "removed");
     const seeds = DB.all("seeds");
-    const dueEvents = DB.where("events", e => e.done !== "1" && e.done !== true && parseISO(e.date) && diffDays(today(), parseISO(e.date)) <= 7)
-      .sort((a,b) => a.date < b.date ? -1 : 1);
+    /* actionable tasks only: frost markers live in the hero, and nothing
+       older than three weeks should still be nagging as "overdue" */
+    const dueEvents = DB.where("events", e => {
+      if(e.done === "1" || e.done === true || e.type === "frost") return false;
+      const d = parseISO(e.date); if(!d) return false;
+      const n = diffDays(today(), d);
+      return n >= -21 && n <= 7;
+    }).sort((a,b) => a.date < b.date ? -1 : 1);
 
     let h = "";
 
