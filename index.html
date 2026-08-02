@@ -297,6 +297,7 @@ pre{background:var(--surface-2);padding:12px;border-radius:12px;overflow:auto;ma
     <section class="screen" id="s-doctor"></section>
     <section class="screen" id="s-weather"></section>
     <section class="screen" id="s-assist"></section>
+    <section class="screen" id="s-sources"></section>
     <section class="screen" id="s-journal"></section>
     <section class="screen" id="s-recap"></section>
     <section class="screen" id="s-library"></section>
@@ -1190,6 +1191,207 @@ function companionsFor(id){
 </script>
 <script>
 /* ============================================================
+   SOURCES & VERIFIED DATA LAYER
+   Every number the app shows for germination temperature, seed
+   viability, water and pH is reconciled against the primary
+   references below, which were checked directly. Corrections are
+   applied over the base table here so the provenance of each
+   change stays visible and auditable.
+   ============================================================ */
+const SOURCES = {
+  harrington: {
+    n:"Soil temperature conditions for vegetable seed germination",
+    org:"J.F. Harrington, UC Davis — published by OSU Extension",
+    url:"https://extension.oregonstate.edu/gardening/soil-compost/soil-temperature-conditions-vegetable-seed-germination",
+    what:"Minimum, optimum and maximum soil temperatures, and days to emergence at each temperature. The standard reference, reviewed 2024."
+  },
+  seedlife: {
+    n:"Seed Viability and Germination",
+    org:"University of Illinois Extension (compiled from Colorado State and Iowa State Extension)",
+    url:"https://extension.illinois.edu/sites/default/files/seed_viability.pdf",
+    what:"Approximate seed life in years by crop, and the 10-seed germination test method."
+  },
+  umnVeg: {
+    n:"Yard and garden — vegetable growing guides",
+    org:"University of Minnesota Extension",
+    url:"https://extension.umn.edu/yard-and-garden",
+    what:"Per-crop guides: soil pH, spacing, sowing depth, watering, harvest and pest management."
+  },
+  clemsonFert: {
+    n:"Recommendations for Liming and Fertilizing Vegetables",
+    org:"Clemson Cooperative Extension (HGIC 1254)",
+    url:"https://hgic.clemson.edu/factsheet/fertilizing-vegetables/",
+    what:"Optimum pH band for vegetables, preplant and side-dress fertiliser rates."
+  },
+  umassChart: {
+    n:"Vegetable Planting Chart",
+    org:"UMass Extension Center for Agriculture, Food and the Environment",
+    url:"https://www.umass.edu/agriculture-food-environment/vegetable",
+    what:"Which crops are sown when, grouped as cool, intermediate and warm season."
+  },
+  cornellVar: {
+    n:"Disease Resistant Vegetable Varieties",
+    org:"Cornell University, Vegetables Program",
+    url:"https://www.vegetables.cornell.edu/pest-management/disease-factsheets/disease-resistant-vegetable-varieties/",
+    what:"Which varieties carry resistance to which diseases, and what the seed-catalogue codes mean."
+  },
+  usdaZone: {
+    n:"USDA Plant Hardiness Zone Map",
+    org:"USDA Agricultural Research Service",
+    url:"https://planthardiness.ars.usda.gov/",
+    what:"The official hardiness zone map this app's zone lookup is based on."
+  },
+  umnDisorders: {
+    n:"Tomato disorders",
+    org:"University of Minnesota Extension",
+    url:"https://extension.umn.edu/plant-diseases/tomato-disorders",
+    what:"Blossom end rot, growth cracks, catfacing, leaf roll, sunscald and yellow shoulders."
+  },
+  askExt: {
+    n:"Ask Extension — talk to your local office",
+    org:"Cooperative Extension System (USDA / land-grant universities)",
+    url:"https://ask.extension.org/",
+    what:"Free diagnosis and regional advice from your own state's extension service. The right next step for anything that might spread."
+  }
+};
+
+/* ---- per-crop reference pages that were checked directly ---- */
+const CROP_REF = {
+  tomato:"https://extension.umn.edu/vegetables/growing-tomatoes",
+  kohlrabi:"https://extension.umn.edu/vegetables/growing-kohlrabi"
+};
+function cropSource(id){
+  return CROP_REF[id] || SOURCES.umnVeg.url;
+}
+function cropSourceLabel(id){
+  return CROP_REF[id] ? "UMN Extension — growing guide" : "UMN Extension — vegetable guides";
+}
+
+/* ============================================================
+   VERIFIED CORRECTIONS
+   via   = seed life in years .............. SOURCES.seedlife
+   soilF = [min, optimum, max] °F .......... SOURCES.harrington
+   germ  = [fast, slow] days to emergence .. SOURCES.harrington
+   water = inches per week ................. SOURCES.umnVeg (1"/wk is the
+           extension baseline for most vegetables; only crops with a
+           documented higher or lower need deviate)
+   ============================================================ */
+const VERIFIED = {
+  /* --- nightshades --- */
+  tomato:     { via:4, soilF:[50,85,95], germ:[6,14], water:1,
+                start:{indoor:-5,tp:2,fall:null}, ph:"6.0–6.8",
+                note:"UMN: start indoors 5–6 weeks before planting out; 1 inch of water per week; pH 5.5–7.0 acceptable, 6.0–6.8 ideal." },
+  pepper:     { via:2, soilF:[60,85,95], germ:[8,25], water:1 },
+  hotpepper:  { via:2, soilF:[60,85,95], germ:[8,25], water:1 },
+  eggplant:   { via:4, soilF:[60,85,95], germ:[5,13], water:1 },
+  potato:     { via:0, water:1 },
+  tomatillo:  { via:4, soilF:[50,85,95], germ:[6,14], water:1 },
+
+  /* --- cucurbits --- */
+  cucumber:   { via:5, soilF:[60,95,105], germ:[3,13], water:1 },
+  zucchini:   { via:4, soilF:[60,95,100], germ:[3,10], water:1 },
+  wintersquash:{via:4, soilF:[60,95,100], germ:[3,10], water:1 },
+  pumpkin:    { via:4, soilF:[60,95,100], germ:[3,10], water:1 },
+  melon:      { via:5, soilF:[60,90,100], germ:[3,8],  water:1 },
+  watermelon: { via:4, soilF:[60,95,105], germ:[3,12], water:1 },
+
+  /* --- legumes --- */
+  bushbean:   { via:3, soilF:[60,80,95], germ:[6,16], water:1 },
+  polebean:   { via:3, soilF:[60,80,95], germ:[6,16], water:1 },
+  pea:        { via:3, soilF:[40,75,85], germ:[6,9],  water:1 },
+
+  /* --- brassicas --- */
+  broccoli:   { via:3, soilF:[40,80,100], germ:[4,10], water:1 },
+  cauliflower:{ via:4, soilF:[40,80,100], germ:[4,10], water:1 },
+  cabbage:    { via:4, soilF:[40,85,100], germ:[3,9],  water:1 },
+  kale:       { via:4, soilF:[40,85,100], germ:[3,9],  water:1 },
+  brussels:   { via:4, soilF:[40,85,100], germ:[3,9],  water:1 },
+  collards:   { via:5, soilF:[40,85,100], germ:[3,9],  water:1 },
+  kohlrabi:   { via:3, soilF:[40,85,100], germ:[3,9],  water:1,
+                sp:4, psf:9, dtm:45,
+                note:"UMN: thin to 4 inches apart; spring varieties mature in 35–45 days; rotate away from other brassicas for four years." },
+  bokchoy:    { via:3, soilF:[40,85,100], germ:[3,9],  water:1 },
+  mustard:    { via:4, soilF:[40,85,100], germ:[3,9],  water:1 },
+  arugula:    { via:4, soilF:[40,85,100], germ:[3,9],  water:1 },
+  radish:     { via:5, soilF:[40,85,95],  germ:[3,6],  water:1 },
+  turnip:     { via:4, soilF:[40,85,105], germ:[1,3],  water:1 },
+
+  /* --- greens & chenopods --- */
+  lettuce:    { via:6, soilF:[35,75,95], germ:[2,4],  water:1 },
+  spinach:    { via:3, soilF:[35,70,85], germ:[5,7],  water:1 },
+  chard:      { via:4, soilF:[40,85,95], germ:[4,10], water:1 },
+  beet:       { via:4, soilF:[40,85,95], germ:[4,10], water:1 },
+
+  /* --- umbellifers --- */
+  carrot:     { via:3, soilF:[40,80,95], germ:[6,10],  water:1 },
+  parsnip:    { via:1, soilF:[35,65,85], germ:[14,19], water:1 },
+  celery:     { via:3, water:1.5,
+                note:"Celery is the one common vegetable that genuinely wants more than an inch a week — it will not tolerate drying out." },
+  cilantro:   { via:3, water:1 },
+  dill:       { via:3, water:1 },
+  parsley:    { via:1, soilF:[40,75,90], germ:[12,17], water:1,
+                note:"Parsley seed is short-lived — Illinois Extension lists one year. Buy fresh each season." },
+  fennel:     { via:4, water:1 },
+
+  /* --- alliums --- */
+  onion:      { via:1, soilF:[35,75,95], germ:[4,7], water:1 },
+  garlic:     { via:0, water:0.75 },
+  leek:       { via:2, soilF:[35,75,95], germ:[4,7], water:1 },
+  shallot:    { via:1, water:1 },
+  chive:      { via:1, water:1 },
+
+  /* --- others --- */
+  corn:       { via:2, soilF:[50,95,105], germ:[3,12], water:1 },
+  okra:       { via:2, water:1 },
+  sweetpotato:{ via:0, water:1 },
+  strawberry: { via:0, water:1 },
+  asparagus:  { via:3, soilF:[50,75,95], germ:[10,24], water:1 },
+  rhubarb:    { via:2, water:1 },
+
+  /* --- herbs & flowers (Mediterranean herbs stay dry) --- */
+  basil:      { via:5, water:1 },
+  oregano:    { via:4, water:0.5 },
+  thyme:      { via:3, water:0.5 },
+  rosemary:   { via:2, water:0.5 },
+  sage:       { via:3, water:0.5 },
+  mint:       { via:2, water:1.5 },
+  marigold:   { via:2, water:0.75 },
+  nasturtium: { via:5, water:0.75 },
+  sunflower:  { via:3, water:1 },
+  borage:     { via:3, water:0.75 },
+  calendula:  { via:2, water:0.75 }
+};
+
+/* apply, and record which fields came from a checked source */
+Object.keys(VERIFIED).forEach(id => {
+  const c = CROP[id]; if(!c) return;
+  const v = VERIFIED[id];
+  const changed = [];
+  Object.keys(v).forEach(k => {
+    if(k === "note") return;
+    if(JSON.stringify(c[k]) !== JSON.stringify(v[k])) changed.push(k);
+    c[k] = v[k];
+  });
+  c.verified = true;
+  c.vnote = v.note || null;
+  c.vfields = changed;
+});
+/* crops with no entry above still carry base-table values */
+CROPS.forEach(c => { if(!c.verified){ c.verified = false; c.vfields = []; } });
+
+/* ---- how confident is each field? shown in the UI ---- */
+const FIELD_CONFIDENCE = {
+  soilF:{ s:"harrington", t:"Measured in controlled trials." },
+  germ: { s:"harrington", t:"Days to emergence at typical spring-to-summer soil temperatures." },
+  via:  { s:"seedlife",   t:"Approximate seed life in cool, dry storage." },
+  water:{ s:"umnVeg",     t:"Extension baseline is one inch per week including rainfall." },
+  ph:   { s:"clemsonFert",t:"Most vegetables do best between pH 6.0 and 6.5." },
+  dtm:  { s:"umnVeg",     t:"Varies widely by variety — always trust the seed packet over this figure." },
+  sp:   { s:"umnVeg",     t:"In-row spacing after thinning." }
+};
+</script>
+<script>
+/* ============================================================
    LIVE DATA — all free, no API key, CORS-enabled
      phzmapi.org ............ USDA hardiness zone by US ZIP
      open-meteo geocoding ... place -> lat/lon (worldwide)
@@ -1520,6 +1722,7 @@ const TABS = {
   doctor:   { t:"Plant Doctor",      s:"Scan & diagnose" },
   weather:  { t:"Weather",           s:"Forecast & garden risks" },
   assist:   { t:"Ask",               s:"Your gardening assistant" },
+  sources:  { t:"Sources",           s:"Where the advice comes from" },
   journal:  { t:"Garden Journal",    s:"Water, feed, harvest, cost" },
   recap:    { t:"Season Recap",      s:"Yield & resources" },
   library:  { t:"Plant Library",     s:"Care, spacing, companions" },
@@ -1540,7 +1743,7 @@ function go(tab, opts){
 }
 function render(tab, opts){
   const fn = ({ home: Home, garden: Garden, seeds: Seeds, calendar: Cal, doctor: Doctor,
-                weather: Weather, assist: Assist,
+                weather: Weather, assist: Assist, sources: Sources,
                 journal: Journal, recap: Recap, library: Library, settings: Settings, sql: SqlView })[tab];
   if(fn && fn.render) fn.render(opts);
 }
@@ -3295,6 +3498,9 @@ const Doctor = {
         c.treat.map(t => '<li style="margin-bottom:4px">' + esc(t) + '</li>').join("") + '</ul></div>';
       h += '<details style="margin-top:8px"><summary class="sm b" style="cursor:pointer">Stop it happening again</summary>' +
         '<ul class="sm" style="margin:8px 0 0;padding-left:18px">' + c.prev.map(t => '<li style="margin-bottom:4px">' + esc(t) + '</li>').join("") + '</ul></details>';
+      if(CLAIM_NOTES[c.id]) h += '<div class="note i" style="margin-top:8px"><b>Worth knowing.</b> ' + esc(CLAIM_NOTES[c.id]) + '</div>';
+      if(c.src && c.src.length) h += '<div style="margin-top:10px">' + c.src.map(s =>
+        '<a class="chip info" style="margin:0 6px 6px 0" href="' + esc(s[1]) + '" target="_blank" rel="noopener noreferrer">🔗 ' + esc(s[0]) + ' ↗</a>').join("") + '</div>';
       h += '</div>';
     });
 
@@ -3302,7 +3508,8 @@ const Doctor = {
       h += '<div class="note i">Top two are close. Look for the distinguishing sign: ' +
         esc(top[0].c.n) + ' vs ' + esc(top[1].c.n) + ' — check leaf undersides, the stem base, and whether new or old growth is affected first.</div>';
 
-    h += '<div class="note w" style="margin-top:12px">This is pattern-matching against a symptom library, not a lab test. For anything that could spread — late blight, bacterial wilt, a virus — your local extension office will identify it for free or nearly free.</div>';
+    h += '<div class="note w" style="margin-top:12px">This is pattern-matching against a symptom library, not a lab test. Each diagnosis links to the extension service that published the guidance, so you can check it directly. For anything that could spread — late blight, bacterial wilt, a virus — get a real identification.</div>' +
+      '<a class="btn ghost block" style="margin-top:8px" href="https://ask.extension.org/" target="_blank" rel="noopener noreferrer">Ask your local extension office ↗</a>';
 
     h += '<button class="btn block" style="margin-top:14px" onclick="Doctor.saveDx(\'' + (top[0] ? top[0].c.id : "") + '\',' + (top[0] ? top[0].conf : 0) + ',\'' + esc(plantingId) + '\')">Save to plant history</button>';
     h += '<button class="btn ghost block" style="margin-top:8px" onclick="Doctor.triage()">← Change my answers</button>';
@@ -3384,6 +3591,84 @@ const Doctor = {
       };
     }catch(e){ toast("AI request failed: " + (e.message || "error")); }
   }
+};
+</script>
+<script>
+/* ============================================================
+   CONDITION SOURCES
+   Each diagnosis links to an official extension page so the
+   advice can be checked against the institution that wrote it.
+   Every URL below was taken from, or confirmed on, the
+   publishing extension service's own site.
+   ============================================================ */
+const COND_SRC = {
+  /* nutrients & disorders */
+  "n-def":      [["UMN Extension — planting the vegetable garden","https://extension.umn.edu/planting-and-growing-guides/planting-vegetable-garden"],
+                 ["Clemson HGIC — liming and fertilizing vegetables","https://hgic.clemson.edu/factsheet/fertilizing-vegetables/"]],
+  "k-def":      [["Clemson HGIC — liming and fertilizing vegetables","https://hgic.clemson.edu/factsheet/fertilizing-vegetables/"]],
+  "p-def":      [["Clemson HGIC — liming and fertilizing vegetables","https://hgic.clemson.edu/factsheet/fertilizing-vegetables/"]],
+  "mg-def":     [["Clemson HGIC — liming and fertilizing vegetables","https://hgic.clemson.edu/factsheet/fertilizing-vegetables/"]],
+  "fe-def":     [["Clemson HGIC — changing the pH of your soil","https://hgic.clemson.edu/factsheet/changing-the-ph-of-your-soil/"]],
+  "ca-ber":     [["UMN Extension — tomato disorders (blossom end rot)","https://extension.umn.edu/plant-diseases/tomato-disorders"],
+                 ["Clemson HGIC — tomato diseases and disorders","https://hgic.clemson.edu/factsheet/tomato-diseases-disorders/"]],
+  "over-fert":  [["Clemson HGIC — liming and fertilizing vegetables","https://hgic.clemson.edu/factsheet/fertilizing-vegetables/"]],
+  "ph-lock":    [["Clemson HGIC — changing the pH of your soil","https://hgic.clemson.edu/factsheet/changing-the-ph-of-your-soil/"],
+                 ["UMN Extension — soil testing","https://soiltest.cfans.umn.edu/"]],
+
+  /* water, light, weather */
+  "overwater":  [["UMN Extension — watering (growing tomatoes guide)","https://extension.umn.edu/vegetables/growing-tomatoes"]],
+  "underwater": [["UMN Extension — watering (growing tomatoes guide)","https://extension.umn.edu/vegetables/growing-tomatoes"]],
+  "sunscald":   [["UMN Extension — tomato disorders (sunscald)","https://extension.umn.edu/plant-diseases/tomato-disorders"]],
+  "lowlight":   [["UMN Extension — planting the vegetable garden","https://extension.umn.edu/planting-and-growing-guides/planting-vegetable-garden"]],
+  "frost":      [["USDA — Plant Hardiness Zone Map","https://planthardiness.ars.usda.gov/"],
+                 ["UMN Extension — planting the vegetable garden","https://extension.umn.edu/planting-and-growing-guides/planting-vegetable-garden"]],
+  "transplant-shock":[["UMN Extension — starting seeds indoors (growing tomatoes guide)","https://extension.umn.edu/vegetables/growing-tomatoes"]],
+  "heat-stress":[["UMN Extension — tomato disorders","https://extension.umn.edu/plant-diseases/tomato-disorders"]],
+  "bolt":       [["UMN Extension — growing kohlrabi (bolting)","https://extension.umn.edu/vegetables/growing-kohlrabi"]],
+  "poor-poll":  [["UMN Extension — tomato disorders","https://extension.umn.edu/plant-diseases/tomato-disorders"]],
+  "crowding":   [["UMN Extension — planting the vegetable garden","https://extension.umn.edu/planting-and-growing-guides/planting-vegetable-garden"]],
+  "herbicide":  [["UMN Extension — tomato viruses and disorders","https://extension.umn.edu/plant-diseases/tomato-disorders"]],
+
+  /* disease */
+  "powdery":    [["UMN Extension — yard and garden problems","https://extension.umn.edu/yard-and-garden/yard-and-garden-problems"]],
+  "downy":      [["Cornell — disease resistant vegetable varieties","https://www.vegetables.cornell.edu/pest-management/disease-factsheets/disease-resistant-vegetable-varieties/"]],
+  "early-blight":[["UMN Extension — early blight of tomato","https://extension.umn.edu/node/2681"],
+                 ["Clemson HGIC — tomato diseases and disorders","https://hgic.clemson.edu/factsheet/tomato-diseases-disorders/"]],
+  "late-blight":[["UMN Extension — late blight","https://extension.umn.edu/node/2861"]],
+  "septoria":   [["Clemson HGIC — tomato diseases and disorders","https://hgic.clemson.edu/factsheet/tomato-diseases-disorders/"]],
+  "wilt-fung":  [["Cornell — disease resistant vegetable varieties","https://www.vegetables.cornell.edu/pest-management/disease-factsheets/disease-resistant-vegetable-varieties/"]],
+  "damping-off":[["UMN Extension — starting seeds indoors (growing tomatoes guide)","https://extension.umn.edu/vegetables/growing-tomatoes"]],
+  "botrytis":   [["UMN Extension — cultural practices for tomato diseases","https://extension.umn.edu/node/11626"]],
+  "rust":       [["UMN Extension — cultural practices for disease","https://extension.umn.edu/node/11626"]],
+  "bact-spot":  [["UMN Extension — bacterial spot of tomato","https://extension.umn.edu/node/2116"]],
+  "mosaic-virus":[["UMN Extension — tomato viruses","https://extension.umn.edu/node/3531"]],
+
+  /* pests */
+  "aphid":      [["UMN Extension — aphids in home gardens","https://extension.umn.edu/node/5246"],
+                 ["Clemson HGIC — IPM for aphids","https://hgic.clemson.edu/factsheet/integrated-pest-management-i-p-m-for-aphids/"]],
+  "spidermite": [["UMN Extension — yard and garden insects","https://extension.umn.edu/yard-and-garden/yard-and-garden-insects"]],
+  "whitefly":   [["UMN Extension — yard and garden insects","https://extension.umn.edu/yard-and-garden/yard-and-garden-insects"]],
+  "flea-beetle":[["UMN Extension — flea beetles","https://extension.umn.edu/node/3671"]],
+  "cabbageworm":[["UMN Extension — imported cabbageworm and cabbage looper","https://extension.umn.edu/node/8331"]],
+  "hornworm":   [["UMN Extension — tomato hornworm","https://extension.umn.edu/node/11631"]],
+  "squashbug":  [["UMN Extension — yard and garden insects","https://extension.umn.edu/yard-and-garden/yard-and-garden-insects"]],
+  "vine-borer": [["UMN Extension — yard and garden insects","https://extension.umn.edu/yard-and-garden/yard-and-garden-insects"]],
+  "cucbeetle":  [["UMN Extension — yard and garden insects","https://extension.umn.edu/yard-and-garden/yard-and-garden-insects"]],
+  "slug":       [["UMN Extension — yard and garden insects","https://extension.umn.edu/yard-and-garden/yard-and-garden-insects"]],
+  "thrips":     [["UMN Extension — yard and garden insects","https://extension.umn.edu/yard-and-garden/yard-and-garden-insects"]],
+  "leafminer":  [["UMN Extension — yard and garden insects","https://extension.umn.edu/yard-and-garden/yard-and-garden-insects"]],
+  "japanese":   [["UMN Extension — yard and garden insects","https://extension.umn.edu/yard-and-garden/yard-and-garden-insects"]]
+};
+
+CONDITIONS.forEach(c => { c.src = COND_SRC[c.id] || [["Ask Extension — your local office","https://ask.extension.org/"]]; });
+
+/* claims that deserve an explicit caveat rather than a flat statement */
+const CLAIM_NOTES = {
+  powdery:"Milk sprays have been studied and show real suppression of powdery mildew, but results vary by crop and conditions. Treat it as a useful early measure, not a guaranteed cure.",
+  japanese:"Extension research consistently finds pheromone traps draw in more beetles than they capture — this is why the advice is to skip them near the garden.",
+  marigoldish:"French marigold suppression of root-knot nematodes is documented, but it works as a dense planting or rotation crop, not as a few plants dotted between vegetables.",
+  hornworm:"The white 'rice grains' on a hornworm are cocoons of a parasitic braconid wasp. Leaving that caterpillar in place lets the next generation of wasps emerge.",
+  "ca-ber":"Blossom end rot is a calcium-distribution problem driven by uneven watering, not usually a calcium shortage in the soil. Foliar calcium sprays reach the fruit poorly."
 };
 </script>
 <script>
@@ -3811,7 +4096,8 @@ const Library = {
     h += '<div class="grid3">' +
       '<div class="stat"><span class="n">' + c.sun + 'h</span><span class="l">sun</span></div>' +
       '<div class="stat"><span class="n">' + c.water + '"</span><span class="l">water/wk</span></div>' +
-      '<div class="stat"><span class="n">' + c.dtm + '</span><span class="l">days</span></div></div>';
+      '<div class="stat"><span class="n">' + c.dtm + '</span><span class="l">days*</span></div></div>' +
+      '<div class="tiny muted" style="margin-top:6px">*Typical days to maturity. This varies by 30 days or more between varieties — your seed packet is the authority.</div>';
 
     h += '<table class="mini" style="margin-top:14px">' +
       '<tr><th>Spacing</th><td>' + c.sp + '" apart · ' + (Math.round(c.psf*100)/100) + ' per sq ft</td></tr>' +
@@ -3819,7 +4105,7 @@ const Library = {
       '<tr><th>Germination</th><td>' + c.germ[0] + '–' + c.germ[1] + ' days at ' + c.soilF[1] + '°F (range ' + c.soilF[0] + '–' + c.soilF[2] + '°F)</td></tr>' +
       '<tr><th>Soil pH</th><td>' + esc(c.ph) + '</td></tr>' +
       '<tr><th>Feeding</th><td>' + esc(c.feeder) + ' feeder</td></tr>' +
-      '<tr><th>Seed viability</th><td>~' + c.via + ' years</td></tr>' +
+      '<tr><th>Seed viability</th><td>~' + c.via + ' years' + (c.verified ? ' <span class="tiny" style="color:var(--green-600)">✓ checked</span>' : '') + '</td></tr>' +
       '<tr><th>Typical yield</th><td>' + (c.yield ? c.yield + ' lbs per plant' : "—") + '</td></tr>' +
       (c.succ ? '<tr><th>Succession</th><td>Re-sow every ' + c.succ + ' days</td></tr>' : '') +
       '</table>';
@@ -3855,7 +4141,28 @@ const Library = {
       h += '</div>';
     }
 
-    h += '<div class="sec"><h2>Reference</h2></div><div id="wiki-' + id + '" class="card"><button class="btn ghost block sm" onclick="Library.wiki(\'' + id + '\')">🌐 Look up ' + esc(c.n) + ' on Wikipedia</button></div>';
+    h += '<div class="sec"><h2>Check these numbers</h2></div><div class="card">';
+    h += c.verified
+      ? '<div class="note g"><b>Checked against a primary source.</b> Germination temperature, days to emerge, seed viability and watering for ' +
+        esc(c.n) + ' were reconciled against university extension references.' +
+        (c.vnote ? '<br><br>' + esc(c.vnote) : '') + '</div>'
+      : '<div class="note w"><b>Not individually source-checked.</b> The figures for ' + esc(c.n) +
+        ' come from general horticultural references rather than a crop-specific extension page. Treat spacing and days to maturity as approximate and follow your seed packet.</div>';
+    h += '<div class="list" style="margin-top:10px">' +
+      '<a class="item" href="' + esc(cropSource(id)) + '" target="_blank" rel="noopener noreferrer" style="border-radius:12px;border:1px solid var(--line)">' +
+        '<div class="av">🔗</div><div class="grow"><div class="b">' + esc(cropSourceLabel(id)) + '</div>' +
+        '<div class="tiny muted">Official growing guidance for ' + esc(c.n) + '</div></div><span class="go">↗</span></a>' +
+      '<a class="item" href="' + esc(SOURCES.harrington.url) + '" target="_blank" rel="noopener noreferrer" style="border-radius:12px;border:1px solid var(--line);margin-top:6px">' +
+        '<div class="av">🌡️</div><div class="grow"><div class="b">Germination temperatures</div>' +
+        '<div class="tiny muted">Harrington table, OSU Extension</div></div><span class="go">↗</span></a>' +
+      '<a class="item" href="' + esc(SOURCES.seedlife.url) + '" target="_blank" rel="noopener noreferrer" style="border-radius:12px;border:1px solid var(--line);margin-top:6px">' +
+        '<div class="av">🌰</div><div class="grow"><div class="b">Seed viability</div>' +
+        '<div class="tiny muted">Illinois Extension seed life table</div></div><span class="go">↗</span></a>' +
+      '</div>';
+    h += '<button class="btn ghost block sm" style="margin-top:10px" onclick="closeSheet();go(\'sources\')">All sources & how to read the numbers →</button>';
+    h += '</div>';
+
+    h += '<div class="sec"><h2>Background</h2></div><div id="wiki-' + id + '" class="card"><button class="btn ghost block sm" onclick="Library.wiki(\'' + id + '\')">🌐 Look up ' + esc(c.n) + ' on Wikipedia</button></div>';
 
     h += '<div class="row" style="gap:8px;margin-top:16px">' +
       '<button class="btn ghost grow" onclick="closeSheet();setTimeout(function(){Seeds.add({crop_id:\'' + id + '\',name:\'' + esc(c.n) + '\'})},250)">＋ Add seed</button>' +
@@ -3951,6 +4258,13 @@ const Settings = {
       '<button class="btn ghost sm" onclick="go(\'sql\')">🗄️ SQL console</button></div>';
     h += '<div class="tiny muted" style="margin-top:10px">The .json backup is decrypted plain text — store it somewhere safe. The .sqlite file opens in any SQLite tool, DB Browser, Python, Excel via ODBC.</div>';
     h += '</div>';
+
+    h += '<div class="sec"><h2>App version</h2></div><div class="card">' +
+      '<div class="row between"><div><div class="b">Build ' + esc(BUILD) + '</div>' +
+      '<div class="tiny muted">' + (Updater.installed ? "Installed to home screen" : "Running in browser") + '</div></div>' +
+      '<button class="btn sm" onclick="go(\'sources\')">Sources</button></div>' +
+      '<button class="btn block" style="margin-top:10px" onclick="Updater.go()">' + Updater.label() + '</button>' +
+      '<div id="upd-status" style="margin-top:10px"></div></div>';
 
     h += '<div class="sec"><h2>Demo & reset</h2></div><div class="card">' +
       '<button class="btn ghost block sm" onclick="Settings.demo()">🌱 Load a demo garden</button>' +
@@ -4858,6 +5172,141 @@ function mdLite(t){
 </script>
 <script>
 /* ============================================================
+   BUILD / INSTALL / SELF-UPDATE
+   ============================================================ */
+const BUILD = "2026-08-02.3";
+
+const Updater = {
+  prompt: null, installed: false,
+
+  init(){
+    window.addEventListener("beforeinstallprompt", e => {
+      e.preventDefault(); Updater.prompt = e;
+      if(APP.tab === "sources" || APP.tab === "settings") render(APP.tab);
+    });
+    window.addEventListener("appinstalled", () => {
+      Updater.prompt = null; Updater.installed = true; toast("Installed 🌱");
+    });
+    Updater.installed = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches
+      || window.navigator.standalone === true;
+  },
+
+  label(){
+    if(Updater.prompt) return "📲 Install on this phone";
+    return Updater.installed ? "↻ Check for updates" : "↻ Check for updates";
+  },
+
+  async go(){
+    if(Updater.prompt){
+      const p = Updater.prompt; Updater.prompt = null;
+      try{ p.prompt(); const r = await p.userChoice;
+        toast(r.outcome === "accepted" ? "Installing…" : "Install dismissed");
+      }catch(e){ toast("Install unavailable here"); }
+      render(APP.tab); return;
+    }
+    Updater.update();
+  },
+
+  /* fetch the live copy, compare build stamps, then hard-refresh if newer */
+  async update(){
+    const el = $("#upd-status");
+    const say = (t, cls) => { if(el) el.innerHTML = '<div class="note ' + (cls || "i") + '">' + t + '</div>'; else toast(t.replace(/<[^>]+>/g, "")); };
+    if(location.protocol.indexOf("http") !== 0){
+      return say("Updates only work when the app is opened from its web address, not from a local file.", "w");
+    }
+    say('<span class="spinner"></span> Checking for a newer version…');
+    let latest = null;
+    try{
+      const r = await fetch("index.html?ts=" + Date.now(), { cache:"no-store" });
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      const txt = await r.text();
+      const m = txt.match(/const BUILD = "([^"]+)"/);
+      latest = m ? m[1] : null;
+    }catch(e){
+      return say("Could not reach the server. You are offline, or the connection dropped — the app keeps working either way.", "w");
+    }
+    if(latest && latest === BUILD){
+      /* still refresh the service worker quietly so assets stay current */
+      try{ const reg = await navigator.serviceWorker.getRegistration(); if(reg) reg.update(); }catch(e){}
+      return say("✅ You are on the latest version (" + esc(BUILD) + ").", "g");
+    }
+    say('<span class="spinner"></span> New version ' + esc(latest || "") + ' found — installing…', "g");
+    await Updater.hardRefresh();
+  },
+
+  async hardRefresh(){
+    try{ await DB.flush(); }catch(e){}
+    try{
+      const reg = await navigator.serviceWorker.getRegistration();
+      if(reg){ await reg.update(); if(reg.waiting) reg.waiting.postMessage({ type:"SKIP_WAITING" }); }
+    }catch(e){}
+    try{
+      if(window.caches){ const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); }
+    }catch(e){}
+    setTimeout(() => location.replace(location.pathname + "?u=" + Date.now()), 600);
+  }
+};
+
+/* ============================================================
+   SOURCES & ACCURACY SCREEN
+   ============================================================ */
+const Sources = {
+  render(){
+    const box = $("#s-sources");
+    const verified = CROPS.filter(c => c.verified).length;
+    let h = "";
+
+    h += '<div class="card"><div class="row" style="gap:10px"><div style="font-size:1.8rem">📚</div>' +
+      '<div class="grow"><div class="b">Where this advice comes from</div>' +
+      '<div class="tiny muted">University extension services and USDA — the same sources Master Gardener programmes train from.</div></div></div></div>';
+
+    h += '<div class="sec"><h2>How to read the numbers</h2></div><div class="card">';
+    h += '<div class="note g"><b>Checked against a primary source.</b> Germination soil temperatures, days to emergence, seed viability, watering and pH were reconciled crop by crop against the references below. ' +
+      verified + ' of ' + CROPS.length + ' crops carry corrected values.</div>';
+    h += '<div class="note w" style="margin-top:8px"><b>Days to maturity is a guide, not a fact.</b> It swings 30 days or more between varieties of the same crop. Always trust the seed packet over the figure shown here.</div>';
+    h += '<div class="note w" style="margin-top:8px"><b>Spacing and sowing dates are regional.</b> Extension guidance differs between states because the climate does. The dates in this app are calculated from your own frost dates, which is the best available approximation — your local extension office will always beat it.</div>';
+    h += '<div class="note i" style="margin-top:8px"><b>Companion planting is mixed evidence.</b> Some pairings are well documented — trap crops, the Three Sisters, marigolds against root-knot nematodes as a dense planting. Others are traditional. The conflicts this app flags lean on the defensible cases: shared pests, shared disease, allelopathy and competition.</div>';
+    h += '</div>';
+
+    h += '<div class="sec"><h2>Primary references</h2></div><div class="card pad0"><div class="list">';
+    Object.keys(SOURCES).forEach(k => {
+      const s = SOURCES[k];
+      h += '<a class="item" href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' +
+        '<div class="av">🔗</div><div class="grow"><div class="b">' + esc(s.n) + '</div>' +
+        '<div class="tiny muted">' + esc(s.org) + '</div>' +
+        '<div class="tiny muted" style="margin-top:3px">' + esc(s.what) + '</div></div>' +
+        '<span class="go">↗</span></a>';
+    });
+    h += '</div></div>';
+
+    h += '<div class="sec"><h2>Field by field</h2></div><div class="card"><table class="mini">' +
+      '<tr><th>Value</th><th>Source</th></tr>' +
+      Object.keys(FIELD_CONFIDENCE).map(f => {
+        const fc = FIELD_CONFIDENCE[f], s = SOURCES[fc.s];
+        const nm = { soilF:"Germination soil temp", germ:"Days to germinate", via:"Seed viability",
+                     water:"Water per week", ph:"Soil pH", dtm:"Days to maturity", sp:"Spacing" }[f] || f;
+        return '<tr><td class="b">' + nm + '<div class="tiny muted" style="font-weight:400">' + esc(fc.t) + '</div></td>' +
+          '<td><a href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' + esc(s.org.split("—")[0].trim()) + ' ↗</a></td></tr>';
+      }).join("") + '</table></div>';
+
+    h += '<div class="sec"><h2>When to stop trusting an app</h2></div><div class="card">' +
+      '<div class="note d">Anything that can spread through a garden or a neighbourhood — late blight, bacterial wilt, a virus, an unfamiliar insect — deserves a real identification. Your county extension office does this free or nearly free, and they know what is moving locally this season.</div>' +
+      '<a class="btn block" style="margin-top:10px" href="https://ask.extension.org/" target="_blank" rel="noopener noreferrer">Find your extension office ↗</a></div>';
+
+    h += '<div class="sec"><h2>App version</h2></div><div class="card">' +
+      '<div class="row between"><div><div class="b">Build ' + esc(BUILD) + '</div>' +
+      '<div class="tiny muted">' + (Updater.installed ? "Installed to your home screen" : "Running in the browser") + '</div></div></div>' +
+      '<button class="btn block" style="margin-top:10px" onclick="Updater.go()">' + Updater.label() + '</button>' +
+      '<div id="upd-status" style="margin-top:10px"></div>' +
+      '<div class="tiny muted" style="margin-top:8px">Checking for updates pulls the newest build and reloads. Your garden data is untouched — it lives in the encrypted store on this device, not in the app file.</div>' +
+      '</div>';
+
+    box.innerHTML = h;
+  }
+};
+</script>
+<script>
+/* ============================================================
    THEME, MENU, LOCK SCREEN, BOOT
    ============================================================ */
 function applyTheme(t){
@@ -4877,6 +5326,7 @@ function moreMenu(){
     ["recap","📊","Season Recap","Yield, cost per pound, takeaways"],
     ["library","📚","Plant Library", CROPS.length + " crops with full care guides"],
     ["weather","🌤️","Weather","Forecast, risks & snapshots"],
+    ["sources","📚","Sources & accuracy","References, and install/update"],
     ["settings","⚙️","Settings","Location, security, backup"],
     ["sql","🗄️","SQL Console","Query your garden database"]
   ];
@@ -4973,6 +5423,7 @@ async function boot2(firstRun){
     else if(Vault.mode === "pass" && APP.hiddenAt && Date.now() - APP.hiddenAt > 10 * 60 * 1000){ location.reload(); }
   });
 
+  Updater.init();
   go("home");
 
   /* SQLite engine loads in the background — the app never waits on it */

@@ -2,7 +2,7 @@
    App shell is cached so the whole app works with no signal at all.
    Weather / zone / Wikipedia calls always go to the network and simply
    fail soft when offline; the app is built to expect that. */
-const VERSION = "pf-v1";
+const VERSION = "pf-v3";
 const SHELL = [
   "./",
   "./index.html",
@@ -64,4 +64,8 @@ self.addEventListener("fetch", e => {
       }))
     );
   }
+});
+
+self.addEventListener("message", e => {
+  if(e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
 });
