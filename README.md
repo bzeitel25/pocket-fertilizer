@@ -22,7 +22,7 @@ On a phone, use **Add to Home Screen**. It installs like a native app — own ic
 Plots contain beds; beds are adjustable grids from 1×1 to 24×24, with any square size (12″ by default, the classic square-foot method). Tap a square to plant it, or arm a crop and paint across several. Per-square plant counts come from real spacing data — 1 tomato, 4 lettuce, 9 beets, 16 carrots. Companion conflicts are flagged on the grid itself as you plant, and rotation history tracks which plant family last occupied each bed so you get a warning when one comes back too soon.
 
 ### Crop database
-58 crops with sun hours, weekly water, spacing, sow depth, germination days and soil temperatures, days to maturity, pH range, feeder class, seed viability, succession interval and typical yield — plus companions, antagonists, and written guidance on growing, feeding and harvesting each one.
+60 crops with sun hours, weekly water, spacing, sow depth, germination days and soil temperatures, days to maturity, pH range, feeder class, seed viability, succession interval and typical yield — plus companions, antagonists, and written guidance on growing, feeding and harvesting each one.
 
 ### Seed bank
 Photograph packets or type them in. Tracks quantity, brand, lot, packed year, printed expiry, germination rate and cost. Each packet gets a viability level and an expected germination percentage derived from that crop's seed life, so fading and expired packets surface before they waste bed space. Includes the 10-seed paper-towel test calculator.
@@ -31,7 +31,7 @@ Photograph packets or type them in. Tracks quantity, brand, lot, packed year, pr
 Builds itself. Every packet in the bank generates sow, transplant and fall-sowing dates anchored to your frost dates, plus projected first-harvest dates for anything planted and warnings as seed reaches its viability limit. Month grid, colour-coded timeline, and your own tasks alongside.
 
 ### Plant doctor
-Capture from the in-app camera or upload a photo. The image is analysed on-device for green/yellow/brown ratios and whether damage concentrates at the leaf margins, which pre-selects the matching symptoms. 84 observations then run against 34 conditions — nutrient deficiencies, watering and light problems, fungal and bacterial disease, 14 pests, and cultural issues like herbicide drift and pH lockout. You get ranked diagnoses with confidence, a 48-hour action plan, prevention, and a note when the top two are too close to call. Everything saves to plant history.
+Capture from the in-app camera or upload a photo. The image is analysed on-device for green/yellow/brown ratios and whether damage concentrates at the leaf margins, which pre-selects the matching symptoms. 63 observations then run against 43 conditions — nutrient deficiencies, watering and light problems, fungal and bacterial disease, pests, and cultural issues like herbicide drift and pH lockout. You get ranked diagnoses with confidence, a 48-hour action plan, prevention, and a note when the top two are too close to call. Everything saves to plant history.
 
 ### Weather
 Current conditions, the week ahead and the week just gone, sunrise/sunset and UV, plus a per-bed watering call that subtracts actual rainfall from what each bed needs. Forecasts are read for what they mean to plants: frost nights, heat above the 90°F threshold where tomato and pepper pollen goes sterile, wet spells that spread blight, dry weeks that need deep watering. Snapshot buttons render the day or the week as a shareable image.
@@ -88,6 +88,34 @@ Optionally, a Claude API key can also be added to enable reading seed packets fr
 
 ---
 
+## Accuracy and sourcing
+
+Every figure the app shows for germination soil temperature, days to emergence, seed viability, watering and pH has been reconciled against a primary reference, and the app links to that reference from the crop page. A **Sources & accuracy** screen lists them all and explains how much weight each number deserves.
+
+Primary references used:
+
+| Reference | Publisher |
+|---|---|
+| [Soil temperature conditions for vegetable seed germination](https://extension.oregonstate.edu/gardening/soil-compost/soil-temperature-conditions-vegetable-seed-germination) | J.F. Harrington, UC Davis — via OSU Extension |
+| [Seed Viability and Germination](https://extension.illinois.edu/sites/default/files/seed_viability.pdf) | University of Illinois Extension (from Colorado State and Iowa State) |
+| [Vegetable growing guides](https://extension.umn.edu/yard-and-garden) | University of Minnesota Extension |
+| [Liming and Fertilizing Vegetables](https://hgic.clemson.edu/factsheet/fertilizing-vegetables/) | Clemson Cooperative Extension |
+| [Disease Resistant Vegetable Varieties](https://www.vegetables.cornell.edu/pest-management/disease-factsheets/disease-resistant-vegetable-varieties/) | Cornell University |
+| [Plant Hardiness Zone Map](https://planthardiness.ars.usda.gov/) | USDA Agricultural Research Service |
+
+Each of the 43 diagnoses in the Plant Doctor links to the extension page that published the guidance. Claims where the evidence is genuinely mixed — milk sprays on powdery mildew, marigolds against nematodes, Japanese beetle traps — carry an explicit caveat rather than being stated flatly.
+
+Two things the app is deliberately honest about: days to maturity swings 30 days or more between varieties of the same crop, so the seed packet always wins; and spacing and sowing dates are regional, so a local extension office will always beat a calculated date.
+
+## Installing and updating
+
+The Sources screen and Settings both carry one button that does the right thing for where you are:
+
+- Not installed yet → **Install on this phone**, using the browser's own install prompt.
+- Already installed → **Check for updates**. It fetches the live copy, compares build stamps, and either confirms you are current or pulls the new build, clears the cached app shell, and reloads.
+
+Garden data is never touched by an update — it lives in the encrypted store on the device, separate from the app file.
+
 ## Limits worth knowing
 
 - Frost dates are ten-year medians. A south wall, a frost pocket or a hilltop can shift them by a week or more — override them in Settings.
@@ -115,4 +143,4 @@ For local development, serve rather than opening the file directly — the camer
 python3 -m http.server 8000
 ```
 
-89 automated checks run against a headless DOM covering boot and decryption round-trip, season maths, companion logic, grid placement and resize pruning, seed viability, calendar generation, diagnostic ranking, every screen and modal, assistant tool execution, the SQL guard, snapshot rendering, and confirmation that the persisted vault is unreadable ciphertext.
+113 automated checks run against a headless DOM covering boot and decryption round-trip, season maths, companion logic, grid placement and resize pruning, seed viability, calendar generation, diagnostic ranking, every screen and modal, assistant tool execution, the SQL guard, snapshot rendering, and confirmation that the persisted vault is unreadable ciphertext.
