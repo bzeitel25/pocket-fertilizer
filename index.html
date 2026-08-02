@@ -233,6 +233,12 @@ textarea{min-height:80px;resize:vertical}
 .cell.sel{outline:3px solid var(--sun);outline-offset:-3px;z-index:2}
 .cell .qty{position:absolute;bottom:1px;right:2px;font-size:9px;background:rgba(0,0,0,.55);color:#fff;border-radius:4px;padding:0 3px;font-weight:700}
 .cell .warnflag{position:absolute;top:0;left:2px;font-size:10px}
+.cell .loveflag{position:absolute;top:0;left:2px;font-size:10px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.4))}
+.cell.dragging{opacity:.55;z-index:9;box-shadow:0 8px 20px rgba(0,0,0,.4);transition:none}
+.dropghost{position:absolute;border-radius:7px;pointer-events:none;z-index:8;transition:left .05s,top .05s}
+.dropghost.ok{border:2.5px dashed var(--green-500);background:rgba(55,168,112,.18)}
+.dropghost.swap{border:2.5px dashed var(--sun);background:rgba(240,165,0,.20)}
+.dropghost.bad{border:2.5px dashed var(--danger);background:rgba(201,69,60,.16)}
 .cell .one{position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:9px;
   color:rgba(255,255,255,.82);font-weight:700;letter-spacing:.02em;text-transform:uppercase}
 .cell .grip{position:absolute;right:-6px;bottom:-6px;width:22px;height:22px;border-radius:50%;
@@ -290,6 +296,34 @@ pre{background:var(--surface-2);padding:12px;border-radius:12px;overflow:auto;ma
   box-shadow:var(--shadow);animation:fade .2s ease}
 html[data-theme="dark"] .coach-card{background:var(--green-100);border-color:var(--green-600)}
 .coach-x{background:transparent;color:var(--text-2);font-size:1rem;line-height:1;padding:2px 4px;flex:0 0 auto}
+
+/* ---- garden map ---- */
+.mapwrap{overflow:auto;border-radius:var(--radius);border:1px solid var(--line);background:var(--surface-2);padding:8px}
+.mapplot{position:relative;width:100%;min-height:160px;border-radius:10px;overflow:hidden;
+  background:linear-gradient(160deg,#eef3ea,#e4ece0)}
+html[data-theme="dark"] .mapplot{background:linear-gradient(160deg,#1a231d,#16201a)}
+.mapgrid{position:absolute;inset:0;pointer-events:none;opacity:.5;
+  background-image:linear-gradient(to right,rgba(0,0,0,.10) 1px,transparent 1px),
+                   linear-gradient(to bottom,rgba(0,0,0,.10) 1px,transparent 1px)}
+html[data-theme="dark"] .mapgrid{background-image:linear-gradient(to right,rgba(255,255,255,.09) 1px,transparent 1px),
+                   linear-gradient(to bottom,rgba(255,255,255,.09) 1px,transparent 1px)}
+.mapnorth{position:absolute;top:6px;right:8px;font-size:.7rem;font-weight:800;color:var(--text-2);
+  background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px 6px;pointer-events:none;z-index:3}
+.mapbed,.mapfeat{position:absolute;border-radius:8px;overflow:hidden;touch-action:none;
+  box-shadow:0 1px 3px rgba(0,0,0,.22);transition:box-shadow .12s,transform .08s;cursor:pointer}
+.mapbed{background:linear-gradient(135deg,#7d5f45,#8a6a4f);border:1.5px solid #5f4630;color:#fff;padding:3px 5px}
+.mapfeat{background:var(--surface);border:1.5px dashed var(--line);color:var(--text);
+  display:grid;place-items:center;text-align:center}
+.mapbed.sel,.mapfeat.sel{outline:3px solid var(--sun);outline-offset:-1px;z-index:4;box-shadow:0 6px 16px rgba(0,0,0,.3)}
+.mapbed:active,.mapfeat:active{transform:scale(.985)}
+.mb-name{font-size:11px;font-weight:800;line-height:1.15;text-shadow:0 1px 2px rgba(0,0,0,.45);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mb-emo{font-size:13px;line-height:1.3;margin-top:2px;word-break:break-all}
+.mb-sub{position:absolute;bottom:3px;left:5px;right:5px;font-size:9px;opacity:.85;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mf-e{font-size:16px;line-height:1}
+.mf-n{font-size:9px;font-weight:700;color:var(--text-2);margin-top:1px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 </style>
 </head>
 <body>
@@ -560,7 +594,8 @@ const Blobs = (() => {
    ============================================================ */
 const SCHEMA = {
   plots:      ["id","name","notes","created"],
-  beds:       ["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil","irrigation","notes","created"],
+  beds:       ["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil","irrigation","notes","mx","my","rot","created"],
+  mapitems:   ["id","plot_id","kind","label","w","h","mx","my","rot","notes","created"],
   plantings:  ["id","bed_id","x","y","w","h","span_mode","crop_id","variety","variety_id","seed_id","qty","status","sown_on","transplant_on","harvest_from","harvest_to","removed_on","notes","created"],
   varieties:  ["id","crop_id","name","dtm","habit","resistance","spacing_in","notes","source","created"],
   maturity:   ["id","crop_id","variety","days","sown_on","harvested_on","planting_id","bed_id","note","created"],
@@ -2247,6 +2282,7 @@ const Garden = {
     const ps = DB.where("plantings", p => p.bed_id === b.id && p.status !== "removed");
     const map = {}; ps.forEach(p => map[p.x + "," + p.y] = p);
     const conflicts = Recommend.conflicts(b.id);
+    const friends = Recommend.friends(b.id);
     const conflictCells = {};
     conflicts.forEach(c => { conflictCells[c.a.x + "," + c.a.y] = 1; conflictCells[c.b.x + "," + c.b.y] = 1; });
 
@@ -2284,8 +2320,23 @@ const Garden = {
     const cs = clamp(Math.floor((Math.min(window.innerWidth, 520) - 64) / cols), 22, 62);
     Garden._cs = cs;
     h += '<div class="bedwrap" style="margin-top:12px">' +
-      Garden.gridHTML(b, { cs: cs, gap: 3, interactive: true, conflicts: conflicts }) + '</div>';
+      Garden.gridHTML(b, { cs: cs, gap: 3, interactive: true, conflicts: conflicts, friends: friends }) + '</div>';
+    h += '<div class="row center tiny muted" style="gap:12px;margin-top:8px;justify-content:center">' +
+      '<span>💚 good neighbours</span><span>⚠️ keep apart</span></div>';
     h += '<div class="tiny muted center" style="margin-top:6px">Tap a planting to select it, then drag its corner handle — or use the width and height steppers — to cover more ground.</div>';
+
+    /* good neighbours */
+    if(friends.length){
+      h += '<div class="sec"><h2>Good neighbours</h2><span class="tiny muted">💚 on the grid</span></div><div class="card">';
+      const seen = {};
+      friends.slice(0, 6).forEach(f => {
+        const key = [f.a.crop_id, f.b.crop_id].sort().join("|");
+        if(seen[key]) return; seen[key] = 1;
+        h += '<div class="note g" style="margin-bottom:8px">' + cropEmoji(f.a.crop_id) + ' <b>' + esc(cropName(f.a.crop_id)) +
+          '</b> beside ' + cropEmoji(f.b.crop_id) + ' <b>' + esc(cropName(f.b.crop_id)) + '</b><br>' + esc(f.why) + '</div>';
+      });
+      h += '</div>';
+    }
 
     /* conflicts */
     if(conflicts.length){
@@ -2731,6 +2782,9 @@ Object.assign(Garden, {
     const conflictCells = {};
     if(o.conflicts) o.conflicts.forEach(c => {
       conflictCells[c.a.x + "," + c.a.y] = 1; conflictCells[c.b.x + "," + c.b.y] = 1; });
+    const friendCells = {};
+    if(o.friends) o.friends.forEach(c => {
+      friendCells[c.a.x + "," + c.a.y] = 1; friendCells[c.b.x + "," + c.b.y] = 1; });
 
     const start = {}; ps.forEach(p => start[num(p.x) + "," + num(p.y)] = p);
     const taken = {};
@@ -2753,7 +2807,8 @@ Object.assign(Garden, {
           cropEmoji(p.crop_id) +
           (num(p.qty) > 1 ? '<span class="qty">' + p.qty + '</span>' : '') +
           (p.span_mode === "single" && big ? '<span class="one">1 plant</span>' : '') +
-          (conflictCells[k] ? '<span class="warnflag">⚠️</span>' : '') +
+          (conflictCells[k] ? '<span class="warnflag">⚠️</span>'
+            : (friendCells[k] ? '<span class="loveflag">💚</span>' : '')) +
           (isSel && o.interactive ? '<span class="grip" onpointerdown="Garden.gripStart(event,\'' + p.id + '\')"></span>' : '') +
           '</button>';
       } else if(!taken[k]){
@@ -3023,6 +3078,25 @@ Recommend.conflicts = function(bedId){
     if(r.score <= -2 && gap(ps[i], ps[j]) <= 2) out.push({ a: ps[i], b: ps[j], why: r.why, dist: gap(ps[i], ps[j]) });
   }
   return out;
+};
+
+/* the encouraging mirror of conflicts: pairings worth pointing out */
+Recommend.friends = function(bedId){
+  const ps = Garden.live(bedId), out = [];
+  const gap = (a, b) => {
+    const ax2 = num(a.x) + Garden.W(a) - 1, ay2 = num(a.y) + Garden.H(a) - 1;
+    const bx2 = num(b.x) + Garden.W(b) - 1, by2 = num(b.y) + Garden.H(b) - 1;
+    const dx = Math.max(0, Math.max(num(a.x) - bx2, num(b.x) - ax2));
+    const dy = Math.max(0, Math.max(num(a.y) - by2, num(b.y) - ay2));
+    return dx + dy;
+  };
+  for(let i = 0; i < ps.length; i++) for(let j = i + 1; j < ps.length; j++){
+    if(ps[i].crop_id === ps[j].crop_id) continue;
+    const r = pairRating(ps[i].crop_id, ps[j].crop_id);
+    if(r.score >= 1 && gap(ps[i], ps[j]) <= 2) out.push({ a: ps[i], b: ps[j], why: r.why, score: r.score });
+  }
+  /* a genuinely great pairing outranks a merely good one */
+  return out.sort((a, b) => b.score - a.score);
 };
 
 /* resizing a bed must not orphan the far edge of a span */
@@ -3299,6 +3373,563 @@ Garden.pickVariety = function(plantingId){
     setTimeout(() => { Garden.plantingSheet(DB.find("plantings", plantingId)); Garden.render(); }, 220);
   });
 };
+</script>
+<script>
+/* ============================================================
+   GARDEN MAP
+   The beds already know their real size in feet. This lays them
+   out on one plan of the whole garden, so you can see where
+   everything is rather than remembering which bed is which.
+   Drag to arrange, add landmarks for orientation, tap to open.
+   ============================================================ */
+const FEATURES = {
+  shed:      { n:"Shed",        e:"🏚️", w:8,  h:6 },
+  greenhouse:{ n:"Greenhouse",  e:"🏡", w:8,  h:10 },
+  compost:   { n:"Compost",     e:"♻️", w:3,  h:3 },
+  water:     { n:"Water tap",   e:"🚰", w:1,  h:1 },
+  tree:      { n:"Tree",        e:"🌳", w:6,  h:6 },
+  shrub:     { n:"Shrub",       e:"🌿", w:3,  h:3 },
+  path:      { n:"Path",        e:"⬜", w:10, h:2 },
+  house:     { n:"House",       e:"🏠", w:16, h:10 },
+  fence:     { n:"Fence",       e:"🚧", w:16, h:1 },
+  gate:      { n:"Gate",        e:"🚪", w:3,  h:1 },
+  table:     { n:"Potting bench", e:"🪵", w:4, h:2 },
+  chair:     { n:"Seat",        e:"🪑", w:3,  h:3 }
+};
+
+const Gmap = {
+  arrange: false, sel: null, _ppf: 12,
+
+  /* ---------- geometry ---------- */
+  bedFeet(b){
+    const ft = num(b.cell_in, 12) / 12;
+    const w = num(b.cols, 1) * ft, h = num(b.rows, 1) * ft;
+    return num(b.rot) === 90 ? { w: h, h: w } : { w: w, h: h };
+  },
+  featFeet(m){
+    const f = FEATURES[m.kind] || { w:3, h:3 };
+    const w = num(m.w, f.w), h = num(m.h, f.h);
+    return num(m.rot) === 90 ? { w: h, h: w } : { w: w, h: h };
+  },
+
+  /* a position that was never set must stay null — num() would turn it into 0 */
+  pos(v){ return (v === null || v === undefined || v === "") ? null
+                : (isFinite(parseFloat(v)) ? parseFloat(v) : null); },
+
+  items(plotId){
+    const beds = DB.all("beds").filter(b => !plotId || b.plot_id === plotId)
+      .map(b => ({ kind:"bed", id:b.id, row:b, x:Gmap.pos(b.mx), y:Gmap.pos(b.my), size:Gmap.bedFeet(b) }));
+    const feats = DB.all("mapitems").filter(m => !plotId || m.plot_id === plotId)
+      .map(m => ({ kind:"feature", id:m.id, row:m, x:Gmap.pos(m.mx), y:Gmap.pos(m.my), size:Gmap.featFeet(m) }));
+    return beds.concat(feats);
+  },
+
+  /* anything never placed gets tiled into free space so the map is never empty */
+  autoPlace(plotId){
+    const items = Gmap.items(plotId);
+    const placed = items.filter(i => i.x !== null && i.y !== null);
+    const loose = items.filter(i => i.x === null || i.y === null);
+    if(!loose.length) return;
+    let cx = 1, cy = 1, rowH = 0;
+    const maxW = 24;
+    placed.forEach(p => { cy = Math.max(cy, p.y + p.size.h + 2); });
+    loose.forEach(i => {
+      if(cx + i.size.w > maxW){ cx = 1; cy += rowH + 2; rowH = 0; }
+      DB.update(i.kind === "bed" ? "beds" : "mapitems", i.id, { mx: cx, my: cy });
+      cx += i.size.w + 2; rowH = Math.max(rowH, i.size.h);
+    });
+  },
+
+  extent(plotId){
+    const items = Gmap.items(plotId);
+    let w = 12, h = 10;
+    items.forEach(i => {
+      if(i.x === null || i.y === null) return;
+      w = Math.max(w, i.x + i.size.w + 1);
+      h = Math.max(h, i.y + i.size.h + 1);
+    });
+    return { w: Math.ceil(w), h: Math.ceil(h) };
+  },
+
+  /* ---------- rendering ---------- */
+  render(){
+    const box = $("#s-garden");
+    const plotId = APP.plotId && DB.find("plots", APP.plotId) ? APP.plotId : null;
+    Gmap.autoPlace(plotId);
+    const items = Gmap.items(plotId);
+    const ext = Gmap.extent(plotId);
+    const avail = Math.min(window.innerWidth, 520) - 32;
+    const ppf = Gmap._ppf = clamp(avail / ext.w, 6, 40);
+    const H = Math.round(ext.h * ppf);
+
+    let h = Garden.viewToggle();
+
+    const plots = DB.all("plots");
+    if(plots.length){
+      h += '<div class="scroller">' +
+        '<button class="chip ' + (!plotId ? "on" : "") + '" onclick="APP.plotId=null;Garden.render()">Whole garden</button>' +
+        plots.map(p => '<button class="chip ' + (plotId === p.id ? "on" : "") + '" onclick="APP.plotId=\'' + p.id + '\';Garden.render()">' +
+          esc(p.name) + '</button>').join("") + '</div>';
+    }
+
+    if(!items.length){
+      h += '<div class="card"><div class="empty"><span class="e">🗺️</span><div class="b">Nothing to map yet</div>' +
+        '<div class="tiny">Create a bed and it appears here. Then drag things around until the plan matches your garden.</div></div>' +
+        '<button class="btn block" onclick="Garden.newBed()">＋ New bed</button></div>';
+      box.innerHTML = h; return;
+    }
+
+    h += '<div class="row" style="gap:8px;margin:12px 0">' +
+      '<button class="btn ' + (Gmap.arrange ? "" : "ghost") + ' grow" onclick="Gmap.toggleArrange()">' +
+        (Gmap.arrange ? "✓ Done arranging" : "✋ Arrange") + '</button>' +
+      '<button class="btn ghost" onclick="Gmap.addFeature()">＋ Landmark</button>' +
+      '<button class="btn ghost" onclick="Gmap.snapshot()">📸</button></div>';
+
+    h += Gmap.arrange
+      ? '<div class="note i">Drag anything to move it. Tap once to select, then use the buttons below to rotate or remove it. Positions snap to the foot.</div>'
+      : '<div class="tiny muted center" style="margin-bottom:8px">' + ext.w + ' × ' + ext.h + ' ft · tap a bed to open it</div>';
+
+    h += '<div class="mapwrap"><div class="mapplot" id="mapplot" style="height:' + H + 'px">';
+    /* one-foot grid so the scale reads clearly */
+    h += '<div class="mapgrid" style="background-size:' + ppf + 'px ' + ppf + 'px"></div>';
+    h += '<div class="mapnorth">N ↑</div>';
+
+    items.forEach(i => {
+      if(i.x === null || i.y === null) return;
+      const L = Math.round(i.x * ppf), T = Math.round(i.y * ppf);
+      const W = Math.max(22, Math.round(i.size.w * ppf)), Hh = Math.max(22, Math.round(i.size.h * ppf));
+      const isSel = Gmap.sel === i.id;
+      if(i.kind === "bed"){
+        const b = i.row;
+        const ps = Garden.live(b.id);
+        const crops = {}; ps.forEach(p => crops[p.crop_id] = (crops[p.crop_id] || 0) + 1);
+        const emo = Object.keys(crops).slice(0, 6).map(cid => cropEmoji(cid)).join("");
+        const full = ps.length, cells = num(b.cols) * num(b.rows);
+        h += '<div class="mapbed ' + (isSel ? "sel" : "") + '" data-id="' + i.id + '" data-kind="bed" ' +
+          'style="left:' + L + 'px;top:' + T + 'px;width:' + W + 'px;height:' + Hh + 'px">' +
+          '<div class="mb-name">' + esc(b.name) + '</div>' +
+          (Hh > 44 ? '<div class="mb-emo">' + emo + '</div>' : '') +
+          (Hh > 60 ? '<div class="mb-sub">' + full + '/' + cells + ' planted · ' + esc(b.sun_hours || "?") + 'h sun</div>' : '') +
+          '</div>';
+      } else {
+        const f = FEATURES[i.row.kind] || { n:"Item", e:"⬜" };
+        h += '<div class="mapfeat ' + (isSel ? "sel" : "") + '" data-id="' + i.id + '" data-kind="feature" ' +
+          'style="left:' + L + 'px;top:' + T + 'px;width:' + W + 'px;height:' + Hh + 'px">' +
+          '<div class="mf-e">' + f.e + '</div>' +
+          (W > 54 ? '<div class="mf-n">' + esc(i.row.label || f.n) + '</div>' : '') +
+          '</div>';
+      }
+    });
+    h += '</div></div>';
+
+    if(Gmap.arrange && Gmap.sel){
+      const it = items.find(x => x.id === Gmap.sel);
+      if(it) h += '<div class="card" style="margin-top:12px"><div class="row between">' +
+        '<div class="b">' + esc(it.kind === "bed" ? it.row.name : (it.row.label || (FEATURES[it.row.kind] || {}).n || "Item")) + '</div>' +
+        '<div class="row" style="gap:6px">' +
+          '<button class="chip" onclick="Gmap.rotate(\'' + it.id + '\')">⟳ Rotate</button>' +
+          (it.kind === "feature" ? '<button class="chip bad" onclick="Gmap.removeFeature(\'' + it.id + '\')">Remove</button>' : '') +
+        '</div></div>' +
+        '<div class="tiny muted" style="margin-top:6px">' +
+          Math.round(it.size.w * 10)/10 + ' × ' + Math.round(it.size.h * 10)/10 + ' ft' +
+          (it.kind === "bed" ? ' · ' + it.row.cols + '×' + it.row.rows + ' squares' : '') + '</div></div>';
+    }
+
+    /* legend */
+    const beds = items.filter(i => i.kind === "bed");
+    if(beds.length && !Gmap.arrange){
+      h += '<div class="sec"><h2>What is where</h2></div><div class="card pad0"><div class="list">';
+      beds.forEach(i => {
+        const b = i.row, ps = Garden.live(b.id);
+        const names = ps.map(p => cropName(p.crop_id)).filter((v, ix, a) => a.indexOf(v) === ix);
+        h += '<button class="item" onclick="Garden.open(\'' + b.id + '\')"><div class="av">🪴</div>' +
+          '<div class="grow"><div class="b">' + esc(b.name) + '</div>' +
+          '<div class="tiny muted">' + Math.round(i.size.w*10)/10 + '×' + Math.round(i.size.h*10)/10 + ' ft · ' +
+          (names.length ? esc(names.slice(0, 5).join(", ")) + (names.length > 5 ? " +" + (names.length - 5) : "") : "empty") +
+          '</div></div><span class="go">›</span></button>';
+      });
+      h += '</div></div>';
+    }
+
+    box.innerHTML = h;
+    Gmap.bind();
+  },
+
+  bind(){
+    const plot = $("#mapplot"); if(!plot) return;
+    $$("#mapplot .mapbed, #mapplot .mapfeat").forEach(el => {
+      el.onclick = e => {
+        if(el._moved){ el._moved = false; return; }
+        const id = el.dataset.id;
+        if(!Gmap.arrange){
+          if(el.dataset.kind === "bed") Garden.open(id);
+          return;
+        }
+        Gmap.sel = Gmap.sel === id ? null : id;
+        Garden.render();
+      };
+      el.addEventListener("pointerdown", e => Gmap.dragStart(e, el));
+    });
+  },
+
+  dragStart(ev, el){
+    if(!Gmap.arrange) return;
+    ev.preventDefault();
+    const id = el.dataset.id, kind = el.dataset.kind;
+    const table = kind === "bed" ? "beds" : "mapitems";
+    const row = DB.find(table, id); if(!row) return;
+    const ppf = Gmap._ppf;
+    const sx = ev.clientX, sy = ev.clientY;
+    const ox = num(row.mx, 0), oy = num(row.my, 0);
+    el._moved = false;
+    const move = e => {
+      const dxf = (e.clientX - sx) / ppf, dyf = (e.clientY - sy) / ppf;
+      if(Math.abs(e.clientX - sx) > 4 || Math.abs(e.clientY - sy) > 4) el._moved = true;
+      const nx = Math.max(0, Math.round((ox + dxf) * 2) / 2);
+      const ny = Math.max(0, Math.round((oy + dyf) * 2) / 2);
+      el.style.left = Math.round(nx * ppf) + "px";
+      el.style.top = Math.round(ny * ppf) + "px";
+      el._nx = nx; el._ny = ny;
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if(el._moved && el._nx !== undefined){
+        DB.update(table, id, { mx: el._nx, my: el._ny });
+        Gmap.sel = id;
+        haptic();
+        Garden.render();
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  },
+
+  toggleArrange(){ Gmap.arrange = !Gmap.arrange; Gmap.sel = null; Garden.render(); },
+
+  rotate(id){
+    const bed = DB.find("beds", id);
+    if(bed){ DB.update("beds", id, { rot: num(bed.rot) === 90 ? 0 : 90 }); }
+    else { const m = DB.find("mapitems", id); if(m) DB.update("mapitems", id, { rot: num(m.rot) === 90 ? 0 : 90 }); }
+    Garden.render();
+  },
+
+  addFeature(){
+    let h = '<p class="muted sm" style="margin-top:0">Landmarks are just for orientation — a shed, a tree, the water tap. They help you read the map at a glance.</p>';
+    h += '<div class="grid2">';
+    Object.keys(FEATURES).forEach(k => {
+      const f = FEATURES[k];
+      h += '<button class="card" style="text-align:left" onclick="Gmap.saveFeature(\'' + k + '\')">' +
+        '<div style="font-size:1.6rem">' + f.e + '</div><div class="b">' + esc(f.n) + '</div>' +
+        '<div class="tiny muted">' + f.w + '×' + f.h + ' ft to start</div></button>';
+    });
+    h += '</div>';
+    openSheet("Add a landmark", h);
+  },
+  saveFeature(kind){
+    const f = FEATURES[kind]; if(!f) return;
+    const ext = Gmap.extent(APP.plotId || null);
+    DB.insert("mapitems", { plot_id: APP.plotId || null, kind: kind, label: f.n,
+      w: f.w, h: f.h, mx: 1, my: Math.max(1, ext.h - f.h - 1), rot: 0 });
+    closeSheet();
+    Gmap.arrange = true;
+    Garden.render();
+    toast(f.n + " added — drag it into place");
+  },
+  removeFeature(id){
+    DB.remove("mapitems", id);
+    Gmap.sel = null; Garden.render(); toast("Removed");
+  },
+
+  /* ---------- shareable plan ---------- */
+  snapshot(){
+    const plotId = APP.plotId && DB.find("plots", APP.plotId) ? APP.plotId : null;
+    const items = Gmap.items(plotId), ext = Gmap.extent(plotId);
+    const pad = 60, ppf = Math.max(10, Math.min(1000 / ext.w, 1400 / ext.h));
+    const W = Math.round(ext.w * ppf) + pad * 2, H = Math.round(ext.h * ppf) + pad * 2 + 90;
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const x = cv.getContext("2d");
+    const F = (s, wt) => (wt || "600") + " " + s + "px -apple-system, 'Segoe UI', Roboto, sans-serif";
+
+    x.fillStyle = "#f6f8f5"; x.fillRect(0, 0, W, H);
+    x.fillStyle = "#16211c"; x.font = F(34, "800");
+    x.fillText((plotId ? DB.find("plots", plotId).name : "My garden"), pad, 52);
+    x.fillStyle = "#5c6b62"; x.font = F(20, "500");
+    x.fillText(fmtY(today()) + "  ·  " + ext.w + " × " + ext.h + " ft" +
+      (DB.get("town") ? "  ·  " + DB.get("town") : ""), pad, 78);
+
+    const oy = 100;
+    /* one-foot grid */
+    x.strokeStyle = "#e2e7e0"; x.lineWidth = 1;
+    for(let i = 0; i <= ext.w; i++){
+      x.beginPath(); x.moveTo(pad + i * ppf, oy); x.lineTo(pad + i * ppf, oy + ext.h * ppf); x.stroke(); }
+    for(let j = 0; j <= ext.h; j++){
+      x.beginPath(); x.moveTo(pad, oy + j * ppf); x.lineTo(pad + ext.w * ppf, oy + j * ppf); x.stroke(); }
+
+    items.forEach(i => {
+      if(i.x === null || i.y === null) return;
+      const L = pad + i.x * ppf, T = oy + i.y * ppf;
+      const w = Math.max(24, i.size.w * ppf), hh = Math.max(24, i.size.h * ppf);
+      if(i.kind === "bed"){
+        x.fillStyle = "#8a6a4f"; roundRect(x, L, T, w, hh, 8); x.fill();
+        x.strokeStyle = "#6b4f38"; x.lineWidth = 2; x.stroke();
+        x.fillStyle = "#fff"; x.font = F(Math.max(13, Math.min(20, hh * 0.22)), "700");
+        x.fillText(esc0(i.row.name).slice(0, 22), L + 8, T + Math.max(18, hh * 0.28));
+        const ps = Garden.live(i.row.id);
+        const emo = Object.keys(ps.reduce((a, p) => (a[p.crop_id] = 1, a), {})).slice(0, 8).map(cropEmoji).join(" ");
+        if(hh > 46){ x.font = F(Math.max(14, Math.min(22, hh * 0.2)), "500");
+          x.fillText(emo, L + 8, T + Math.max(40, hh * 0.58)); }
+      } else {
+        const f = FEATURES[i.row.kind] || { n:"", e:"⬜" };
+        x.fillStyle = "#e6e9e4"; roundRect(x, L, T, w, hh, 8); x.fill();
+        x.strokeStyle = "#c9cec6"; x.lineWidth = 2; x.stroke();
+        x.fillStyle = "#16211c"; x.font = F(Math.max(16, Math.min(26, Math.min(w, hh) * 0.4)), "600");
+        x.textAlign = "center";
+        x.fillText(f.e, L + w / 2, T + hh / 2 + 6);
+        if(w > 70){ x.font = F(13, "600"); x.fillStyle = "#5c6b62";
+          x.fillText(esc0(i.row.label || f.n).slice(0, 16), L + w / 2, T + hh - 6); }
+        x.textAlign = "left";
+      }
+    });
+
+    /* north arrow and scale bar */
+    x.fillStyle = "#16211c"; x.font = F(22, "700");
+    x.fillText("N ↑", W - pad - 44, oy + 24);
+    const barFt = ext.w > 20 ? 5 : 2;
+    x.strokeStyle = "#16211c"; x.lineWidth = 3;
+    x.beginPath(); x.moveTo(pad, H - 26); x.lineTo(pad + barFt * ppf, H - 26); x.stroke();
+    x.font = F(16, "600"); x.fillText(barFt + " ft", pad + barFt * ppf + 10, H - 20);
+
+    cv.toBlob(blob => {
+      const file = new File([blob], "garden-map-" + iso(today()) + ".png", { type:"image/png" });
+      if(navigator.canShare && navigator.canShare({ files:[file] }))
+        navigator.share({ files:[file], title:"Garden map" }).catch(() => download(file.name, blob));
+      else download(file.name, blob);
+      toast("Map saved 🗺️");
+    }, "image/png");
+  }
+};
+
+/* ---------- the Garden tab now has two views ---------- */
+Garden.view = "beds";
+Garden.viewToggle = function(){
+  return '<div class="seg" style="margin-bottom:12px">' +
+    '<button class="' + (Garden.view === "beds" ? "on" : "") + '" onclick="Garden.setView(\'beds\')">🪴 Beds</button>' +
+    '<button class="' + (Garden.view === "map" ? "on" : "") + '" onclick="Garden.setView(\'map\')">🗺️ Map</button>' +
+    '</div>';
+};
+Garden.setView = function(v){ Garden.view = v; Gmap.sel = null; Garden.render(); };
+
+(function wrapRender(){
+  Garden.render = function(){
+    if(APP.bedId) return Garden.bedView();
+    if(Garden.view === "map") return Gmap.render();
+    return Garden.listView();
+  };
+})();
+
+/* the bed list gets the same toggle at the top */
+(function wrapList(){
+  const orig = Garden.listView.bind(Garden);
+  Garden.listView = function(){
+    orig();
+    const box = $("#s-garden");
+    box.innerHTML = Garden.viewToggle() + box.innerHTML;
+  };
+})();
+</script>
+<script>
+/* ============================================================
+   MOVING PLANTS AROUND A BED
+   Drag a planting to another square instead of clearing it and
+   starting again. Drop it on something else and the two swap,
+   provided the one being displaced actually fits where the
+   dragged one came from. If it doesn't, nothing moves.
+   ============================================================ */
+Object.assign(Garden, {
+
+  /* rectangles, ignoring a list of ids */
+  hits(bedId, x, y, w, h, ignore){
+    const skip = ignore || [];
+    return Garden.live(bedId).filter(p => {
+      if(skip.indexOf(p.id) >= 0) return false;
+      return !(num(p.x) + Garden.W(p) <= x || x + w <= num(p.x) ||
+               num(p.y) + Garden.H(p) <= y || y + h <= num(p.y));
+    });
+  },
+  inBounds(bed, x, y, w, h){
+    return x >= 0 && y >= 0 && x + w <= num(bed.cols) && y + h <= num(bed.rows);
+  },
+
+  /* work out what a drop would do, without doing it */
+  planMove(id, nx, ny){
+    const a = DB.find("plantings", id); if(!a) return { ok:false, why:"gone" };
+    const bed = DB.find("beds", a.bed_id);
+    const aw = Garden.W(a), ah = Garden.H(a);
+    const ax = num(a.x), ay = num(a.y);
+    if(nx === ax && ny === ay) return { ok:true, noop:true };
+    if(!Garden.inBounds(bed, nx, ny, aw, ah))
+      return { ok:false, why:"That would hang over the edge of the bed." };
+
+    const blocking = Garden.hits(bed.id, nx, ny, aw, ah, [id]);
+    if(!blocking.length) return { ok:true, move:{ id:id, x:nx, y:ny } };
+
+    if(blocking.length > 1)
+      return { ok:false, why:"That spot covers " + blocking.length + " plantings — only one can swap at a time." };
+
+    /* one thing in the way: try to swap it back into the space we came from */
+    const b = blocking[0];
+    const bw = Garden.W(b), bh = Garden.H(b);
+    if(!Garden.inBounds(bed, ax, ay, bw, bh))
+      return { ok:false, why: cropName(b.crop_id) + " is too big to fit where " + cropName(a.crop_id) + " was." };
+    /* nothing else may be sitting where B is going, and the two must not overlap each other */
+    const inWay = Garden.hits(bed.id, ax, ay, bw, bh, [id, b.id]);
+    if(inWay.length)
+      return { ok:false, why:"No room to swap — " + cropName(inWay[0].crop_id) + " is in the way." };
+    const overlap = !(nx + aw <= ax || ax + bw <= nx || ny + ah <= ay || ay + bh <= ny);
+    if(overlap)
+      return { ok:false, why:"Those two overlap when swapped. Move one to open ground first." };
+
+    return { ok:true, move:{ id:id, x:nx, y:ny }, swap:{ id:b.id, x:ax, y:ay }, with:b };
+  },
+
+  applyMove(plan){
+    if(!plan || !plan.ok || plan.noop) return false;
+    if(plan.swap) DB.update("plantings", plan.swap.id, { x: plan.swap.x, y: plan.swap.y });
+    DB.update("plantings", plan.move.id, { x: plan.move.x, y: plan.move.y });
+    return true;
+  },
+
+  /* ---------- the drag itself ---------- */
+  moveStart(ev, id){
+    if(Garden.paint || Garden.erase) return;          /* those modes want plain taps */
+    if(ev.target && ev.target.classList && ev.target.classList.contains("grip")) return;
+    const p = DB.find("plantings", id); if(!p) return;
+    const bed = DB.find("beds", p.bed_id); if(!bed) return;
+
+    const el = ev.currentTarget;
+    const cs = Garden._cs, gap = 3, step = cs + gap;
+    const sx = ev.clientX, sy = ev.clientY;
+    const ox = num(p.x), oy = num(p.y);
+    const rect = el.getBoundingClientRect();
+    /* which square within the planting was grabbed, so it follows the finger naturally */
+    const grabX = Math.floor((sx - rect.left) / step);
+    const grabY = Math.floor((sy - rect.top) / step);
+    let dragging = false, plan = null, last = null;
+
+    const preview = () => {
+      let ghost = $("#dropghost");
+      if(!ghost){
+        ghost = document.createElement("div");
+        ghost.id = "dropghost"; ghost.className = "dropghost";
+        (el.parentNode || document.body).appendChild(ghost);
+      }
+      if(!last){ ghost.style.display = "none"; return; }
+      const w = Garden.W(p), hh = Garden.H(p);
+      ghost.style.display = "block";
+      ghost.style.left = (last.x * step) + "px";
+      ghost.style.top = (last.y * step) + "px";
+      ghost.style.width = (w * cs + (w - 1) * gap) + "px";
+      ghost.style.height = (hh * cs + (hh - 1) * gap) + "px";
+      ghost.className = "dropghost " + (plan && plan.ok ? (plan.swap ? "swap" : "ok") : "bad");
+    };
+
+    const move = e => {
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if(!dragging && Math.abs(dx) < 7 && Math.abs(dy) < 7) return;
+      if(!dragging){
+        dragging = true; el._dragged = true;
+        el.classList.add("dragging");
+        haptic();
+      }
+      e.preventDefault();
+      const nx = clamp(Math.round((e.clientX - rect.left - grabX * step) / step) + ox + 0, -50, 50);
+      const cellX = clamp(ox + Math.round(dx / step), 0, num(bed.cols) - 1);
+      const cellY = clamp(oy + Math.round(dy / step), 0, num(bed.rows) - 1);
+      void nx;
+      if(!last || last.x !== cellX || last.y !== cellY){
+        last = { x: cellX, y: cellY };
+        plan = Garden.planMove(id, cellX, cellY);
+        preview();
+      }
+      el.style.transform = "translate(" + dx + "px," + dy + "px)";
+    };
+
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      const ghost = $("#dropghost"); if(ghost) ghost.remove();
+      el.style.transform = "";
+      el.classList.remove("dragging");
+      if(!dragging) return;
+      if(plan && plan.ok && !plan.noop){
+        const swapped = !!plan.swap, other = plan.with;
+        Garden.applyMove(plan);
+        Garden.sel = id;
+        Garden.render();
+        toast(swapped ? "Swapped with " + cropName(other.crop_id) : cropName(p.crop_id) + " moved");
+      } else if(plan && !plan.ok){
+        Garden.render();
+        toast(plan.why);
+      } else {
+        Garden.render();
+      }
+      setTimeout(() => { el._dragged = false; }, 0);
+    };
+
+    window.addEventListener("pointermove", move, { passive:false });
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  },
+
+  /* attach the handlers after each grid render */
+  bindGrid(){
+    $$("#s-garden .cell.filled[data-pid]").forEach(el => {
+      el.addEventListener("pointerdown", ev => Garden.moveStart(ev, el.dataset.pid));
+      const prior = el.onclick;
+      el.onclick = e => { if(el._dragged){ e.preventDefault(); e.stopPropagation(); return; } if(prior) prior.call(el, e); };
+    });
+  }
+});
+
+/* filled cells need to know which planting they are */
+(function tagCells(){
+  const orig = Garden.gridHTML.bind(Garden);
+  Garden.gridHTML = function(bed, opts){
+    const html = orig(bed, opts);
+    if(!opts || !opts.interactive) return html;
+    const ps = Garden.live(bed.id);
+    const byStart = {}; ps.forEach(p => byStart[num(p.x) + "," + num(p.y)] = p.id);
+    /* the renderer emits cells in row-major order with the planting's own onclick;
+       re-attach the id by matching the coordinates already in that handler */
+    return html.replace(/<button class="cell filled([^"]*)" onclick="Garden\.tapCell\((\d+),(\d+)\)"/g,
+      function(m, cls, x, y){
+        const id = byStart[x + "," + y];
+        return '<button class="cell filled' + cls + '" data-pid="' + (id || "") + '" ' +
+               'onclick="Garden.tapCell(' + x + ',' + y + ')"';
+      });
+  };
+})();
+
+/* bind after the bed view paints */
+(function wrapBedView(){
+  const orig = Garden.bedView.bind(Garden);
+  Garden.bedView = function(){ orig(); Garden.bindGrid(); };
+})();
+
+/* the hint text should mention dragging */
+(function hint(){
+  const orig = Garden.bedView.bind(Garden);
+  Garden.bedView = function(){
+    orig();
+    const box = $("#s-garden");
+    if(box) box.innerHTML = box.innerHTML.replace(
+      "Tap a planting to select it, then drag its corner handle — or use the width and height steppers — to cover more ground.",
+      "Drag a planting to move it — drop it on another and they swap. Tap it to select, then drag the corner handle to make it cover more ground.");
+    Garden.bindGrid();
+  };
+})();
 </script>
 <script>
 /* ============================================================
@@ -6816,7 +7447,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-02.9";
+const BUILD = "2026-08-02.11";
 
 const Updater = {
   prompt: null, installed: false,
@@ -7212,6 +7843,14 @@ const GUIDE = [
      "When you stretch something, say which it is: **one plant sprawling** over that area, or the area **filled with plants** at proper spacing. If you record a single cucumber covering six square feet, the app remembers and offers that same footprint next time you plant cucumber.",
      "Plantings that shouldn't sit next to each other get a ⚠️ on the grid, with the reason when you tap them."],
   steps:["Garden → New bed","Tap a square, pick a crop","Tap the planting, drag its corner to resize","Choose one plant or filled with plants"] },
+
+{ id:"map", icon:"🗺️", t:"Seeing the whole garden",
+  p:["The Garden tab has two views. **Beds** is the list you plant into; **Map** is the plan of your whole garden.",
+     "Every bed appears on the map at its real size in feet, with the crops growing in it shown inside. Tap any bed to open and work on it.",
+     "Tap **Arrange** and you can drag beds around until the plan matches your actual garden. Everything snaps to the nearest half foot. Select something and you can rotate it ninety degrees — useful for a long bed that runs the other way.",
+     "Add landmarks for orientation: the shed, a tree, the water tap, the path, the house. They aren't planted, they just make the map readable at a glance.",
+     "The 📸 button saves the whole plan as a picture, with a north arrow and a scale bar, so you can print it or send it to someone."],
+  steps:["Garden → Map","Tap Arrange","Drag beds into place, rotate as needed","Add landmarks, then tap Done"] },
 
 { id:"seeds", icon:"🌰", t:"The seed bank",
   p:["Add every packet you own and the app takes it from there.",
