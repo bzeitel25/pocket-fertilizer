@@ -234,6 +234,11 @@ textarea{min-height:80px;resize:vertical}
 .cell .qty{position:absolute;bottom:1px;right:2px;font-size:9px;background:rgba(0,0,0,.55);color:#fff;border-radius:4px;padding:0 3px;font-weight:700}
 .cell .warnflag{position:absolute;top:0;left:2px;font-size:10px}
 .cell .loveflag{position:absolute;top:0;left:2px;font-size:10px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.4))}
+.cell{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+.bed.dragging-bed{touch-action:none}
+.bed.dragging-bed .cell{touch-action:none}
+.cell.lifted{opacity:.9;z-index:20;transform-origin:center;transition:none;
+  box-shadow:0 10px 26px rgba(0,0,0,.45);outline:3px solid var(--sun);outline-offset:-2px;pointer-events:none}
 .cell.dragging{opacity:.55;z-index:9;box-shadow:0 8px 20px rgba(0,0,0,.4);transition:none}
 .dropghost{position:absolute;border-radius:7px;pointer-events:none;z-index:8;transition:left .05s,top .05s}
 .dropghost.ok{border:2.5px dashed var(--green-500);background:rgba(55,168,112,.18)}
@@ -3740,15 +3745,21 @@ Garden.setView = function(v){ Garden.view = v; Gmap.sel = null; Garden.render();
 </script>
 <script>
 /* ============================================================
-   MOVING PLANTS AROUND A BED
-   Drag a planting to another square instead of clearing it and
-   starting again. Drop it on something else and the two swap,
-   provided the one being displaced actually fits where the
-   dragged one came from. If it doesn't, nothing moves.
+   MOVING AND COPYING PLANTS IN A BED
+
+   Press and hold a planting to lift it, drag it with your finger,
+   and let go. It lands on the nearest square that actually works
+   — swapping with whatever is there if the two can trade places —
+   and snaps back if nothing nearby fits.
+
+   Long-press rather than plain drag matters on a phone: a bare
+   drag competes with page scrolling and the browser wins.
    ============================================================ */
 Object.assign(Garden, {
+  clip: null,          /* a copied planting, waiting to be placed */
+  lifted: null,
 
-  /* rectangles, ignoring a list of ids */
+  /* ---------- collision helpers ---------- */
   hits(bedId, x, y, w, h, ignore){
     const skip = ignore || [];
     return Garden.live(bedId).filter(p => {
@@ -3761,7 +3772,7 @@ Object.assign(Garden, {
     return x >= 0 && y >= 0 && x + w <= num(bed.cols) && y + h <= num(bed.rows);
   },
 
-  /* work out what a drop would do, without doing it */
+  /* what would happen if this planting were dropped at (nx,ny) */
   planMove(id, nx, ny){
     const a = DB.find("plantings", id); if(!a) return { ok:false, why:"gone" };
     const bed = DB.find("beds", a.bed_id);
@@ -3773,16 +3784,13 @@ Object.assign(Garden, {
 
     const blocking = Garden.hits(bed.id, nx, ny, aw, ah, [id]);
     if(!blocking.length) return { ok:true, move:{ id:id, x:nx, y:ny } };
-
     if(blocking.length > 1)
-      return { ok:false, why:"That spot covers " + blocking.length + " plantings — only one can swap at a time." };
+      return { ok:false, why:"That covers " + blocking.length + " plantings — only one can swap at a time." };
 
-    /* one thing in the way: try to swap it back into the space we came from */
     const b = blocking[0];
     const bw = Garden.W(b), bh = Garden.H(b);
     if(!Garden.inBounds(bed, ax, ay, bw, bh))
       return { ok:false, why: cropName(b.crop_id) + " is too big to fit where " + cropName(a.crop_id) + " was." };
-    /* nothing else may be sitting where B is going, and the two must not overlap each other */
     const inWay = Garden.hits(bed.id, ax, ay, bw, bh, [id, b.id]);
     if(inWay.length)
       return { ok:false, why:"No room to swap — " + cropName(inWay[0].crop_id) + " is in the way." };
@@ -3793,6 +3801,29 @@ Object.assign(Garden, {
     return { ok:true, move:{ id:id, x:nx, y:ny }, swap:{ id:b.id, x:ax, y:ay }, with:b };
   },
 
+  /* search outward for somewhere the drop actually works */
+  nearestDrop(id, tx, ty, radius){
+    const R = radius === undefined ? 3 : radius;
+    const exact = Garden.planMove(id, tx, ty);
+    if(exact.ok) return exact;
+    let bestSwap = null;
+    for(let r = 1; r <= R; r++){
+      const ring = [];
+      for(let dx = -r; dx <= r; dx++) for(let dy = -r; dy <= r; dy++){
+        if(Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        ring.push([tx + dx, ty + dy]);
+      }
+      ring.sort((a, b) => (Math.abs(a[0]-tx) + Math.abs(a[1]-ty)) - (Math.abs(b[0]-tx) + Math.abs(b[1]-ty)));
+      for(const c of ring){
+        const p = Garden.planMove(id, c[0], c[1]);
+        if(p.ok && !p.noop && !p.swap) return p;         /* open ground wins */
+        if(p.ok && p.swap && !bestSwap) bestSwap = p;     /* remember a swap as a fallback */
+      }
+      if(bestSwap) return bestSwap;
+    }
+    return { ok:false, why:"Nothing nearby had room — put back where it was." };
+  },
+
   applyMove(plan){
     if(!plan || !plan.ok || plan.noop) return false;
     if(plan.swap) DB.update("plantings", plan.swap.id, { x: plan.swap.x, y: plan.swap.y });
@@ -3800,82 +3831,99 @@ Object.assign(Garden, {
     return true;
   },
 
-  /* ---------- the drag itself ---------- */
-  moveStart(ev, id){
-    if(Garden.paint || Garden.erase) return;          /* those modes want plain taps */
+  /* ---------- press, hold, drag ---------- */
+  liftStart(ev, id){
+    if(Garden.paint || Garden.erase || Garden.clip) return;
     if(ev.target && ev.target.classList && ev.target.classList.contains("grip")) return;
     const p = DB.find("plantings", id); if(!p) return;
     const bed = DB.find("beds", p.bed_id); if(!bed) return;
 
     const el = ev.currentTarget;
+    const plot = el.parentNode;
     const cs = Garden._cs, gap = 3, step = cs + gap;
     const sx = ev.clientX, sy = ev.clientY;
     const ox = num(p.x), oy = num(p.y);
-    const rect = el.getBoundingClientRect();
-    /* which square within the planting was grabbed, so it follows the finger naturally */
-    const grabX = Math.floor((sx - rect.left) / step);
-    const grabY = Math.floor((sy - rect.top) / step);
-    let dragging = false, plan = null, last = null;
+    let lifted = false, cancelled = false, plan = null, cell = null;
 
-    const preview = () => {
-      let ghost = $("#dropghost");
-      if(!ghost){
-        ghost = document.createElement("div");
-        ghost.id = "dropghost"; ghost.className = "dropghost";
-        (el.parentNode || document.body).appendChild(ghost);
-      }
-      if(!last){ ghost.style.display = "none"; return; }
+    const ghost = () => {
+      let g = $("#dropghost");
+      if(!g){ g = document.createElement("div"); g.id = "dropghost"; plot.appendChild(g); }
+      if(!cell){ g.style.display = "none"; return; }
       const w = Garden.W(p), hh = Garden.H(p);
-      ghost.style.display = "block";
-      ghost.style.left = (last.x * step) + "px";
-      ghost.style.top = (last.y * step) + "px";
-      ghost.style.width = (w * cs + (w - 1) * gap) + "px";
-      ghost.style.height = (hh * cs + (hh - 1) * gap) + "px";
-      ghost.className = "dropghost " + (plan && plan.ok ? (plan.swap ? "swap" : "ok") : "bad");
+      g.style.display = "block";
+      g.style.left = (cell.x * step) + "px";
+      g.style.top = (cell.y * step) + "px";
+      g.style.width = (w * cs + (w - 1) * gap) + "px";
+      g.style.height = (hh * cs + (hh - 1) * gap) + "px";
+      g.className = "dropghost " + (plan && plan.ok ? (plan.swap ? "swap" : "ok") : "bad");
     };
+
+    const lift = () => {
+      if(cancelled) return;
+      lifted = true;
+      Garden.lifted = id;
+      el.classList.add("lifted");
+      if(plot) plot.classList.add("dragging-bed");
+      try{ el.setPointerCapture(ev.pointerId); }catch(e){}
+      haptic();
+      cell = { x: ox, y: oy };
+      plan = { ok:true, noop:true };
+      ghost();
+    };
+    const timer = setTimeout(lift, 220);
 
     const move = e => {
       const dx = e.clientX - sx, dy = e.clientY - sy;
-      if(!dragging && Math.abs(dx) < 7 && Math.abs(dy) < 7) return;
-      if(!dragging){
-        dragging = true; el._dragged = true;
-        el.classList.add("dragging");
-        haptic();
+      if(!lifted){
+        /* still deciding: a real drag before the hold completes is a scroll */
+        if(Math.abs(dx) > 10 || Math.abs(dy) > 10){ cancelled = true; clearTimeout(timer); cleanup(); }
+        return;
       }
       e.preventDefault();
-      const nx = clamp(Math.round((e.clientX - rect.left - grabX * step) / step) + ox + 0, -50, 50);
-      const cellX = clamp(ox + Math.round(dx / step), 0, num(bed.cols) - 1);
-      const cellY = clamp(oy + Math.round(dy / step), 0, num(bed.rows) - 1);
-      void nx;
-      if(!last || last.x !== cellX || last.y !== cellY){
-        last = { x: cellX, y: cellY };
-        plan = Garden.planMove(id, cellX, cellY);
-        preview();
-      }
       el.style.transform = "translate(" + dx + "px," + dy + "px)";
+      const nx = clamp(ox + Math.round(dx / step), -2, num(bed.cols) + 1);
+      const ny = clamp(oy + Math.round(dy / step), -2, num(bed.rows) + 1);
+      if(!cell || cell.x !== nx || cell.y !== ny){
+        cell = { x: nx, y: ny };
+        plan = Garden.planMove(id, nx, ny);
+        ghost();
+      }
     };
 
-    const up = () => {
+    const cleanup = () => {
+      clearTimeout(timer);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
-      const ghost = $("#dropghost"); if(ghost) ghost.remove();
+      const g = $("#dropghost"); if(g) g.remove();
       el.style.transform = "";
-      el.classList.remove("dragging");
-      if(!dragging) return;
-      if(plan && plan.ok && !plan.noop){
-        const swapped = !!plan.swap, other = plan.with;
-        Garden.applyMove(plan);
+      el.classList.remove("lifted");
+      if(plot) plot.classList.remove("dragging-bed");
+      Garden.lifted = null;
+    };
+
+    const up = () => {
+      const wasLifted = lifted, target = cell;
+      cleanup();
+      if(!wasLifted) return;                       /* a plain tap — let the click through */
+      el._dragged = true;
+      setTimeout(() => { el._dragged = false; }, 260);
+      if(!target){ Garden.render(); return; }
+
+      const final = Garden.nearestDrop(id, target.x, target.y);
+      if(final.ok && !final.noop){
+        const swapped = !!final.swap, other = final.with;
+        const moved = Math.abs(final.move.x - target.x) + Math.abs(final.move.y - target.y);
+        Garden.applyMove(final);
         Garden.sel = id;
         Garden.render();
-        toast(swapped ? "Swapped with " + cropName(other.crop_id) : cropName(p.crop_id) + " moved");
-      } else if(plan && !plan.ok){
-        Garden.render();
-        toast(plan.why);
+        toast(swapped ? "Swapped with " + cropName(other.crop_id)
+                      : (moved ? "Dropped nearby — that exact spot was taken"
+                               : cropName(p.crop_id) + " moved"));
       } else {
         Garden.render();
+        toast(final.noop ? "" : "Put back — nothing nearby had room");
       }
-      setTimeout(() => { el._dragged = false; }, 0);
     };
 
     window.addEventListener("pointermove", move, { passive:false });
@@ -3883,51 +3931,166 @@ Object.assign(Garden, {
     window.addEventListener("pointercancel", up);
   },
 
-  /* attach the handlers after each grid render */
+  /* ---------- copy and paste ---------- */
+  copyPlanting(id){
+    const p = DB.find("plantings", id); if(!p) return;
+    Garden.clip = {
+      crop_id: p.crop_id, variety: p.variety || null, variety_id: p.variety_id || null,
+      w: Garden.W(p), h: Garden.H(p), span_mode: p.span_mode || "fill",
+      qty: num(p.qty, 1), seed_id: p.seed_id || null, notes: p.notes || null,
+      status: p.status || "planned", sown_on: p.sown_on || iso(today())
+    };
+    Garden.paint = null; Garden.erase = false; Garden.sel = null;
+    closeSheet();
+    Garden.render();
+    toast("Copied " + cropName(p.crop_id) + " — tap squares to place more");
+  },
+  clearClip(){ Garden.clip = null; Garden.render(); },
+
+  pasteAt(x, y){
+    const c = Garden.clip; if(!c) return;
+    const bed = DB.find("beds", APP.bedId); if(!bed) return;
+    if(!Garden.inBounds(bed, x, y, c.w, c.h) || Garden.hits(bed.id, x, y, c.w, c.h).length){
+      /* try to be helpful rather than refusing outright */
+      const spot = Garden.freeSpot(bed, c.w, c.h, x, y);
+      if(!spot) return toast("No room for another " + cropName(c.crop_id) + " that size");
+      x = spot.x; y = spot.y;
+    }
+    const p = DB.insert("plantings", Object.assign({}, c, { bed_id: bed.id, x: x, y: y }));
+    Cal.forPlanting(p);
+    haptic();
+    Garden.render();
+    toast(cropName(c.crop_id) + " added · " + c.w + "×" + c.h);
+  },
+
+  /* nearest free rectangle of this size, searching outward */
+  freeSpot(bed, w, h, fromX, fromY){
+    const sx = fromX === undefined ? 0 : fromX, sy = fromY === undefined ? 0 : fromY;
+    const cands = [];
+    for(let y = 0; y <= num(bed.rows) - h; y++) for(let x = 0; x <= num(bed.cols) - w; x++){
+      if(!Garden.hits(bed.id, x, y, w, h).length)
+        cands.push({ x:x, y:y, d: Math.abs(x - sx) + Math.abs(y - sy) });
+    }
+    if(!cands.length) return null;
+    cands.sort((a, b) => a.d - b.d);
+    return cands[0];
+  },
+
+  /* one-tap duplicate straight from the sheet */
+  duplicate(id){
+    const p = DB.find("plantings", id); if(!p) return;
+    const bed = DB.find("beds", p.bed_id);
+    const w = Garden.W(p), h = Garden.H(p);
+    const spot = Garden.freeSpot(bed, w, h, num(p.x) + w, num(p.y));
+    if(!spot) return toast("No free space that size in this bed");
+    const copy = DB.insert("plantings", {
+      bed_id: bed.id, x: spot.x, y: spot.y, w: w, h: h, span_mode: p.span_mode,
+      crop_id: p.crop_id, variety: p.variety, variety_id: p.variety_id, seed_id: p.seed_id,
+      qty: p.qty, status: p.status, sown_on: p.sown_on, notes: p.notes
+    });
+    Cal.forPlanting(copy);
+    Garden.sel = copy.id;
+    closeSheet();
+    Garden.render();
+    toast("Duplicated to row " + (spot.y + 1) + ", column " + (spot.x + 1));
+  },
+
+  /* ---------- taps ---------- */
+  tapCell(x, y){
+    haptic();
+    const bed = DB.find("beds", APP.bedId);
+    const ex = Garden.at(bed.id, x, y);
+
+    if(Garden.clip){ if(!ex) Garden.pasteAt(x, y); else toast("That square is taken"); return; }
+    if(Garden.erase){ if(ex){ Garden.removePlanting(ex.id, true); Garden.render(); } return; }
+    if(Garden.paint){
+      if(ex){ if(ex.crop_id === Garden.paint) return; Garden.removePlanting(ex.id, true); }
+      Garden.place(bed, x, y, Garden.paint, true);
+      Garden.render(); return;
+    }
+    if(ex){
+      Garden.sel = (Garden.sel === ex.id) ? null : ex.id;
+      Garden.render();
+      if(Garden.sel) Garden.plantingSheet(ex);
+      return;
+    }
+    Garden.sel = null;
+    Garden.pickCrop(x, y);
+  },
+
+  /* attach press-and-hold to each planted square after every render */
   bindGrid(){
     $$("#s-garden .cell.filled[data-pid]").forEach(el => {
-      el.addEventListener("pointerdown", ev => Garden.moveStart(ev, el.dataset.pid));
-      const prior = el.onclick;
-      el.onclick = e => { if(el._dragged){ e.preventDefault(); e.stopPropagation(); return; } if(prior) prior.call(el, e); };
+      if(el._bound) return;
+      el._bound = true;
+      el.addEventListener("pointerdown", ev => Garden.liftStart(ev, el.dataset.pid));
+      el.addEventListener("click", e => {
+        if(el._dragged){ e.preventDefault(); e.stopImmediatePropagation(); }
+      }, true);
+      el.addEventListener("contextmenu", e => e.preventDefault());
     });
   }
 });
 
-/* filled cells need to know which planting they are */
+/* filled cells carry their planting id so the drag knows what it holds */
 (function tagCells(){
   const orig = Garden.gridHTML.bind(Garden);
   Garden.gridHTML = function(bed, opts){
-    const html = orig(bed, opts);
+    let html = orig(bed, opts);
     if(!opts || !opts.interactive) return html;
     const ps = Garden.live(bed.id);
     const byStart = {}; ps.forEach(p => byStart[num(p.x) + "," + num(p.y)] = p.id);
-    /* the renderer emits cells in row-major order with the planting's own onclick;
-       re-attach the id by matching the coordinates already in that handler */
-    return html.replace(/<button class="cell filled([^"]*)" onclick="Garden\.tapCell\((\d+),(\d+)\)"/g,
+    return html.replace(/<button class="cell filled([^"]*)"\s+onclick="Garden\.tapCell\((\d+),\s*(\d+)\)"/g,
       function(m, cls, x, y){
-        const id = byStart[x + "," + y];
-        return '<button class="cell filled' + cls + '" data-pid="' + (id || "") + '" ' +
+        const id = byStart[x + "," + y] || "";
+        return '<button class="cell filled' + cls + '" data-pid="' + id + '" ' +
                'onclick="Garden.tapCell(' + x + ',' + y + ')"';
       });
   };
 })();
 
-/* bind after the bed view paints */
+/* bind after the bed view paints, and explain the gesture */
 (function wrapBedView(){
-  const orig = Garden.bedView.bind(Garden);
-  Garden.bedView = function(){ orig(); Garden.bindGrid(); };
-})();
-
-/* the hint text should mention dragging */
-(function hint(){
   const orig = Garden.bedView.bind(Garden);
   Garden.bedView = function(){
     orig();
     const box = $("#s-garden");
-    if(box) box.innerHTML = box.innerHTML.replace(
-      "Tap a planting to select it, then drag its corner handle — or use the width and height steppers — to cover more ground.",
-      "Drag a planting to move it — drop it on another and they swap. Tap it to select, then drag the corner handle to make it cover more ground.");
+    if(box){
+      box.innerHTML = box.innerHTML.replace(
+        "Tap a planting to select it, then drag its corner handle — or use the width and height steppers — to cover more ground.",
+        "Press and hold a planting to pick it up, then drag it anywhere — drop it on another and they swap. Tap it to open, then drag the corner handle to make it cover more ground.");
+      if(Garden.clip){
+        const c = Garden.clip;
+        box.innerHTML = box.innerHTML.replace('<div class="card" style="margin-top:12px"><div class="row wrap" style="gap:6px">',
+          '<div class="card" style="margin-top:12px;border-color:var(--green-500)">' +
+          '<div class="row between"><div class="grow"><div class="b">' + cropEmoji(c.crop_id) + ' Placing copies of ' +
+          esc(cropName(c.crop_id)) + (c.variety ? ' · ' + esc(c.variety) : '') + '</div>' +
+          '<div class="tiny muted">' + c.w + '×' + c.h + ' · ' + c.qty + ' plant' + (c.qty === 1 ? "" : "s") +
+          ' each · tap any empty square</div></div>' +
+          '<button class="btn sm" onclick="Garden.clearClip()">Done</button></div></div>' +
+          '<div class="card" style="margin-top:12px"><div class="row wrap" style="gap:6px">');
+      }
+    }
     Garden.bindGrid();
+  };
+})();
+
+/* copy and duplicate live in the planting sheet */
+(function addSheetButtons(){
+  const orig = Garden.plantingSheet.bind(Garden);
+  Garden.plantingSheet = function(p){
+    orig(p);
+    if(!p) return;
+    const body = $("#sheet-body"); if(!body) return;
+    const anchor = '<div class="row" style="gap:8px;margin-top:16px">';
+    if(body.innerHTML.indexOf(anchor) < 0) return;
+    body.innerHTML = body.innerHTML.replace(anchor,
+      '<div class="grid2" style="margin-top:16px">' +
+        '<button class="btn ghost" onclick="Garden.duplicate(\'' + p.id + '\')">⧉ Duplicate</button>' +
+        '<button class="btn ghost" onclick="Garden.copyPlanting(\'' + p.id + '\')">📋 Copy to place</button>' +
+      '</div>' +
+      '<div class="tiny muted" style="margin-top:6px">Duplicate drops an identical copy in the nearest free space. Copy lets you tap squares to place as many as you like.</div>' +
+      anchor);
   };
 })();
 </script>
@@ -7447,7 +7610,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-02.11";
+const BUILD = "2026-08-02.12";
 
 const Updater = {
   prompt: null, installed: false,
@@ -7841,8 +8004,10 @@ const GUIDE = [
      "Tap **Garden**, then New bed, and set how many squares across and down. Tap any empty square to plant it. The app knows real spacing, so a square of lettuce becomes four plants and a square of carrots sixteen.",
      "Plants can cover more than one square. Tap a planting to select it, then drag the round handle at its corner — or use the width and height steppers — to stretch it across as many squares as it really takes.",
      "When you stretch something, say which it is: **one plant sprawling** over that area, or the area **filled with plants** at proper spacing. If you record a single cucumber covering six square feet, the app remembers and offers that same footprint next time you plant cucumber.",
-     "Plantings that shouldn't sit next to each other get a ⚠️ on the grid, with the reason when you tap them."],
-  steps:["Garden → New bed","Tap a square, pick a crop","Tap the planting, drag its corner to resize","Choose one plant or filled with plants"] },
+     "To move something, **press and hold it** for a moment until it lifts, then drag it wherever you like and let go. It lands on the nearest square that works — and if you drop it on another planting, the two swap places, provided the one being displaced fits where yours came from.",
+     "To plant several of the same thing, open one and tap **Duplicate** for an instant copy in the nearest free space, or **Copy to place** and then tap as many squares as you want. Copies keep the size, variety and plant count of the original.",
+     "Plantings that shouldn't sit next to each other get a ⚠️ on the grid; ones that help each other get a 💚. Tap either for the reason."],
+  steps:["Garden → New bed","Tap a square, pick a crop","Press and hold a planting to drag it","Tap it, then Duplicate or Copy to place more"] },
 
 { id:"map", icon:"🗺️", t:"Seeing the whole garden",
   p:["The Garden tab has two views. **Beds** is the list you plant into; **Map** is the plan of your whole garden.",
