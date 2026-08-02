@@ -2863,7 +2863,8 @@ Object.assign(Garden, {
         const isSel = Garden.sel === p.id;
         h += '<button class="cell filled ' + (isSel ? "sel" : "") + '" ' +
           (o.interactive ? 'onclick="Garden.tapCell(' + x + ',' + y + ')" ' : '') +
-          'style="grid-column:span ' + w + ';grid-row:span ' + hh + ';width:' + pw + 'px;height:' + ph + 'px;' +
+          'style="grid-column:' + (x + 1) + '/span ' + w + ';grid-row:' + (y + 1) + '/span ' + hh + ';' +
+          'width:' + pw + 'px;height:' + ph + 'px;' +
           'font-size:' + Math.round(Math.min(pw, ph) * (big ? 0.42 : 0.5)) + 'px">' +
           cropEmoji(p.crop_id) +
           (num(p.qty) > 1 ? '<span class="qty">' + p.qty + '</span>' : '') +
@@ -2874,7 +2875,8 @@ Object.assign(Garden, {
           '</button>';
       } else if(!taken[k]){
         h += '<button class="cell" ' + (o.interactive ? 'onclick="Garden.tapCell(' + x + ',' + y + ')"' : '') +
-          ' style="width:' + cs + 'px;height:' + cs + 'px"></button>';
+          ' style="grid-column:' + (x + 1) + ';grid-row:' + (y + 1) + ';' +
+          'width:' + cs + 'px;height:' + cs + 'px"></button>';
       }
     }
     return h + '</div>';
@@ -3860,9 +3862,16 @@ Object.assign(Garden, {
     return { ok:true, move:{ id:id, x:nx, y:ny }, swap:{ id:b.id, x:ax, y:ay }, with:b };
   },
 
-  /* search outward for somewhere the drop actually works */
+  /* search outward for somewhere the drop actually works.
+     The radius covers the whole bed by default: if there is space
+     anywhere, a drop should find it rather than snapping back. */
   nearestDrop(id, tx, ty, radius){
-    const R = radius === undefined ? 3 : radius;
+    let R = radius;
+    if(R === undefined){
+      const a = DB.find("plantings", id);
+      const bed = a && DB.find("beds", a.bed_id);
+      R = bed ? Math.max(num(bed.cols, 4), num(bed.rows, 4)) : 3;
+    }
     const exact = Garden.planMove(id, tx, ty);
     if(exact.ok) return exact;
     let bestSwap = null;
@@ -3917,7 +3926,8 @@ Object.assign(Garden, {
     const ox = num(p.x), oy = num(p.y);
     const maxX = Math.max(0, num(bed.cols) - W), maxY = Math.max(0, num(bed.rows) - H);
 
-    let lifted = false, dead = false, cell = null, plan = null, rect = null;
+    const touch = ev.pointerType === "touch" || ev.pointerType === "pen";
+    let lifted = false, dead = false, cell = null, plan = null, rect = null, far = 0;
 
     /* only blocks the page once the tile is actually in hand */
     const blockScroll = e => { if(lifted) e.preventDefault(); };
@@ -3964,22 +3974,36 @@ Object.assign(Garden, {
     };
     const timer = setTimeout(lift, 200);
 
+    /* Waiting for a perfectly still 200ms hold was the reason dragging
+       "stopped working": almost nobody presses and then freezes, so the
+       first twitch killed the lift and the tile never moved. Movement is
+       now read as intent to drag, not as a failed hold.
+
+       The one exception is a finger swiping mostly up or down. The cells
+       are touch-action:pan-y, so the browser owns that gesture — it is
+       the page scrolling, and stealing it would trap her on the screen. */
     const move = e => {
       if(!lifted){
-        /* movement before the hold completes is a scroll, not a drag */
-        if(Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10){
-          dead = true; clearTimeout(timer); finish(false);
-        }
-        return;
+        const dx = Math.abs(e.clientX - sx), dy = Math.abs(e.clientY - sy);
+        if(dx < 6 && dy < 6) return;
+        if(touch && dy > dx){ dead = true; clearTimeout(timer); finish(false); return; }
+        clearTimeout(timer);
+        lift();
+        if(!lifted) return;
       }
+      far = Math.max(far, Math.abs(e.clientX - sx), Math.abs(e.clientY - sy));
       if(e.cancelable) e.preventDefault();
       track(e.clientX, e.clientY);
     };
 
+    let done = false;
     const finish = (drop) => {
+      if(done) return;
+      done = true;
       clearTimeout(timer);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
       document.removeEventListener("touchmove", blockScroll);
       const g = plot.querySelector(".dropghost"); if(g) g.remove();
       el.style.transform = "";
@@ -3987,8 +4011,11 @@ Object.assign(Garden, {
       Garden.lifted = null;
 
       if(!drop || !lifted) return;
-      el._dragged = true;
-      setTimeout(() => { el._dragged = false; }, 300);
+      /* a sloppy tap is still a tap — only swallow the click after a real drag */
+      if(far > 12){
+        el._dragged = true;
+        setTimeout(() => { el._dragged = false; }, 300);
+      }
 
       if(!cell){ Garden.render(); toast("Put back where it was"); return; }
       const final = Garden.nearestDrop(id, cell.x, cell.y);
@@ -4008,11 +4035,15 @@ Object.assign(Garden, {
     };
 
     const onUp = () => finish(true);
+    /* pointercancel is NOT an abort — the browser has taken the pointer away
+       and no pointerup is coming, so honour the last good target and tidy up.
+       Without a listener here the gesture used to die silently mid-drag,
+       leaving the tile stuck and the listeners attached. */
+    const onCancel = () => finish(true);
 
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", onUp);
-    /* pointercancel is deliberately NOT treated as an abort: if the browser
-       takes the pointer away mid-drag we still honour the last good target */
+    window.addEventListener("pointercancel", onCancel);
   },
 
   /* ---------- copy and paste ---------- */
@@ -7970,7 +8001,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-02.13";
+const BUILD = "2026-08-02.14";
 
 const Updater = {
   prompt: null, installed: false,
