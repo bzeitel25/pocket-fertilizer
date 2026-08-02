@@ -551,6 +551,7 @@ const SCHEMA = {
   beds:       ["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil","irrigation","notes","created"],
   plantings:  ["id","bed_id","x","y","w","h","span_mode","crop_id","variety","variety_id","seed_id","qty","status","sown_on","transplant_on","harvest_from","harvest_to","removed_on","notes","created"],
   varieties:  ["id","crop_id","name","dtm","habit","resistance","spacing_in","notes","source","created"],
+  maturity:   ["id","crop_id","variety","days","sown_on","harvested_on","planting_id","bed_id","note","created"],
   seeds:      ["id","crop_id","name","variety","brand","lot","qty","unit","packed_year","exp_date","germ_rate","cost","photo_id","source","notes","created"],
   events:     ["id","date","type","title","crop_id","seed_id","bed_id","planting_id","notes","done","auto","created"],
   journal:    ["id","date","type","bed_id","planting_id","crop_id","amount","unit","cost","minutes","product","notes","photo_id","created"],
@@ -2760,12 +2761,7 @@ Object.assign(Garden, {
             : (p.variety ? "Tap to change" : "Pick from the list, or look one up")) + '</div></div>' +
         '<span class="go">›</span></button>' +
       '<input type="hidden" id="pl-var" value="' + esc(p.variety || "") + '"></div>';
-    if(vv && vv.notes) h += '<div class="note i" style="margin-top:8px">🏷️ <b>' + esc(vv.name) + '.</b> ' + esc(vv.notes) +
-      (vv.dtm && c && Math.abs(num(vv.dtm) - c.dtm) >= 10
-        ? '<br><br>This variety matures in about ' + vv.dtm + ' days, against ' + c.dtm + ' for ' + esc(c.n) +
-          ' generally — the calendar uses the crop figure, so adjust your expectations by roughly ' +
-          Math.abs(Math.round(num(vv.dtm) - c.dtm)) + ' days.'
-        : '') + '</div>';
+    if(vv && vv.notes) h += '<div class="note i" style="margin-top:8px">🏷️ <b>' + esc(vv.name) + '.</b> ' + esc(vv.notes) + '</div>';
     if(!single && num(p.qty) !== fit)
       h += '<button class="btn ghost block sm" style="margin-top:8px" onclick="Garden.syncQty(\'' + p.id + '\');Garden.plantingSheet(DB.find(\'plantings\',\'' + p.id + '\'));Garden.render()">Reset to recommended (' + fit + ')</button>';
     h += '</div>';
@@ -2795,9 +2791,26 @@ Object.assign(Garden, {
     h += '<div class="field"><label class="f">Notes</label><textarea id="pl-notes" placeholder="How big it actually got, flavour, what you would change">' + esc(p.notes || "") + '</textarea></div>';
 
     if(c){
-      const harv = p.sown_on ? Season.harvestFrom(p.crop_id, p.sown_on, "seed") : null;
-      if(harv) h += '<div class="note i" style="margin-top:10px">🗓️ About ' + c.dtm + ' days to maturity — first harvest around <b>' + fmtY(harv) + '</b>' +
+      const mx = Maturity.expected(p.crop_id, p.variety);
+      const mine = Maturity.mine(p.crop_id, p.variety);
+      const rec = DB.where("maturity", m => m.planting_id === p.id)[0];
+      const harv = p.sown_on ? Season.harvestFrom(p.crop_id, p.sown_on, "seed", p.variety) : null;
+      h += '<div class="card" style="margin-top:12px"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Days to maturity</div>';
+      if(mx) h += '<div class="row between"><div><div class="b" style="font-size:1.2rem">' + mx.lo + '–' + mx.hi + ' days</div>' +
+        '<div class="tiny muted">' + esc({ yours:"your own average, from " + mx.n + " past planting" + (mx.n === 1 ? "" : "s"),
+          blend:"your results blended with the catalogue figure", variety:"typical for this variety",
+          crop:"typical for the crop — varies a lot by variety" }[mx.source]) + '</div></div>' +
+        '<div style="font-size:1.6rem">📈</div></div>';
+      if(mine) h += '<div class="note g" style="margin-top:8px">🌱 <b>In your garden.</b> ' + esc(cropName(p.crop_id)) +
+        (mine.varietySpecific && p.variety ? ' (' + esc(p.variety) + ')' : '') + ' has averaged <b>' + mine.avg + ' days</b> over ' +
+        mine.n + ' planting' + (mine.n === 1 ? "" : "s") + (mine.n > 1 ? ', ranging ' + mine.lo + '–' + mine.hi : '') + '.' +
+        (mx && mx.pub && Math.abs(mine.avg - mx.pub.mid) >= 5
+          ? ' That is ' + Math.abs(mine.avg - mx.pub.mid) + ' days ' + (mine.avg > mx.pub.mid ? 'slower' : 'faster') + ' than published.' : '') + '</div>';
+      if(harv) h += '<div class="note i" style="margin-top:8px">🗓️ First harvest around <b>' + fmtY(harv) + '</b>' +
         (Season.firstFrost() && harv > Season.firstFrost() ? '. That lands after your first frost, so this planting may not finish outdoors.' : '.') + '</div>';
+      h += '<button class="btn ' + (rec ? "ghost" : "") + ' block" style="margin-top:10px" onclick="Maturity.sheet(\'' + p.id + '\')">' +
+        (rec ? '📈 First harvest recorded — ' + rec.days + ' days' : '📈 Record the first harvest') + '</button>' +
+        '<div class="tiny muted" style="margin-top:6px">Every one you record makes the app\'s timing more like your garden and less like a seed catalogue.</div></div>';
       const occ = Garden.live(bed.id).filter(x => x.id !== p.id);
       const bad = [], good = [];
       occ.forEach(o => { const r = pairRating(p.crop_id, o.crop_id);
@@ -4668,6 +4681,20 @@ const Recap = {
         '</div><div class="tiny muted" style="margin-top:8px">Repeat problems are usually a siting or rotation issue, not bad luck. Change the variable before next season.</div></div>';
     }
 
+    /* what the garden has taught the app */
+    const mat = Maturity.summary();
+    if(mat.length){
+      h += '<div class="sec"><h2>Your days to maturity</h2></div><div class="card"><table class="mini">' +
+        '<tr><th>Crop</th><th>Yours</th><th>Published</th><th>Difference</th></tr>' +
+        mat.map(m => '<tr><td class="b">' + cropEmoji(m.crop_id) + ' ' + esc(cropName(m.crop_id)) +
+          (m.variety ? '<div class="tiny muted" style="font-weight:400">' + esc(m.variety) + '</div>' : '') + '</td>' +
+          '<td>' + m.avg + 'd<div class="tiny muted">' + m.n + ' record' + (m.n === 1 ? "" : "s") + '</div></td>' +
+          '<td>' + (m.pub || "—") + '</td>' +
+          '<td class="b" style="color:' + (m.delta === null ? "inherit" : m.delta > 0 ? "var(--warn)" : "var(--green-600)") + '">' +
+          (m.delta === null ? "—" : (m.delta > 0 ? "+" : "") + m.delta + "d") + '</td></tr>').join("") +
+        '</table><div class="tiny muted" style="margin-top:8px">Positive means your garden runs slower than the catalogue. Once a crop has three records the app plans with your figure instead.</div></div>';
+    }
+
     /* takeaways */
     h += '<div class="sec"><h2>Notes for next year</h2></div><div class="card">';
     const notes = [];
@@ -4706,6 +4733,193 @@ function download(name, blob){
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => { if(URL.revokeObjectURL) URL.revokeObjectURL(u); }, 4000);
 }
+</script>
+<script>
+/* ============================================================
+   DAYS TO MATURITY — ranges, and this garden's own averages
+
+   Published days-to-maturity is a single number pretending to be
+   precise. It shifts with heat, light, soil and season, and the
+   same variety can swing weeks between gardens. So the app shows
+   a RANGE, and every time a real first harvest is recorded it
+   learns: after one picking it reports what actually happened,
+   and after a few it uses her own average for projections
+   instead of the catalogue figure.
+   ============================================================ */
+const Maturity = {
+  /* published range — honest about the spread rather than a false point */
+  cropRange(cropId){
+    const c = crop(cropId); if(!c) return null;
+    return { lo: Math.max(15, Math.round(c.dtm * 0.85)), hi: Math.round(c.dtm * 1.15), mid: c.dtm };
+  },
+  varietyRange(cropId, variety){
+    if(!variety) return null;
+    const v = Varieties.find(cropId, variety);
+    if(!v || !num(v.dtm)) return null;
+    const d = num(v.dtm);
+    return { lo: Math.max(15, d - 7), hi: d + 10, mid: d };
+  },
+
+  /* ---- her own records ---- */
+  mine(cropId, variety){
+    let rows = DB.where("maturity", m => m.crop_id === cropId);
+    if(variety){
+      const exact = rows.filter(m => (m.variety || "").toLowerCase() === String(variety).toLowerCase());
+      if(exact.length) rows = exact;
+    }
+    if(!rows.length) return null;
+    const days = rows.map(m => num(m.days)).filter(d => d > 0);
+    if(!days.length) return null;
+    const avg = days.reduce((a, b) => a + b, 0) / days.length;
+    return {
+      n: days.length, avg: Math.round(avg),
+      lo: Math.min.apply(null, days), hi: Math.max.apply(null, days),
+      varietySpecific: !!variety && rows.every(m => (m.variety || "").toLowerCase() === String(variety).toLowerCase()),
+      last: rows.sort((a, b) => (b.harvested_on || "").localeCompare(a.harvested_on || ""))[0]
+    };
+  },
+
+  /* what the app should actually use for projections */
+  expected(cropId, variety){
+    const mine = Maturity.mine(cropId, variety);
+    if(mine && mine.n >= 1){
+      /* one record is a data point, three is a pattern — weight accordingly */
+      const pub = Maturity.varietyRange(cropId, variety) || Maturity.cropRange(cropId);
+      const w = Math.min(mine.n, 3) / 3;
+      const blended = pub ? Math.round(mine.avg * w + pub.mid * (1 - w)) : mine.avg;
+      return {
+        days: mine.n >= 3 ? mine.avg : blended,
+        lo: Math.min(mine.lo, pub ? pub.lo : mine.lo),
+        hi: Math.max(mine.hi, pub ? pub.hi : mine.hi),
+        source: mine.n >= 3 ? "yours" : "blend", n: mine.n, mine: mine, pub: pub
+      };
+    }
+    const v = Maturity.varietyRange(cropId, variety);
+    if(v) return { days: v.mid, lo: v.lo, hi: v.hi, source:"variety", n: 0, pub: v };
+    const c = Maturity.cropRange(cropId);
+    if(!c) return null;
+    return { days: c.mid, lo: c.lo, hi: c.hi, source:"crop", n: 0, pub: c };
+  },
+
+  label(cropId, variety){
+    const e = Maturity.expected(cropId, variety);
+    if(!e) return "—";
+    const tag = { yours:"your average", blend:"your results + catalogue", variety:"this variety", crop:"typical for the crop" }[e.source];
+    return e.lo + "–" + e.hi + " days (" + tag + ")";
+  },
+
+  /* ---- recording a real first harvest ---- */
+  record(plantingId, harvestedOn, note){
+    const p = DB.find("plantings", plantingId); if(!p) return null;
+    const sown = p.sown_on; if(!sown) return null;
+    const hd = harvestedOn || iso(today());
+    const days = diffDays(parseISO(sown), parseISO(hd));
+    if(!(days > 0)) return null;
+    const ex = DB.where("maturity", m => m.planting_id === plantingId)[0];
+    const row = { crop_id: p.crop_id, variety: p.variety || null, days: days,
+                  sown_on: sown, harvested_on: hd, planting_id: plantingId,
+                  bed_id: p.bed_id, note: note || null };
+    const saved = ex ? DB.update("maturity", ex.id, row) : DB.insert("maturity", row);
+    DB.update("plantings", plantingId, { harvest_from: hd });
+    return saved;
+  },
+
+  /* called whenever a harvest is logged, so it learns without being asked */
+  noteHarvest(plantingId, dateISO){
+    const p = DB.find("plantings", plantingId); if(!p || !p.sown_on) return null;
+    if(DB.where("maturity", m => m.planting_id === plantingId).length) return null;
+    const rec = Maturity.record(plantingId, dateISO);
+    if(rec){
+      const e = Maturity.expected(p.crop_id, p.variety);
+      const pub = e && e.pub ? e.pub.mid : null;
+      const diff = pub ? num(rec.days) - pub : 0;
+      toast("📈 " + cropName(p.crop_id) + " took " + rec.days + " days" +
+        (pub ? (Math.abs(diff) >= 5 ? " — " + Math.abs(diff) + " " + (diff > 0 ? "longer" : "faster") + " than the book" : " — right on schedule") : ""));
+    }
+    return rec;
+  },
+
+  /* everything she has learned, for the recap and library */
+  summary(){
+    const by = {};
+    DB.all("maturity").forEach(m => {
+      const k = m.crop_id + "|" + (m.variety || "");
+      (by[k] = by[k] || { crop_id: m.crop_id, variety: m.variety, days: [] }).days.push(num(m.days));
+    });
+    return Object.keys(by).map(k => {
+      const r = by[k], avg = r.days.reduce((a, b) => a + b, 0) / r.days.length;
+      const pub = (Maturity.varietyRange(r.crop_id, r.variety) || Maturity.cropRange(r.crop_id));
+      return { crop_id: r.crop_id, variety: r.variety, n: r.days.length,
+               avg: Math.round(avg), lo: Math.min.apply(null, r.days), hi: Math.max.apply(null, r.days),
+               pub: pub ? pub.mid : null, delta: pub ? Math.round(avg - pub.mid) : null };
+    }).sort((a, b) => b.n - a.n);
+  },
+
+  /* the sheet for logging or correcting a first harvest */
+  sheet(plantingId){
+    const p = DB.find("plantings", plantingId); if(!p) return;
+    const ex = DB.where("maturity", m => m.planting_id === plantingId)[0];
+    const e = Maturity.expected(p.crop_id, p.variety);
+    openSheet("First harvest",
+      '<p class="muted sm" style="margin-top:0">Recording when this actually gave you its first pick teaches the app how ' +
+      esc(cropName(p.crop_id)) + ' behaves in <b>your</b> garden. After a few records it uses your own timing instead of the catalogue figure.</p>' +
+      (p.sown_on ? '<div class="note i">Sown <b>' + fmtY(p.sown_on) + '</b>' +
+        (e ? ' · expected ' + e.lo + '–' + e.hi + ' days' : '') + '</div>'
+        : '<div class="note w">This planting has no sowing date, so days to maturity cannot be worked out. Add one first.</div>') +
+      '<div class="field" style="margin-top:12px"><label class="f">First harvest date</label>' +
+        '<input type="date" id="mt-date" value="' + esc(ex ? ex.harvested_on : iso(today())) + '"></div>' +
+      '<div class="field"><label class="f">Note (optional)</label>' +
+        '<input type="text" id="mt-note" value="' + esc(ex ? ex.note || "" : "") + '" placeholder="Cool spring, slow start"></div>' +
+      '<div id="mt-calc" class="tiny muted" style="margin-top:8px"></div>' +
+      (p.sown_on ? '<button class="btn block" style="margin-top:14px" onclick="Maturity.save(\'' + plantingId + '\')">Save first harvest</button>' : '') +
+      (ex ? '<button class="btn ghost block danger" style="margin-top:8px" onclick="DB.remove(\'maturity\',\'' + ex.id + '\');closeSheet();Garden.render();toast(\'Record removed\')">Remove this record</button>' : ''));
+    const upd = () => {
+      const d = $("#mt-date").value;
+      if(!p.sown_on || !d) return;
+      const n = diffDays(parseISO(p.sown_on), parseISO(d));
+      $("#mt-calc").innerHTML = n > 0
+        ? '<b>' + n + ' days</b> from sowing to first harvest.' +
+          (e && e.pub ? ' The catalogue figure is ' + e.pub.mid + '.' : '')
+        : 'That date is before the sowing date.';
+    };
+    if($("#mt-date")){ $("#mt-date").oninput = upd; upd(); }
+  },
+  save(plantingId){
+    const d = $("#mt-date").value, note = $("#mt-note").value.trim();
+    const rec = Maturity.record(plantingId, d, note);
+    if(!rec) return toast("Check the dates");
+    const p = DB.find("plantings", plantingId);
+    const mine = Maturity.mine(p.crop_id, p.variety);
+    closeSheet(); Garden.render();
+    toast(mine && mine.n > 1
+      ? "Saved · your average is now " + mine.avg + " days over " + mine.n + " plantings"
+      : "Saved · " + rec.days + " days");
+  }
+};
+
+/* projections use her own timing once she has any */
+Season.harvestFrom = function(cropId, startISO, kind, variety){
+  const c = crop(cropId); if(!c || !startISO) return null;
+  let d = parseISO(startISO); if(!d) return null;
+  if(c.from === "transplant" && (kind === "indoor" || kind === "seed")){
+    const s = c.start || {};
+    const wk = (s.tp !== undefined && s.indoor !== undefined && s.tp !== null && s.indoor !== null) ? (s.tp - s.indoor) : 5;
+    d = addDays(d, Math.round(wk * 7));
+  }
+  const e = Maturity.expected(cropId, variety);
+  return addDays(d, e ? e.days : c.dtm);
+};
+
+/* logging a harvest against a planting teaches the app automatically */
+(function hookHarvest(){
+  const orig = Journal.saveHarvest;
+  Journal.saveHarvest = function(id){
+    const pid = $("#hv-plant") ? $("#hv-plant").value : "";
+    const date = $("#hv-date") ? $("#hv-date").value : iso(today());
+    orig.call(Journal, id);
+    if(pid && !id) setTimeout(() => Maturity.noteHarvest(pid, date), 400);
+  };
+})();
 </script>
 <script>
 /* ============================================================
@@ -4768,8 +4982,14 @@ const Library = {
     h += '<div class="grid3">' +
       '<div class="stat"><span class="n">' + c.sun + 'h</span><span class="l">sun</span></div>' +
       '<div class="stat"><span class="n">' + c.water + '"</span><span class="l">water/wk</span></div>' +
-      '<div class="stat"><span class="n">' + c.dtm + '</span><span class="l">days*</span></div></div>' +
-      '<div class="tiny muted" style="margin-top:6px">*Typical days to maturity. This varies by 30 days or more between varieties — your seed packet is the authority.</div>';
+      '<div class="stat"><span class="n">' + (function(){ const r = Maturity.cropRange(id); return r ? r.lo + '–' + r.hi : c.dtm; })() +
+      '</span><span class="l">days</span></div></div>';
+    const myMat = Maturity.mine(id, null);
+    h += myMat
+      ? '<div class="note g" style="margin-top:8px">🌱 <b>In your garden</b> this has averaged <b>' + myMat.avg + ' days</b> over ' +
+        myMat.n + ' planting' + (myMat.n === 1 ? "" : "s") + (myMat.n > 1 ? ' (' + myMat.lo + '–' + myMat.hi + ')' : '') +
+        '. The app uses this instead of the published figure once you have a few records.</div>'
+      : '<div class="tiny muted" style="margin-top:6px">Days to maturity is a range, not a number — it swings with variety, heat and light. Record a first harvest on any planting and the app starts learning your garden\'s real timing.</div>';
 
     h += '<table class="mini" style="margin-top:14px">' +
       '<tr><th>Spacing</th><td>' + c.sp + '" apart · ' + (Math.round(c.psf*100)/100) + ' per sq ft</td></tr>' +
@@ -6141,7 +6361,7 @@ Assist.providerName = () => Assist.prov().n;
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-02.3";
+const BUILD = "2026-08-02.6";
 
 const Updater = {
   prompt: null, installed: false,
