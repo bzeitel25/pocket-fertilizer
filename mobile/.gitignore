@@ -1,0 +1,35 @@
+# The native shells are committed; what they generate is not.
+
+node_modules/
+
+# rebuilt by scripts/sync-www.mjs on every build
+www/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/keystore.properties
+*.jks
+*.keystore
+
+# iOS
+ios/App/build/
+ios/App/Pods/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Xcode SPM checkouts
+.swiftpm/
+
+# copied in by "cap sync" from www/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/capacitor.build.gradle
+android/capacitor.settings.gradle

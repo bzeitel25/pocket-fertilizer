@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Pocket Fertilizer</string>
+    <string name="title_activity_main">Pocket Fertilizer</string>
+    <string name="package_name">io.github.bzeitel25.pocketfertilizer</string>
+    <string name="custom_url_scheme">io.github.bzeitel25.pocketfertilizer</string>
+</resources>

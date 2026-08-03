@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- How xcodebuild -exportArchive turns the archive into an uploadable
+	     .ipa. Read by both the GitHub Actions workflow and by Xcode if you
+	     ever export by hand. -->
+
+	<key>method</key>
+	<string>app-store-connect</string>
+
+	<!-- Automatic, so the runner asks App Store Connect for the certificate
+	     and profile with the API key rather than needing them checked in. -->
+	<key>signingStyle</key>
+	<string>automatic</string>
+
+	<key>destination</key>
+	<string>export</string>
+
+	<!-- Bitcode has been gone since Xcode 14; leaving it on produces a
+	     warning on every upload. -->
+	<key>uploadBitcode</key>
+	<false/>
+
+	<!-- Symbols are what turns a crash report into a line number. There is
+	     no analytics SDK here, so this is the only crash insight available. -->
+	<key>uploadSymbols</key>
+	<true/>
+
+	<key>compileBitcode</key>
+	<false/>
+
+	<key>stripSwiftSymbols</key>
+	<true/>
+
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>

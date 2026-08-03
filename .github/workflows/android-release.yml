@@ -1,0 +1,97 @@
+name: Android release bundle
+
+# Builds the signed .aab you upload to Play Console.
+#
+# Run it from the Actions tab (Run workflow), or let it run on a version tag.
+# The bundle lands in the run's Artifacts. Nothing is uploaded to Play
+# automatically — the first release has to be created by hand anyway, and a
+# workflow that can publish is a workflow that can publish by accident.
+#
+# Repository secrets it needs (Settings → Secrets and variables → Actions):
+#   ANDROID_KEYSTORE_BASE64   the .jks file, base64 encoded
+#   ANDROID_KEYSTORE_PASSWORD
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD
+#
+# To encode the keystore on Windows:
+#   certutil -encode pocket-fertilizer.jks keystore.txt
+#   (then paste the contents, without the BEGIN/END lines, as the secret)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Bundle the web app into the native project
+        working-directory: mobile
+        run: |
+          node scripts/sync-www.mjs
+          npx cap sync android
+
+      - name: Restore the upload keystore
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set. Add the four signing secrets before running this."
+            exit 1
+          fi
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/upload.jks"
+
+      - name: Build the release bundle
+        working-directory: mobile/android
+        env:
+          PF_KEYSTORE_PATH: ${{ runner.temp }}/upload.jks
+          PF_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          PF_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          PF_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew bundleRelease --no-daemon
+
+      - name: Check it really is signed
+        working-directory: mobile/android
+        run: |
+          AAB=app/build/outputs/bundle/release/app-release.aab
+          ls -lh "$AAB"
+          # An unsigned bundle is the one failure that only shows up after
+          # upload, which costs a round trip through Play review.
+          unzip -l "$AAB" | grep -q "META-INF/.*\.RSA\|META-INF/.*\.EC" \
+            || { echo "::error::The bundle is not signed."; exit 1; }
+
+      - name: Shred the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-fertilizer-aab
+          path: mobile/android/app/build/outputs/bundle/release/app-release.aab
+          retention-days: 14
+          if-no-files-found: error

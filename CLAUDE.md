@@ -4,8 +4,11 @@
 
 ```
 Pocket Fertilizer/
-  src/      source parts (p1…p16) + smoke.mjs — EDIT HERE
+  src/      source parts (p1…p19) + smoke.mjs — EDIT HERE
   dist/     the built app AND a git working copy of the repo — DEPLOY FROM HERE
+    mobile/     Capacitor Android + iOS shells for the app stores
+    store/      listing copy, submission runbook, store art
+    .github/    CI that builds the .aab and the .ipa
   README.md project documentation (mirrored into dist/ on build)
 ```
 
@@ -17,7 +20,7 @@ so a push goes live within a minute or two with no extra configuration.
 
 ```bash
 node build.mjs                        # src/ -> dist/index.html
-node src/smoke.mjs dist/index.html    # 326 checks
+node src/smoke.mjs dist/index.html    # 347 checks
 node verify_camera.mjs dist/index.html # 26 checks on the camera -> AI -> form path
 ```
 
@@ -83,7 +86,7 @@ a device labelled "back" first, then `exact`, then `ideal`, then anything.
 node src/smoke.mjs dist/index.html
 ```
 
-326 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
+347 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
 round-trips, season maths, companion logic, grid spans, seed and maturity maths, the SQL guard,
 every screen and modal, assistant tool execution, and data-accuracy invariants. It has caught
 real bugs — an infinite retry loop, a data-truncating patch, stale-task rendering. Run it
@@ -104,6 +107,44 @@ and hand back a ready-to-push repo. Bruno runs the push from his own machine, wh
 credential manager already has GitHub access. If a session ever needs to deploy end to end on
 its own, the fallback is the GitHub web UI (Add file → Upload files) via the Chrome extension,
 which is how earlier deploys were done.
+
+## The store builds
+
+`dist/mobile/` is a Capacitor project wrapping the same `index.html` for Google Play and
+the App Store. It is committed to the repo so CI can build it; GitHub Pages ignores it.
+
+```bash
+cd dist/mobile
+npm install
+npm run build          # sync-www.mjs -> www/, then cap sync
+npm run screenshots    # renders the real app at both stores' required sizes
+python scripts/make-assets.py   # regenerates every icon and splash
+```
+
+Three rules that matter:
+
+1. **The app is bundled, not fetched.** `scripts/sync-www.mjs` copies the built app into
+   `mobile/www` and strips the service worker registration from the copy. A store build that
+   pointed at bzeitel25.github.io would be rejected by Apple under guideline 4.2 and would
+   stop working the moment the gardener lost signal.
+2. **Native behaviour lives only in `src/p19_native.js`.** Every patch there is guarded by
+   `Native.active`, so the web build is untouched. Don't scatter Capacitor calls into feature
+   files — that is the same mistake the packet reader made with the Anthropic endpoint.
+3. **The self-updater is disabled in native builds.** An app that downloads and runs new code
+   around review is a rejection on both stores. `p19_native.js` replaces `Updater.go`.
+
+Voice input is Android and web only. The community speech plugin ships a CocoaPods podspec
+and no `Package.swift`, so Capacitor 8's SPM-based iOS project excludes it and `cap sync ios`
+warns about it. `p19_native.js` removes the mic button when no recogniser is present.
+
+Every assistant answer carries a **"Report this answer"** control. That is not decoration —
+Google Play's AI-Generated Content policy requires in-app reporting for anything a model
+writes, and the listing is rejected without it. Keep it.
+
+Neither store build can be compiled in a Cowork session: there is no Android SDK and no
+macOS. `.github/workflows/` does both. The iOS workflow runs on a free GitHub macOS runner
+and signs with an App Store Connect API key, which is what makes an iOS release possible
+without owning a Mac. `dist/store/SUBMISSION.md` is the full runbook.
 
 ## Data and accuracy rules
 

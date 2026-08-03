@@ -1,0 +1,141 @@
+name: iOS build and TestFlight upload
+
+# This is the whole reason an iOS release is possible without owning a Mac.
+#
+# GitHub's macOS runners are free for public repositories, and this repository
+# is public. The runner has Xcode; it archives the app, signs it, and hands it
+# to App Store Connect. Nothing on your own machine is involved.
+#
+# Signing is done with -allowProvisioningUpdates and an App Store Connect API
+# key, which means Xcode creates and renews the distribution certificate and
+# the provisioning profile itself on the runner. That avoids the one step that
+# genuinely needs a Mac in the usual flow — generating a certificate signing
+# request in Keychain Access.
+#
+# Repository secrets it needs:
+#   APPSTORE_API_KEY_ID        e.g. 2X9ABC3DEF
+#   APPSTORE_API_ISSUER_ID     the UUID shown above the key list
+#   APPSTORE_API_PRIVATE_KEY   the whole AuthKey_XXXX.p8 file, pasted in
+#
+# Create the key at App Store Connect → Users and Access → Integrations →
+# App Store Connect API, with the "App Manager" role. It downloads once.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "Upload the build to TestFlight when it succeeds"
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  BUNDLE_ID: io.github.bzeitel25.pocketfertilizer
+  SCHEME: App
+  PROJECT: mobile/ios/App/App.xcodeproj
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Bundle the web app into the native project
+        working-directory: mobile
+        run: |
+          node scripts/sync-www.mjs
+          npx cap sync ios
+
+      - name: Write the App Store Connect API key
+        env:
+          KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::APPSTORE_API_PRIVATE_KEY is not set. Add the three App Store Connect secrets first."
+            exit 1
+          fi
+          # altool looks for the key in this exact directory, by this exact name
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s' "$KEY" > ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
+          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
+
+      - name: Stamp the build number
+        # CFBundleVersion has to increase on every upload, forever. The run
+        # number does that on its own and never repeats.
+        working-directory: mobile/ios/App
+        run: |
+          agvtool new-version -all ${{ github.run_number }}
+          agvtool what-version
+
+      - name: Archive
+        env:
+          KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+        run: |
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER" \
+            CODE_SIGN_STYLE=Automatic \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            | xcpretty || exit ${PIPESTATUS[0]}
+
+      - name: Export the .ipa
+        env:
+          KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportOptionsPlist mobile/ios/ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER"
+          ls -lh "$RUNNER_TEMP/export"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-fertilizer-ipa
+          path: ${{ runner.temp }}/export/*.ipa
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload to TestFlight
+        if: github.event_name == 'push' || inputs.upload
+        env:
+          KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+        run: |
+          IPA=$(ls "$RUNNER_TEMP"/export/*.ipa | head -1)
+          xcrun altool --upload-app -f "$IPA" -t ios \
+            --apiKey "$KEY_ID" --apiIssuer "$ISSUER"
+
+      - name: Shred the API key
+        if: always()
+        run: rm -rf ~/.appstoreconnect

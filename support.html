@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — Pocket Fertilizer</title>
+<meta name="description" content="Help, answers and contact for Pocket Fertilizer — the offline garden planner, seed bank, grow calendar and plant doctor.">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root{ --ink:#15271e; --muted:#5d6f66; --line:#dfe6e1; --green:#1f6f4a; --paper:#f6f8f5; }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--paper); color:var(--ink);
+        font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap{ max-width:720px; margin:0 auto; padding:32px 20px 90px }
+  header{ display:flex; align-items:center; gap:14px; margin-bottom:26px }
+  header img{ width:52px; height:52px; border-radius:12px }
+  h1{ font-size:1.6rem; margin:0 0 2px }
+  h2{ font-size:1.12rem; margin:34px 0 10px; color:var(--green) }
+  .sub{ color:var(--muted); font-size:.92rem; margin:0 }
+  .card{ background:#fff; border:1px solid var(--line); border-radius:10px;
+         padding:16px 18px; margin:0 0 14px }
+  .q{ font-weight:600; margin:20px 0 4px }
+  .q:first-child{ margin-top:0 }
+  a{ color:var(--green) }
+  code{ background:#eaf0ec; padding:1px 5px; border-radius:4px; font-size:.88em }
+  ul{ padding-left:20px }
+  footer{ margin-top:44px; padding-top:18px; border-top:1px solid var(--line);
+          color:var(--muted); font-size:.88rem }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <img src="icon-192.png" alt="">
+  <div>
+    <h1>Support</h1>
+    <p class="sub">Pocket Fertilizer</p>
+  </div>
+</header>
+
+<div class="card">
+  <b>Email:</b> <a href="mailto:bzeitel@gmail.com">bzeitel@gmail.com</a><br>
+  <b>Bugs and feature requests:</b>
+  <a href="https://github.com/bzeitel25/pocket-fertilizer/issues">github.com/bzeitel25/pocket-fertilizer/issues</a><br>
+  <span style="color:#5d6f66;font-size:.92rem">One person answers these, usually within a few days.</span>
+</div>
+
+<h2>Common questions</h2>
+
+<p class="q">Do I need an account?</p>
+<p>No. There is no sign-up and no server. Open it, enter a ZIP code or place
+name, and everything else unlocks from there.</p>
+
+<p class="q">Does it work without a signal?</p>
+<p>Yes — that is the point of it. The crop database, planner, seed bank,
+calendar and Plant Doctor all run on the device. Only weather, the hardiness
+zone lookup and web search need a connection, and the app is built to carry on
+without them.</p>
+
+<p class="q">Where is my garden stored? Can I move it to a new phone?</p>
+<p>On the device, encrypted. Nothing is in a cloud, which also means nothing
+syncs by itself. To move to a new phone, open <b>Settings → Save a backup</b>,
+keep the <code>.json</code> file somewhere safe, then use <b>Restore from a
+backup</b> on the new phone.</p>
+
+<p class="q">I forgot my passphrase.</p>
+<p>There is no way to recover it. The passphrase never leaves your device and
+is never stored, so there is nothing anyone can unlock on your behalf. This is
+deliberate, and it is why the app asks you to save a backup before you set one.</p>
+
+<p class="q">The assistant says it needs a key. Why?</p>
+<p>The "Ask" tab runs on Google Gemini or Anthropic Claude, using an API key
+you supply. Google's has a free tier that ordinary garden use stays well
+inside. Get one at
+<a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a> and
+paste it into <b>Settings → Gardening assistant</b>. Note that a Gemini app
+subscription is a different product and does not include API access. Every
+other feature works with no key at all.</p>
+
+<p class="q">The camera opens facing me.</p>
+<p>It should not — the app asks for the rear lens by name. If it still happens,
+close and reopen the Plant Doctor, and if it persists please email the phone
+model; that detail is what makes it fixable.</p>
+
+<p class="q">Days to maturity looks wrong for my variety.</p>
+<p>Published figures swing thirty days or more between varieties of the same
+crop, so the app shows a range and tells you where the number came from. Record
+a first harvest and it starts learning; after three, it plans with your own
+average instead. The seed packet always beats the app.</p>
+
+<p class="q">The Plant Doctor diagnosed something confidently. Should I trust it?</p>
+<p>Treat it as a well-read second opinion, not a lab result. Image analysis
+measures colour and pattern — it cannot identify a species or a pathogen, and
+the symptom answers do the real work. For anything that spreads, a county
+extension office will confirm it free or nearly free, and the app links to the
+extension page behind every diagnosis so you can read the source yourself.</p>
+
+<p class="q">Can I get my data out?</p>
+<p>Yes. Settings exports a real <code>.sqlite</code> file that opens in DB
+Browser, Python, R or Excel, a plain JSON backup, and a CSV of the journal.
+There is no lock-in.</p>
+
+<p class="q">How do I delete everything?</p>
+<p>Settings has an erase option that permanently removes every bed, seed,
+harvest, photo and note from the device. Uninstalling the app does the same.
+There is no copy anywhere else.</p>
+
+<h2>Privacy</h2>
+<p>Nothing is collected, transmitted or sold. The full policy is on the
+<a href="privacy.html">privacy page</a>.</p>
+
+<h2>Accuracy</h2>
+<p>Every figure for germination temperature, seed viability, watering and pH is
+reconciled against a primary extension-service reference, and the app links to
+it. The <b>Sources &amp; accuracy</b> screen inside the app lists them all and
+says how much weight each number deserves. Where the evidence is genuinely
+mixed — milk sprays on powdery mildew, marigolds against nematodes, Japanese
+beetle traps — the app says so rather than picking a side.</p>
+
+<footer>
+  Pocket Fertilizer · <a href="./">the app</a> ·
+  <a href="privacy.html">privacy</a> ·
+  <a href="https://github.com/bzeitel25/pocket-fertilizer">source code</a>
+</footer>
+
+</div>
+</body>
+</html>

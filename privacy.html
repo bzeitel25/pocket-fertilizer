@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Pocket Fertilizer</title>
+<meta name="description" content="Pocket Fertilizer collects nothing. No account, no analytics, no advertising. Everything you record stays encrypted on your own device.">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root{ --ink:#15271e; --muted:#5d6f66; --line:#dfe6e1; --green:#1f6f4a; --paper:#f6f8f5; }
+  *{ box-sizing:border-box }
+  body{ margin:0; background:var(--paper); color:var(--ink);
+        font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap{ max-width:720px; margin:0 auto; padding:32px 20px 90px }
+  header{ display:flex; align-items:center; gap:14px; margin-bottom:28px }
+  header img{ width:52px; height:52px; border-radius:12px }
+  h1{ font-size:1.6rem; margin:0 0 2px }
+  h2{ font-size:1.12rem; margin:34px 0 8px; color:var(--green) }
+  .sub{ color:var(--muted); font-size:.92rem; margin:0 }
+  .lede{ font-size:1.08rem; background:#fff; border:1px solid var(--line);
+         border-left:4px solid var(--green); border-radius:10px; padding:16px 18px; margin:0 0 8px }
+  table{ border-collapse:collapse; width:100%; margin:12px 0; font-size:.94rem }
+  th,td{ text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top }
+  th{ color:var(--muted); font-weight:600; font-size:.82rem; text-transform:uppercase; letter-spacing:.04em }
+  code{ background:#eaf0ec; padding:1px 5px; border-radius:4px; font-size:.88em }
+  a{ color:var(--green) }
+  ul{ padding-left:20px }
+  footer{ margin-top:44px; padding-top:18px; border-top:1px solid var(--line);
+          color:var(--muted); font-size:.88rem }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <img src="icon-192.png" alt="">
+  <div>
+    <h1>Privacy Policy</h1>
+    <p class="sub">Pocket Fertilizer · last updated 3 August 2026</p>
+  </div>
+</header>
+
+<p class="lede">Pocket Fertilizer does not collect, transmit or store any personal
+information. There is no account to create, no analytics, no advertising, no
+tracking and no server holding your garden. Everything you record stays
+encrypted on the device you recorded it on.</p>
+
+<h2>What the app stores, and where</h2>
+
+<p>Your plots, beds, plantings, seed packets, journal entries, harvests,
+diagnoses and photos are written to storage on your own phone
+(IndexedDB, falling back to local storage) and are encrypted before they are
+written, using AES-256-GCM through the operating system's own cryptography.</p>
+
+<p>If you set a passphrase in Settings, the key that unlocks that data is
+itself wrapped with a key derived from your passphrase by PBKDF2-SHA256 at
+310,000 iterations. The passphrase is never stored and never transmitted.
+There is no recovery path — nobody, including the developer, can read or
+restore your data without it.</p>
+
+<p>None of this data is sent anywhere. There is no backend service. Uninstalling
+the app removes it; there is no copy elsewhere to delete.</p>
+
+<h2>Network requests the app makes</h2>
+
+<p>The app works fully offline. When it does have a connection, it makes
+read-only requests to the following services. Each one is listed with exactly
+what leaves the device.</p>
+
+<table>
+  <tr><th>Service</th><th>What is sent</th><th>Why</th></tr>
+  <tr>
+    <td><a href="https://phzmapi.org">phzmapi.org</a></td>
+    <td>A US ZIP code you typed in</td>
+    <td>Look up the USDA hardiness zone</td>
+  </tr>
+  <tr>
+    <td><a href="https://open-meteo.com">Open-Meteo</a></td>
+    <td>Approximate latitude and longitude, or a place name you typed</td>
+    <td>Frost dates from ten years of local records, current weather and the forecast</td>
+  </tr>
+  <tr>
+    <td><a href="https://en.wikipedia.org/api/rest_v1/">Wikipedia REST API</a></td>
+    <td>A plant name</td>
+    <td>Reference text on the library screen</td>
+  </tr>
+  <tr>
+    <td><a href="https://cdnjs.com">cdnjs</a></td>
+    <td>Nothing beyond the request itself</td>
+    <td>Fallback only. The SQLite engine ships inside the app; this is used only by the web version if the bundled copy is unavailable.</td>
+  </tr>
+</table>
+
+<p>No identifier, device fingerprint, advertising ID or account is attached to
+any of these requests. The app sends <code>Referrer-Policy: no-referrer</code>.
+Each of these services will see your IP address, as any website you visit does;
+their own privacy policies govern that.</p>
+
+<h2>Location</h2>
+
+<p>You can type a ZIP code or place name instead of sharing location. If you
+tap the option to use your device location, the coordinates are used once to
+fetch frost dates and weather, and are stored only in the encrypted vault on
+your device. They are not sent anywhere except to Open-Meteo as part of the
+weather request described above.</p>
+
+<h2>Camera, photos and microphone</h2>
+
+<ul>
+  <li><b>Camera and photo library</b> — used only when you choose to photograph
+  a plant for the Plant Doctor or a seed packet for the seed bank. Photos are
+  reduced in size and saved into the encrypted vault on the device. They are
+  not uploaded, unless you have connected an AI assistant and explicitly ask
+  for a photo to be analysed (see below).</li>
+  <li><b>Microphone</b> — used only while you are holding the mic button to
+  speak to the assistant. Speech is converted to text by your device's own
+  speech recognition. Nothing is recorded or kept.</li>
+</ul>
+
+<h2>The optional AI assistant</h2>
+
+<p>The assistant is off until you add your own API key from Google (Gemini) or
+Anthropic (Claude). It is entirely optional and every other feature works
+without it.</p>
+
+<p>If you turn it on, the questions you ask, the relevant parts of your garden
+records needed to answer them, and any photo you explicitly submit for analysis
+are sent directly from your device to the provider whose key you supplied. They
+do not pass through any server belonging to this app. That provider's own terms
+and privacy policy then apply to that data:</p>
+
+<ul>
+  <li><a href="https://ai.google.dev/gemini-api/terms">Google Gemini API terms</a></li>
+  <li><a href="https://www.anthropic.com/legal/privacy">Anthropic privacy policy</a></li>
+</ul>
+
+<p>Your API key is stored inside the encrypted vault on the device and is sent
+only to that provider. You can remove it at any time in Settings, which deletes
+it from the device.</p>
+
+<h2>Children</h2>
+
+<p>Pocket Fertilizer is a gardening tool for a general audience. It is not
+directed at children, collects nothing from anyone, and therefore collects
+nothing from children.</p>
+
+<h2>Data you export</h2>
+
+<p>Settings can export your garden as a <code>.sqlite</code> database or a
+<code>.json</code> backup. Those exports are written wherever you choose to
+save or send them and are <b>not</b> encrypted, so that other software can read
+them. Once a file leaves the app it is yours to look after.</p>
+
+<h2>Changes</h2>
+
+<p>If this policy ever changes, the revision date at the top of this page
+changes with it, and the previous versions remain in the app's public source
+history.</p>
+
+<h2>Contact</h2>
+
+<p>Questions about privacy, or anything else about the app:
+<a href="mailto:bzeitel@gmail.com">bzeitel@gmail.com</a>.</p>
+
+<footer>
+  Pocket Fertilizer · <a href="./">the app</a> ·
+  <a href="support.html">support</a> ·
+  <a href="https://github.com/bzeitel25/pocket-fertilizer">source code</a>
+</footer>
+
+</div>
+</body>
+</html>

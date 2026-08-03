@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The garden vault is sealed with a key that belongs to this device.
+     Copying it to a new handset via cloud backup or device-to-device
+     transfer would move ciphertext the new device has no key for, which
+     looks to the gardener exactly like losing everything.
+
+     Settings has a real export — a .sqlite file and a JSON backup — and
+     that is the supported way to move a garden between phones. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+        <exclude domain="file" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+        <exclude domain="file" />
+    </device-transfer>
+</data-extraction-rules>

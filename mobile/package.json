@@ -1,0 +1,36 @@
+{
+  "name": "pocket-fertilizer-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Native Android and iOS shells for Pocket Fertilizer. The app itself is the single index.html at the repo root; this project bundles it so it ships to the app stores and runs entirely offline.",
+  "type": "module",
+  "scripts": {
+    "sync-www": "node scripts/sync-www.mjs",
+    "build": "npm run sync-www && npx cap sync",
+    "android": "npm run build && npx cap open android",
+    "ios": "npm run build && npx cap open ios",
+    "aab": "npm run build && cd android && ./gradlew bundleRelease",
+    "apk": "npm run build && cd android && ./gradlew assembleRelease",
+    "screenshots": "node scripts/screenshots.mjs",
+    "assets": "python scripts/make-assets.py"
+  },
+  "dependencies": {
+    "@capacitor-community/speech-recognition": "^7.0.1",
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/browser": "^8.0.0",
+    "@capacitor/camera": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/filesystem": "^8.0.0",
+    "@capacitor/haptics": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "@capacitor/keyboard": "^8.0.0",
+    "@capacitor/share": "^8.0.0",
+    "@capacitor/splash-screen": "^8.0.0",
+    "@capacitor/status-bar": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0",
+    "playwright": "^1.62.1"
+  }
+}

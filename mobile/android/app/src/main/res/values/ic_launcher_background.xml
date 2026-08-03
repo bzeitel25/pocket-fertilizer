@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Kept for anything on API < 26 that still resolves the colour name.
+         The adaptive icon itself uses @drawable/ic_launcher_background. -->
+    <color name="ic_launcher_background">#1F6F4A</color>
+</resources>

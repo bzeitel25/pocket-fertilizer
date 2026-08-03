@@ -131,6 +131,14 @@ The Sources screen and Settings both carry one button that does the right thing 
 
 Garden data is never touched by an update — it lives in the encrypted store on the device, separate from the app file.
 
+### The app store versions
+
+`mobile/` wraps the same `index.html` in a native shell for Google Play and the App Store. The whole app is bundled inside the binary — nothing is fetched from this site at runtime, so it opens and works with no signal at all. Those builds get the system camera and photo picker, the share sheet and Files for exports, haptics on the planting grid, and the Android hardware Back button. Updates arrive through the store rather than the in-app updater.
+
+One difference worth knowing: **voice input works in the browser and on Android, but not on iOS.** The Web Speech API belongs to Safari rather than to the web view an iOS app runs in, and the plugin that would replace it is not compatible with the current iOS build system. Rather than leave a mic button that cannot listen, the iOS build hides it. Everything else is identical.
+
+`store/SUBMISSION.md` is the release runbook, and `.github/workflows/` builds both binaries — including the iOS one, on a hosted macOS runner, so no Mac is needed.
+
 ## Limits worth knowing
 
 - Frost dates are ten-year medians. A south wall, a frost pocket or a hilltop can shift them by a week or more — override them in Settings.
@@ -150,6 +158,11 @@ index.html              the entire app
 sw.js                   service worker, offline app shell
 manifest.webmanifest    PWA install metadata
 icon-*.png              app icons
+sql/                    SQLite compiled to WebAssembly, shipped rather than fetched
+privacy.html            privacy policy
+support.html            help and contact
+mobile/                 Capacitor shells for Google Play and the App Store
+store/                  listing copy, submission runbook, store art
 ```
 
 For local development, serve rather than opening the file directly — the camera and IndexedDB both need a secure context:
@@ -158,4 +171,4 @@ For local development, serve rather than opening the file directly — the camer
 python3 -m http.server 8000
 ```
 
-113 automated checks run against a headless DOM covering boot and decryption round-trip, season maths, companion logic, grid placement and resize pruning, seed viability, calendar generation, diagnostic ranking, every screen and modal, assistant tool execution, the SQL guard, snapshot rendering, and confirmation that the persisted vault is unreadable ciphertext.
+347 automated checks run against a headless DOM covering boot and decryption round-trip, season maths, companion logic, grid placement and resize pruning, seed viability, calendar generation, diagnostic ranking, every screen and modal, assistant tool execution, the SQL guard, snapshot rendering, and confirmation that the persisted vault is unreadable ciphertext.

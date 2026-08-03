@@ -1,0 +1,112 @@
+apply plugin: 'com.android.application'
+
+/* Release signing.
+ *
+ * The keystore is never committed. Gradle looks for it in two places, in
+ * this order, and simply skips signing if neither is present — so a debug
+ * build still works on a machine that has no key at all.
+ *
+ *   1. environment variables, which is how the GitHub Actions build gets them:
+ *        PF_KEYSTORE_PATH  PF_KEYSTORE_PASSWORD  PF_KEY_ALIAS  PF_KEY_PASSWORD
+ *   2. android/keystore.properties, for building on your own machine:
+ *        storeFile=C:/Users/bzeit/keys/pocket-fertilizer.jks
+ *        storePassword=...
+ *        keyAlias=upload
+ *        keyPassword=...
+ *
+ * Losing this key means never being able to update the app again under the
+ * same listing. Back it up somewhere that is not this computer. Enrolling in
+ * Play App Signing at first upload gives you a recovery path; do that.
+ */
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+def envStore = System.getenv("PF_KEYSTORE_PATH")
+def hasSigning = envStore != null || keystoreProps.containsKey("storeFile")
+
+android {
+    namespace = "io.github.bzeitel25.pocketfertilizer"
+    compileSdk = rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "io.github.bzeitel25.pocketfertilizer"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+
+        /* versionCode must increase on every upload to Play, forever.
+           versionName is what the gardener sees. Keep versionName in step
+           with the BUILD constant in src/p16_sources_ui.js. */
+        versionCode 1
+        versionName "1.0.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+
+    signingConfigs {
+        if (hasSigning) {
+            release {
+                storeFile file(envStore ?: keystoreProps["storeFile"])
+                storePassword System.getenv("PF_KEYSTORE_PASSWORD") ?: keystoreProps["storePassword"]
+                keyAlias System.getenv("PF_KEY_ALIAS") ?: keystoreProps["keyAlias"]
+                keyPassword System.getenv("PF_KEY_PASSWORD") ?: keystoreProps["keyPassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (hasSigning) {
+                signingConfig signingConfigs.release
+            }
+            /* The app is one large hand-written index.html served to a web
+               view; there is almost no Java to shrink, and R8 has nothing
+               useful to do here. */
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    /* Keeps the dependency-metadata blob out of the upload. It is signed
+       with a Google key and is not reproducible; nothing here needs it. */
+    dependenciesInfo {
+        includeInApk false
+        includeInBundle false
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
