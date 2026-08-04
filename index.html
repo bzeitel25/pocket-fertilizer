@@ -678,6 +678,12 @@ const SCHEMA = {
   diagnoses:  ["id","date","planting_id","bed_id","crop_id","photo_id","symptoms","result","confidence","treatment","source","notes","created"],
   observations:["id","date","bed_id","ph","moisture","soil_temp","air_temp","rain_in","notes","created"],
   photos:     ["id","created","mime","w","h","data"],
+  /* crops the gardener added herself. Real columns rather than a JSON blob so
+     the .sqlite export and the SQL console see them like anything else. */
+  usercrops:  ["id","slug","name","emoji","fam","sun","water","sp","depth",
+               "germ_lo","germ_hi","soil_lo","soil_opt","soil_hi","dtm","from",
+               "via","feeder","ph","comp","foes","tips","harvest","npk",
+               "start_indoor","start_tp","start_direct","start_fall","succ","yield","created"],
   settings:   ["key","value"]
 };
 const SQLJS_VER = "1.10.3";
@@ -1527,6 +1533,271 @@ const FIELD_CONFIDENCE = {
   ph:   { s:"clemsonFert",t:"Most vegetables do best between pH 6.0 and 6.5." },
   dtm:  { s:"umnVeg",     t:"Varies widely by variety — always trust the seed packet over this figure." },
   sp:   { s:"umnVeg",     t:"In-row spacing after thinning." }
+};
+</script>
+
+<script>
+/* ============================================================
+   FLOWERS, TEA AND THE PLANTS THAT EARN THEIR KEEP
+
+   A vegetable garden is not only vegetables. Marigolds go in to
+   keep pests down, alyssum to bring the hoverflies that eat the
+   aphids, chamomile and lemon balm because someone wants a cup of
+   tea in September. Those plants take up bed space, cast shade,
+   compete for water and need spacing like anything else — so they
+   belong in the same table, not in a footnote.
+
+   Every plant here was checked against at least two independent
+   extension or botanic-garden sources, read on the publisher's own
+   site. Where the sources agree on a figure it is used and cited.
+   Where none of them states a figure — and for most flowers that
+   means germination temperature and seed life — it is marked as an
+   estimate and says so in the app. Nothing is invented quietly.
+
+   A note on what these do. "Companion" here is not folklore: the
+   defensible mechanism for this whole group is that they feed
+   adult hoverflies, lacewings and parasitic wasps, whose larvae
+   eat aphids, and that they pull pollinators in to set fruit on
+   the squash and tomatoes. That is what the extension and IPM
+   literature actually supports, and it is what the notes say.
+   ============================================================ */
+
+const GARDEN_SRC = {
+  ncsuToolbox: {
+    n:"Extension Gardener Plant Toolbox", org:"NC State Extension",
+    url:"https://plants.ces.ncsu.edu/",
+    what:"Per-species pages giving mature height and width, light, soil, and propagation for ornamentals and herbs."
+  },
+  ilHerbs: {
+    n:"Herbs — Lemon Balm", org:"University of Illinois Extension",
+    url:"https://extension.illinois.edu/herbs/lemon-balm",
+    what:"“Plant lemon balm 18 inches apart in the early spring in an enriched soil.” Full sun to partial shade, moist but well-drained."
+  },
+  usuLavender: {
+    n:"How to Grow English Lavender in Your Garden", org:"Utah State University Extension",
+    url:"https://extension.usu.edu/yardandgarden/research/english-lavender-in-the-garden",
+    what:"Space 18–24″ apart in light, well-aerated, gravelly soil; full sun; pH 6.5–7.5. Seed germination is slow, so it is usually propagated from summer cuttings."
+  },
+  usuBalm: {
+    n:"How to Grow Lemon Balm in Your Garden", org:"Utah State University Extension",
+    url:"https://extension.usu.edu/yardandgarden/research/lemon-balm-in-the-garden",
+    what:"Grows 10–24″ tall in full sun to partial shade. Prune flowering stalks before they set seed or it spreads."
+  },
+  hgicZinnia: {
+    n:"How to Grow Zinnias", org:"Clemson Cooperative Extension",
+    url:"https://hgic.clemson.edu/factsheet/how-to-grow-zinnias-the-best-varieties-care-tips/",
+    what:"8″ to 4 ft depending on cultivar; dwarfs thinned to 8–9″ apart, 2–3 ft cultivars a foot apart; at least 6 hours of full sun."
+  },
+  hgicAlyssum: {
+    n:"Sweet Alyssum", org:"Clemson Cooperative Extension",
+    url:"https://hgic.clemson.edu/sweet-alyssum/",
+    what:"Direct sow several weeks before the last frost, or start indoors 6–8 weeks ahead; plants flower within 6–8 weeks and bloom to first frost."
+  },
+  hgicYarrow: {
+    n:"Rain Garden Plants: Achillea millefolium — Yarrow", org:"Clemson Cooperative Extension",
+    url:"https://hgic.clemson.edu/factsheet/rain-garden-plants-achillea-millefolium-yarrow/",
+    what:"Space 12–18″ apart; divide every two to three years. Full sun, well-drained, tolerates poor soil; spreads by rhizome and seed."
+  },
+  hgicEchinacea: {
+    n:"How to Grow Echinacea (Coneflower)", org:"Clemson Cooperative Extension",
+    url:"https://hgic.clemson.edu/factsheet/echinacea/",
+    what:"Culture, cultivars and common problems for purple coneflower."
+  },
+  wiscHyssop: {
+    n:"Anise hyssop, Agastache foeniculum", org:"University of Wisconsin–Madison Horticulture",
+    url:"https://hort.extension.wisc.edu/articles/anise-hyssop-agastache-foeniculum/",
+    what:"Upright clump-forming plants 2–4 ft tall and about 1–3 ft wide, hardy zones 3a–8b. A short-lived perennial in the mint family."
+  },
+  ucipmAlyssum: {
+    n:"Insectary plants in lettuce — research highlight", org:"UC Statewide IPM Program",
+    url:"https://ipm.ucanr.edu/highlights/2019/delpozo_valdivia_confirms_the_benefit_of_insectary_plants_in_lettuce/",
+    what:"Sweet alyssum attracts hoverflies, whose maggots prey on aphids; adults feed on alyssum pollen and lay eggs into the crop."
+  },
+  psuBeneficial: {
+    n:"Attracting Beneficial Insects", org:"Penn State Extension",
+    url:"https://extension.psu.edu/attracting-beneficial-insects",
+    what:"Which flowers feed adult predators and parasitoids, and how a border of them lowers pest pressure in the crop."
+  },
+  msuNative: {
+    n:"Attracting Beneficial Insects with Native Flowering Plants", org:"Michigan State University Extension",
+    url:"https://www.canr.msu.edu/resources/attracting_beneficial_insects_with_native_flowering_plants_e2973",
+    what:"Bloom timing and relative attractiveness of native flowering plants to natural enemies and pollinators."
+  },
+  ilFlowers: {
+    n:"Flowers — annuals", org:"University of Illinois Extension",
+    url:"https://extension.illinois.edu/flowers/annuals",
+    what:"Culture, height ranges and siting for common garden annuals including cosmos and zinnia."
+  }
+};
+
+/* `srcs` are the pages each row was read from. `est` lists the fields NONE of
+   them states — germination temperature and seed life are rarely published for
+   ornamentals — so the app can show those as estimates rather than as fact. */
+const GARDEN_PLANTS = [
+
+/* ---------- tea and the herb end ---------- */
+{id:"chamomile",n:"Chamomile",e:"🌼",fam:"aster",sun:5,water:0.75,sp:8,psf:2.25,depth:0,germ:[7,14],soilF:[55,68,78],dtm:60,from:"seed",via:3,feeder:"light",
+ start:{indoor:-6,tp:0,direct:-2,fall:null},succ:0,yield:0,ph:"5.6–7.5",
+ srcs:["ncsuToolbox","ilHerbs"],est:["germ","soilF","via","sp","ph"],
+ comp:["cabbage","broccoli","kale","onion","cucumber"],foes:[],
+ npk:"None — it flowers better on poor ground.",
+ tips:"German chamomile, the annual one, is what tea is made from. The seed needs light to germinate: press it onto the surface and do not bury it. Grows 13–30″ tall and self-sows freely once it is happy.",
+ harvest:"Pick the flower heads when the white petals start to reflex back. Dry them somewhere dark and airy."},
+
+{id:"lemonbalm",n:"Lemon Balm",e:"🌿",fam:"lamiaceae",sun:5,water:1,sp:18,psf:0.44,depth:0.25,germ:[10,21],soilF:[60,70,80],dtm:70,from:"seed",via:3,feeder:"light",
+ start:{indoor:-8,tp:0,direct:0,fall:null},succ:0,yield:0,ph:"6.0–7.5",
+ srcs:["ilHerbs","usuBalm","ncsuToolbox"],est:["germ","soilF","via","dtm"],
+ comp:["tomato","squash","cucumber","broccoli"],foes:[],
+ npk:"Very little. Rich soil gives soft growth and less scent.",
+ tips:"18″ apart, sun or part shade, moist but well drained. It reaches 10–24″ and spreads hard by seed — cut the flowering stalks before they set and it stays where you put it.",
+ harvest:"Leaves any time before flowering, when the oils are strongest. Fresh makes far better tea than dried."},
+
+{id:"lavender",n:"Lavender",e:"🪻",fam:"lamiaceae",sun:8,water:0.5,sp:24,psf:0.25,depth:0.125,germ:[14,28],soilF:[60,70,75],dtm:120,from:"transplant",via:2,feeder:"light",
+ start:{indoor:-10,tp:2,fall:null},succ:0,yield:0,ph:"6.5–7.5",
+ srcs:["usuLavender","ncsuToolbox"],est:["germ","soilF","via","dtm"],
+ comp:["cabbage","broccoli","carrot","onion"],foes:[],
+ npk:"None. Feeding it is how most lavender is killed.",
+ tips:"English lavender makes 1–2 ft tall and 2–3 ft wide, spaced 18–24″ into light gravelly soil at pH 6.5–7.5. Seed is slow and unreliable, which is why it is nearly always grown from summer cuttings — buy a plant. It will not forgive wet feet.",
+ harvest:"Cut the spikes as the first buds open. Cut it back yearly and take the spent spikes off."},
+
+{id:"anisehyssop",n:"Anise Hyssop",e:"🌿",fam:"lamiaceae",sun:6,water:0.75,sp:18,psf:0.44,depth:0.125,germ:[7,21],soilF:[60,70,75],dtm:110,from:"transplant",via:2,feeder:"light",
+ start:{indoor:-8,tp:1,direct:0,fall:null},succ:0,yield:0,ph:"6.0–7.5",
+ srcs:["wiscHyssop","ncsuToolbox","msuNative"],est:["germ","soilF","via","dtm"],
+ comp:["tomato","squash","cucumber","pepper","melon","zucchini"],foes:[],
+ npk:"None.",
+ tips:"Upright clumps 2–4 ft tall and 1–3 ft wide, hardy to zone 3. A short-lived perennial that keeps itself going by seeding. One of the heaviest-worked flowers in any garden — bees, hoverflies and parasitic wasps all over it from midsummer.",
+ harvest:"Leaves and flowers both make an anise-flavoured tea. Cut whole stems and hang them."},
+
+{id:"beebalm",n:"Bee Balm",e:"🌺",fam:"lamiaceae",sun:6,water:1,sp:18,psf:0.44,depth:0.125,germ:[10,21],soilF:[60,70,75],dtm:120,from:"transplant",via:2,feeder:"medium",
+ start:{indoor:-8,tp:1,fall:null},succ:0,yield:0,ph:"6.0–7.0",
+ srcs:["ncsuToolbox","msuNative"],est:["germ","soilF","via","dtm","ph"],
+ comp:["tomato","pepper","squash","melon","cucumber"],foes:[],
+ npk:"Light. Compost in spring is plenty.",
+ tips:"2–4 ft tall, and some kinds run hard at the root — give it a corner it can have. Powdery mildew is its one real fault, so space it for airflow and water the soil rather than the leaves.",
+ harvest:"Leaves and petals make Oswego tea. Hummingbirds get first refusal on the flowers."},
+
+/* ---------- the ones that bring the predators ---------- */
+{id:"alyssum",n:"Sweet Alyssum",e:"💮",fam:"brassica",sun:5,water:0.75,sp:8,psf:2.25,depth:0,germ:[7,14],soilF:[55,68,75],dtm:50,from:"seed",via:3,feeder:"light",
+ start:{indoor:-7,tp:-1,direct:-3,fall:null},succ:30,yield:0,ph:"6.0–7.5",
+ srcs:["hgicAlyssum","ncsuToolbox","ucipmAlyssum"],est:["germ","soilF","via","ph"],
+ comp:["lettuce","broccoli","cabbage","kale","tomato","pepper","cucumber","zucchini","potato","spinach"],foes:[],
+ npk:"None.",
+ tips:"The most useful flower in a vegetable bed. Trials in lettuce found it pulls in hoverflies, whose maggots then hunt aphids down inside the crop itself. Sow it several weeks before last frost, or start it 6–8 weeks early; it flowers within 6–8 weeks and keeps going until frost. Only 3–6″ tall from seed but spreading a foot or more, so it tucks along an edge without taking bed space.",
+ harvest:"Nothing to pick. Shear it back mid-season if it goes leggy and it comes again."},
+
+{id:"phacelia",n:"Lacy Phacelia",e:"💐",fam:"boraginaceae",sun:6,water:0.5,sp:6,psf:4,depth:0,germ:[10,21],soilF:[55,65,75],dtm:60,from:"seed",via:2,feeder:"light",
+ start:{direct:0,fall:-8},succ:21,yield:0,ph:"6.0–7.5",
+ srcs:["ncsuToolbox","msuNative"],est:["germ","soilF","via","sp","ph","dtm"],
+ comp:["tomato","squash","cucumber","melon","pepper","zucchini","pumpkin","watermelon"],foes:[],
+ npk:"None — it is closer to a cover crop than a flower.",
+ tips:"Sow it straight onto the surface after the last frost; the seed wants darkness to germinate but no covering. Drought tolerant and happy on poor ground. Field strips of it work as a magnet for honey bees and short-tongued bees, which is why it turns up in cover-crop mixes. Turn it back in before it seeds and it feeds the soil too.",
+ harvest:"Not for picking. Cut or till it in while it is still soft."},
+
+{id:"yarrow",n:"Yarrow",e:"🏵️",fam:"aster",sun:6,water:0.5,sp:15,psf:0.64,depth:0,germ:[10,21],soilF:[60,70,75],dtm:120,from:"transplant",via:3,feeder:"light",
+ start:{indoor:-8,tp:0,fall:null},succ:0,yield:0,ph:"6.0–7.5",
+ srcs:["hgicYarrow","ncsuToolbox","psuBeneficial"],est:["germ","soilF","via","dtm","ph"],
+ comp:["tomato","pepper","cucumber","melon","lettuce","broccoli","cabbage"],foes:[],
+ npk:"None. Do not overfeed or overwater it — that is what makes it flop.",
+ tips:"1–3 ft tall and about as wide, spaced 12–18″. The flat flower heads are exactly the shape short-tongued predators can feed from, which is why it turns up in every beneficial-insect planting list. It spreads by rhizome and seed and will take ground if you let it — deadhead, and divide every two or three years.",
+ harvest:"Cut flower heads for drying when they are fully open. Leave some for the insects."},
+
+/* ---------- the cutting-garden annuals that pull their weight ---------- */
+{id:"zinnia",n:"Zinnia",e:"🌺",fam:"aster",sun:6,water:1,sp:12,psf:1,depth:0.25,germ:[5,10],soilF:[70,78,90],dtm:60,from:"seed",via:3,feeder:"medium",
+ start:{indoor:-4,tp:1,direct:1,fall:null},succ:21,yield:0,ph:"6.0–7.0",
+ srcs:["hgicZinnia","ilFlowers","ncsuToolbox"],est:["germ","soilF","via","ph"],
+ comp:["tomato","cucumber","squash","melon","pepper","zucchini","pumpkin"],foes:[],
+ npk:"Moderate. Too much nitrogen buys leaves instead of flowers.",
+ tips:"Anything from 8″ to 4 ft depending on the cultivar — thin dwarfs to 8–9″ and the 2–3 ft kinds to a foot. Wants at least 6 hours of sun. Powdery mildew is the usual complaint, so water the soil and not the foliage, and give it room to breathe.",
+ harvest:"Cut hard and often — the more you take the more it makes. Pollinators work it all season."},
+
+{id:"cosmos",n:"Cosmos",e:"🌸",fam:"aster",sun:6,water:0.5,sp:12,psf:1,depth:0.25,germ:[7,14],soilF:[60,70,80],dtm:70,from:"seed",via:3,feeder:"light",
+ start:{indoor:-4,tp:1,direct:1,fall:null},succ:0,yield:0,ph:"6.0–7.5",
+ srcs:["ilFlowers","ncsuToolbox","psuBeneficial"],est:["germ","soilF","via","ph","sp"],
+ comp:["tomato","squash","cucumber","melon","pepper","zucchini"],foes:[],
+ npk:"None. Rich ground gives six feet of leaf and hardly a flower.",
+ tips:"1 to 6 ft depending on the kind, in ordinary well-drained soil and full to partial sun. Open, shallow flowers, which is what hoverflies and small parasitic wasps can actually feed from. Put the tall ones on the north side or they shade the bed.",
+ harvest:"Cut for the vase constantly; it flowers harder for being picked."},
+
+{id:"cornflower",n:"Cornflower",e:"🌸",fam:"aster",sun:6,water:0.5,sp:9,psf:1.78,depth:0.5,germ:[7,14],soilF:[55,65,75],dtm:65,from:"seed",via:3,feeder:"light",
+ start:{indoor:-7,tp:-2,direct:-2,fall:-6},succ:0,yield:0,ph:"6.0–7.5",
+ srcs:["ncsuToolbox","psuBeneficial"],est:["germ","soilF","via","ph","sp","dtm"],
+ comp:["tomato","cucumber","squash","lettuce","broccoli","cabbage"],foes:[],
+ npk:"None.",
+ tips:"Bachelor's button, 1–3 ft. Start it indoors 6–8 weeks before last frost, or sow it outdoors in autumn where winters are mild. It carries extrafloral nectaries — glands off the flower itself — which feed ants, ladybirds and parasitic wasps even between blooms.",
+ harvest:"Cut just as the buds open. Deadhead or it goes over quickly."},
+
+{id:"echinacea",n:"Coneflower",e:"🌸",fam:"aster",sun:6,water:0.75,sp:18,psf:0.44,depth:0.25,germ:[10,21],soilF:[65,70,78],dtm:120,from:"transplant",via:2,feeder:"light",
+ start:{indoor:-10,tp:0,fall:null},succ:0,yield:0,ph:"6.0–7.0",
+ srcs:["hgicEchinacea","ncsuToolbox","msuNative"],est:["germ","soilF","via","dtm","ph","sp"],
+ comp:["tomato","pepper","squash","cucumber","melon","zucchini"],foes:[],
+ npk:"None. It is a prairie plant and behaves like one.",
+ tips:"Purple coneflower makes 3–4 ft, takes full sun to part shade, and is drought tolerant once it is established. From seed it usually spends its first year making roots and flowers in its second — buy a plant if you want blooms this season. Leave the seed heads standing over winter for the goldfinches.",
+ harvest:"Cut flowers last well. The root is the herbal part, but lifting it ends the plant."}
+];
+
+/* ---------- fold them in ---------- */
+GARDEN_PLANTS.forEach(c => {
+  c.verified = true;
+  c.vfields = [];
+  c.estfields = c.est || [];
+  c.vnote = "Checked against " + (c.srcs || []).map(k => (GARDEN_SRC[k] || {}).org).filter(Boolean).join(", ") + ".";
+  delete c.est;
+  CROPS.push(c);
+  CROP[c.id] = c;
+  /* the sources screen links each crop to a page; these get their own */
+  CROP_REF[c.id] = GARDEN_SRC[(c.srcs || [])[0]] ? GARDEN_SRC[c.srcs[0]].url : GARDEN_SRC.ncsuToolbox.url;
+});
+
+/* every source page above, offered alongside the vegetable references */
+Object.keys(GARDEN_SRC).forEach(k => { if(!SOURCES[k]) SOURCES[k] = GARDEN_SRC[k]; });
+
+/* ============================================================
+   COMPANION IDS THAT NEVER MATCHED ANYTHING
+
+   The base table talks about "squash" and "bean", which are not crop
+   ids — the ids are zucchini/wintersquash and bushbean/polebean. Six
+   crops each named those, so six companion relationships have been
+   quietly doing nothing since the table was written. Expanded here
+   rather than edited into sixty rows by hand.
+   ============================================================ */
+const CROP_ALIAS = {
+  squash:            ["zucchini","wintersquash","pumpkin"],
+  bean:              ["bushbean","polebean"],
+  beans:             ["bushbean","polebean"],
+  brassicas:         ["cabbage","broccoli","cauliflower","kale","brussels","collards","kohlrabi"],
+  "aromatic-herbs":  ["basil","oregano","thyme","sage","rosemary","mint"]
+};
+
+/* Real companion lore about plants this app does not carry. Left in place
+   rather than deleted: if any of them is ever added, the relationship starts
+   working on its own. The test suite knows about this list, so a genuine typo
+   still fails. */
+const CROP_ABSENT = ["apricot","tarragon","horseradish","raspberry","hyssop","grape",
+                     "anise","rose","caraway","fruit-trees","petunia","rue"];
+
+(function expandAliases(){
+  const fix = list => {
+    const out = [];
+    (list || []).forEach(id => {
+      if(CROP_ALIAS[id]) CROP_ALIAS[id].forEach(x => { if(CROP[x] && out.indexOf(x) < 0) out.push(x); });
+      else if(out.indexOf(id) < 0) out.push(id);
+    });
+    return out;
+  };
+  CROPS.forEach(c => { c.comp = fix(c.comp); c.foes = fix(c.foes); });
+})();
+
+/* what each of these is actually FOR — used by the library and the assistant */
+const PLANT_ROLE = {
+  chamomile:"tea", lemonbalm:"tea", lavender:"tea", anisehyssop:"tea", beebalm:"tea",
+  alyssum:"beneficials", phacelia:"beneficials", yarrow:"beneficials", cornflower:"beneficials",
+  cosmos:"pollinators", zinnia:"pollinators", echinacea:"pollinators",
+  marigold:"pest control", nasturtium:"pest control", borage:"pollinators",
+  calendula:"beneficials", sunflower:"pollinators"
+};
+const ROLE_LABEL = {
+  tea:"🫖 Tea and herbal", beneficials:"🐞 Brings in predators",
+  pollinators:"🐝 Brings in pollinators", "pest control":"🛡️ Pest control"
 };
 </script>
 
@@ -6171,7 +6442,9 @@ Garden.resize = function(dc, dr){
    back to the derived rule and says so.
    ============================================================ */
 
-const HABIT_SRC = {
+/* the flower and herb pages are already loaded by p5c; reuse them rather than
+   citing the same page twice under two names */
+const HABIT_SRC = Object.assign({}, typeof GARDEN_SRC === "undefined" ? {} : GARDEN_SRC, {
   ilTomato: {
     n:"Tomato — Hort Answers", org:"University of Illinois Extension",
     url:"https://web.extension.illinois.edu/hortanswers/plantdetail.cfm?PlantID=294&PlantTypeID=9",
@@ -6227,7 +6500,7 @@ const HABIT_SRC = {
     url:"https://web.extension.illinois.edu/hortanswers/plantdetail.cfm?PlantID=289&PlantTypeID=9",
     what:"Kernels 9–12″ apart in the row, 30–36″ between rows; side-dress when plants are 12–18″ tall. The page gives no mature height, so the figure used here is an estimate."
   }
-};
+});
 
 /* spread is the mature FOLIAGE DIAMETER in inches; height is the mature
    height in inches. `est:true` means the source does not state that figure
@@ -6259,7 +6532,33 @@ const HABIT = {
   polebean:     { spread: 12, height: 72, src:"umnBeans", estSpread:true,
                   note:"Twining to 6 ft and often taller. Narrow, but it casts a long shadow." },
   corn:         { spread: 14, height: 78, src:"ilCorn", estHeight:true,
-                  note:"Extension guides give spacing (9–12″ in rows 30–36″ apart) but not a mature height; 6½ ft is a working estimate for a full-season variety." }
+                  note:"Extension guides give spacing (9–12″ in rows 30–36″ apart) but not a mature height; 6½ ft is a working estimate for a full-season variety." },
+
+  /* --- flowers, tea and the beneficial-insect plants --- */
+  lavender:     { spread: 30, height: 24, src:"usuLavender",
+                  note:"English lavender makes 1–2 ft tall and 2–3 ft wide. Wider than it is high, which is why 18–24″ spacing looks generous and is not." },
+  anisehyssop:  { spread: 24, height: 36, src:"wiscHyssop",
+                  note:"Upright clumps 2–4 ft tall and 1–3 ft across." },
+  yarrow:       { spread: 24, height: 24, src:"hgicYarrow",
+                  note:"1–3 ft tall and about as wide, spaced 12–18″. It will keep going past that by rhizome if you let it." },
+  alyssum:      { spread: 12, height: 6, src:"hgicAlyssum",
+                  note:"Only 3–6″ high from seed but spreading a foot or more — it fills an edge without taking headroom off anything." },
+  zinnia:       { spread: 12, height: 30, src:"hgicZinnia",
+                  note:"8″ to 4 ft by cultivar. This is the common 2–3 ft sort, thinned to a foot apart." },
+  lemonbalm:    { spread: 24, height: 24, src:"usuBalm", estSpread:true,
+                  note:"10–24″ tall. Spread follows its 18″ spacing; left to seed it covers considerably more." },
+  chamomile:    { spread: 12, height: 30, src:"ncsuToolbox", estSpread:true,
+                  note:"13–30″ tall. The source gives height but not width." },
+  beebalm:      { spread: 24, height: 36, src:"ncsuToolbox", estSpread:true,
+                  note:"2–4 ft tall. Some kinds run at the root and will exceed any spread figure given for them." },
+  echinacea:    { spread: 24, height: 42, src:"ncsuToolbox", estSpread:true,
+                  note:"3–4 ft tall. Plan for the second year — from seed it usually roots the first and flowers the next." },
+  cosmos:       { spread: 18, height: 48, src:"ilFlowers", estSpread:true,
+                  note:"1–6 ft depending on the sort. Tall enough to shade a bed, so put it on the north side." },
+  cornflower:   { spread: 10, height: 24, src:"ncsuToolbox", estSpread:true,
+                  note:"1–3 ft. Narrow and upright — it slots between things." },
+  phacelia:     { spread: 12, height: 30, src:"ncsuToolbox", estSpread:true, estHeight:true,
+                  note:"Sown broadcast as a strip rather than spaced as individuals; the figures here describe one plant in a bed." }
 };
 
 /* Everything else derives from the crop table's own spacing figure, which is
@@ -6325,6 +6624,22 @@ Geom.canopyR = function(cropId, qty){
   return Math.round(one * Math.sqrt(Math.max(1, num(qty, 1))) * 10) / 10;
 };
 Geom.height = function(cropId){ return Habit.height(cropId); };
+/* isTall closed over p8j's own height table, so every sourced height above was
+   being ignored by the shading check — a four-foot cosmos read as a twelve-inch
+   aster and shaded nothing. Rebind it to the same figure the rest of the app
+   shows. */
+Geom.isTall = function(cropId){ return Habit.height(cropId) >= 44; };
+/* how many plants a patch of this radius really holds. It used psf, which is
+   the square-foot-gardening density and does NOT match the in-row spacing the
+   canvas measures root zones with — lettuce is 4/sq ft on a 6in grid but 8in
+   apart in a row. One basis, and it is the spacing. */
+Geom.fitsIn = function(cropId, r){
+  const c = crop(cropId); if(!c) return 1;
+  const sp = Math.max(1, num(c.sp, 12));
+  /* the exact inverse of rootR, which sets a clump of N at (sp/2)*sqrt(N) —
+     so asking how many fit in that radius gives N back, not N times pi/4 */
+  return Math.max(1, Math.round((2 * r / sp) * (2 * r / sp)));
+};
 
 /* ---- and surface the provenance where the number is shown ---- */
 (function habitInSheet(){
@@ -9999,6 +10314,285 @@ const SqlView = {
 
 <script>
 /* ============================================================
+   CROPS THE GARDENER ADDS HERSELF
+
+   Seventy-two plants covers most of a vegetable garden and none of
+   the interesting edges: a regional green nobody outside one state
+   grows, a tea her grandmother kept going, whatever came back from
+   the seed swap without a label.
+
+   So the table is open. A crop added here behaves like any other —
+   it plants, spaces, waters, rotates, shows up in the calendar and
+   the seed bank — with one deliberate difference: it is never
+   presented as sourced. Every built-in figure in this app traces to
+   an extension service, and a self-entered one traces to the person
+   who typed it. The app says which, plainly, wherever the number
+   appears. That distinction is the whole reason the rest of the
+   data is worth anything.
+
+   Stored as real columns rather than a JSON blob, so the .sqlite
+   export and the SQL console can see them like everything else.
+   ============================================================ */
+
+const UserCrops = {
+  PREFIX: "my-",
+
+  /* ---------- turning a row into a crop the app understands ---------- */
+  toCrop(row){
+    const sp = clamp(num(row.sp, 12), 1, 96);
+    const list = v => String(v || "").split(",").map(s => s.trim()).filter(Boolean);
+    const st = {};
+    ["indoor","tp","direct","fall"].forEach(k => {
+      const v = row["start_" + k];
+      st[k] = (v === null || v === undefined || v === "") ? null : num(v, 0);
+    });
+    return {
+      id: row.slug, n: row.name || "Untitled", e: row.emoji || "🌱",
+      fam: FAMILY[row.fam] ? row.fam : "aster",
+      sun: clamp(num(row.sun, 6), 0, 16),
+      water: clamp(num(row.water, 1), 0, 4),
+      sp: sp, psf: Math.round(144 / (sp * sp) * 100) / 100,
+      depth: clamp(num(row.depth, 0.25), 0, 6),
+      germ: [Math.max(1, num(row.germ_lo, 7)), Math.max(1, num(row.germ_hi, 14))],
+      soilF: [num(row.soil_lo, 55), num(row.soil_opt, 70), num(row.soil_hi, 85)],
+      dtm: clamp(num(row.dtm, 60), 1, 400),
+      from: row.from === "transplant" ? "transplant" : "seed",
+      via: clamp(num(row.via, 3), 0, 20),
+      feeder: ["light","medium","heavy"].indexOf(row.feeder) >= 0 ? row.feeder : "medium",
+      ph: row.ph || "6.0–7.0",
+      start: st, succ: num(row.succ, 0), yield: num(row.yield, 0),
+      comp: list(row.comp), foes: list(row.foes),
+      npk: row.npk || "", tips: row.tips || "", harvest: row.harvest || "",
+      /* the honest part */
+      verified: false, vfields: [], estfields: [], mine: true, rowId: row.id
+    };
+  },
+
+  /* a readable, collision-proof id */
+  slug(name){
+    const base = UserCrops.PREFIX + String(name || "crop").toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || (UserCrops.PREFIX + "crop");
+    let s = base, n = 2;
+    while(CROP[s]) s = base + "-" + (n++);
+    return s;
+  },
+
+  /* ---------- fold every saved row into the crop table ---------- */
+  apply(){
+    /* drop any that were removed since the last pass */
+    Object.keys(CROP).forEach(id => {
+      if(CROP[id] && CROP[id].mine && !DB.all("usercrops").some(r => r.slug === id)){
+        delete CROP[id];
+        const i = CROPS.findIndex(c => c.id === id);
+        if(i >= 0) CROPS.splice(i, 1);
+      }
+    });
+    DB.all("usercrops").forEach(row => {
+      if(!row.slug) return;
+      const c = UserCrops.toCrop(row);
+      const i = CROPS.findIndex(x => x.id === c.id);
+      if(i >= 0) CROPS[i] = c; else CROPS.push(c);
+      CROP[c.id] = c;
+    });
+  },
+  all(){ return DB.all("usercrops"); },
+  isMine(id){ const c = CROP[id]; return !!(c && c.mine); },
+
+  save(row, id){
+    const saved = id ? DB.update("usercrops", id, row) : DB.insert("usercrops", row);
+    UserCrops.apply();
+    Cal.rebuild();
+    return saved;
+  },
+  remove(id){
+    const row = DB.find("usercrops", id); if(!row) return;
+    DB.remove("usercrops", id);
+    UserCrops.apply();
+  },
+  /* what would break if this went away */
+  usage(slug){
+    return {
+      plantings: DB.where("plantings", p => p.crop_id === slug && p.status !== "removed").length,
+      seeds: DB.where("seeds", s => s.crop_id === slug).length,
+      harvests: DB.where("harvests", h => h.crop_id === slug).length
+    };
+  },
+
+  /* ============================================================
+     THE EDITOR
+     ============================================================ */
+  EMOJI: ["🌱","🌿","🍃","🌾","🌼","🌸","🌺","🌻","🌷","🪻","💮","🏵️","🍀","🥬","🥕","🥔",
+          "🍅","🫑","🌶️","🧄","🧅","🥒","🎃","🍆","🌽","🫘","🍓","🫐","🍇","🍈","🍏","🍐","🌰"],
+
+  open(id){
+    const row = id ? DB.find("usercrops", id) : null;
+    const v = (k, d) => row && row[k] !== null && row[k] !== undefined && row[k] !== "" ? row[k] : d;
+    const emoji = v("emoji", "🌱");
+
+    let h = '<p class="muted sm" style="margin-top:0">Everything the app does for a built-in crop it will do for this one — spacing, watering, the calendar, rotation, companions. The only difference is that it will always be shown as <b>your figures</b> rather than an extension service\'s.</p>';
+
+    h += '<div class="grid2"><div><label class="f">Name</label>' +
+      '<input type="text" id="uc-name" value="' + esc(v("name","")) + '" placeholder="Lemongrass"></div>' +
+      '<div><label class="f">Family</label><select id="uc-fam">' +
+      Object.keys(FAMILY).map(k => '<option value="' + k + '"' + (v("fam","aster") === k ? " selected" : "") + '>' +
+        esc(FAMILY[k].n) + '</option>').join("") + '</select>' +
+      '<div class="tiny muted">Decides rotation and shared pests.</div></div></div>';
+
+    h += '<div class="field" style="margin-top:12px"><label class="f">Icon</label>' +
+      '<div class="row wrap" style="gap:6px" id="uc-emoji">' +
+      UserCrops.EMOJI.map(e => '<button class="chip' + (e === emoji ? " on" : "") + '" data-e="' + e +
+        '" style="font-size:1.1rem">' + e + '</button>').join("") + '</div>' +
+      '<input type="hidden" id="uc-emoji-v" value="' + esc(emoji) + '"></div>';
+
+    h += '<div class="sec"><h2>How it grows</h2></div>';
+    h += '<div class="grid2">' +
+      '<div><label class="f">Sun (hours)</label><input type="number" id="uc-sun" min="0" max="16" value="' + esc(v("sun",6)) + '"></div>' +
+      '<div><label class="f">Water (in/week)</label><input type="number" id="uc-water" step="0.25" min="0" max="4" value="' + esc(v("water",1)) + '"></div></div>';
+    h += '<div class="grid2" style="margin-top:12px">' +
+      '<div><label class="f">Spacing (inches)</label><input type="number" id="uc-sp" min="1" max="96" value="' + esc(v("sp",12)) + '">' +
+      '<div class="tiny muted">Also sets how wide it is drawn.</div></div>' +
+      '<div><label class="f">Days to maturity</label><input type="number" id="uc-dtm" min="1" max="400" value="' + esc(v("dtm",60)) + '"></div></div>';
+    h += '<div class="grid2" style="margin-top:12px">' +
+      '<div><label class="f">Sow depth (in)</label><input type="number" id="uc-depth" step="0.125" min="0" max="6" value="' + esc(v("depth",0.25)) + '"></div>' +
+      '<div><label class="f">Started as</label><select id="uc-from">' +
+        ["seed","transplant"].map(x => '<option value="' + x + '"' + (v("from","seed") === x ? " selected" : "") + '>' + x + '</option>').join("") +
+      '</select></div></div>';
+    h += '<div class="grid2" style="margin-top:12px">' +
+      '<div><label class="f">Feeding</label><select id="uc-feeder">' +
+        ["light","medium","heavy"].map(x => '<option value="' + x + '"' + (v("feeder","medium") === x ? " selected" : "") + '>' + x + '</option>').join("") +
+      '</select></div>' +
+      '<div><label class="f">Seed life (years)</label><input type="number" id="uc-via" min="0" max="20" value="' + esc(v("via",3)) + '"></div></div>';
+
+    h += '<div class="sec"><h2>When to sow it</h2><span class="tiny muted">weeks from last frost</span></div>';
+    h += '<div class="tiny muted" style="margin-bottom:8px">Negative is before the last frost, positive after. Leave blank for any that do not apply — that is how the calendar knows what to offer.</div>';
+    h += '<div class="grid2">' +
+      '<div><label class="f">Start indoors</label><input type="number" id="uc-si" step="1" min="-16" max="16" value="' + esc(v("start_indoor","")) + '" placeholder="-6"></div>' +
+      '<div><label class="f">Transplant out</label><input type="number" id="uc-st" step="1" min="-16" max="16" value="' + esc(v("start_tp","")) + '" placeholder="2"></div></div>';
+    h += '<div class="grid2" style="margin-top:12px">' +
+      '<div><label class="f">Direct sow</label><input type="number" id="uc-sd" step="1" min="-16" max="16" value="' + esc(v("start_direct","")) + '" placeholder="0"></div>' +
+      '<div><label class="f">Fall sowing</label><input type="number" id="uc-sf" step="1" min="-20" max="0" value="' + esc(v("start_fall","")) + '" placeholder="-8"></div></div>';
+
+    h += '<div class="sec"><h2>Notes</h2></div>';
+    h += '<div class="field"><label class="f">Grows well beside</label>' +
+      '<input type="text" id="uc-comp" value="' + esc(v("comp","")) + '" placeholder="tomato, basil, lettuce">' +
+      '<div class="tiny muted">Crop ids, comma separated. Anything you type that is not a crop is ignored.</div></div>';
+    h += '<div class="field" style="margin-top:10px"><label class="f">Keep away from</label>' +
+      '<input type="text" id="uc-foes" value="' + esc(v("foes","")) + '" placeholder="fennel"></div>';
+    h += '<div class="field" style="margin-top:10px"><label class="f">Growing notes</label>' +
+      '<textarea id="uc-tips" placeholder="What you have learned about it.">' + esc(v("tips","")) + '</textarea></div>';
+    h += '<div class="field"><label class="f">Harvesting</label>' +
+      '<textarea id="uc-harvest" placeholder="When and how to pick it.">' + esc(v("harvest","")) + '</textarea></div>';
+
+    h += '<div class="note w" style="margin-top:14px">These figures are yours. The app will use them exactly as typed and will label them as your own everywhere they appear — it will never claim an extension service stands behind them.</div>';
+
+    h += '<button class="btn block" style="margin-top:14px" onclick="UserCrops.saveForm(' +
+      (id ? "'" + id + "'" : "null") + ')">' + (id ? "Save changes" : "Add this crop") + '</button>';
+    if(id) h += '<button class="btn danger block" style="margin-top:8px" onclick="UserCrops.confirmRemove(\'' + id + '\')">Delete this crop</button>';
+
+    openSheet(id ? "Edit " + (row.name || "crop") : "Add your own crop", h);
+    $$("#uc-emoji .chip").forEach(b => b.onclick = () => {
+      $$("#uc-emoji .chip").forEach(x => x.classList.toggle("on", x === b));
+      $("#uc-emoji-v").value = b.dataset.e;
+    });
+    setTimeout(() => { const el = $("#uc-name"); if(el && !id) el.focus(); }, 300);
+  },
+
+  saveForm(id){
+    const name = ($("#uc-name").value || "").trim();
+    if(!name) return toast("Give it a name");
+    const opt = el => { const v = ($(el) || {}).value; return v === "" || v === undefined ? null : num(v, 0); };
+    const row = {
+      name: name,
+      emoji: $("#uc-emoji-v").value || "🌱",
+      fam: $("#uc-fam").value,
+      sun: num($("#uc-sun").value, 6), water: num($("#uc-water").value, 1),
+      sp: num($("#uc-sp").value, 12), dtm: num($("#uc-dtm").value, 60),
+      depth: num($("#uc-depth").value, 0.25), from: $("#uc-from").value,
+      feeder: $("#uc-feeder").value, via: num($("#uc-via").value, 3),
+      start_indoor: opt("#uc-si"), start_tp: opt("#uc-st"),
+      start_direct: opt("#uc-sd"), start_fall: opt("#uc-sf"),
+      comp: ($("#uc-comp").value || "").trim(), foes: ($("#uc-foes").value || "").trim(),
+      tips: ($("#uc-tips").value || "").trim(), harvest: ($("#uc-harvest").value || "").trim(),
+      ph: "6.0–7.0", npk: "", succ: 0, yield: 0,
+      germ_lo: 7, germ_hi: 14, soil_lo: 55, soil_opt: 70, soil_hi: 85
+    };
+    if(!id) row.slug = UserCrops.slug(name);
+    const saved = UserCrops.save(row, id);
+    closeSheet();
+    if(APP.tab === "library") Library.render();
+    toast(id ? "Saved" : name + " added to your crops");
+    if(!id && saved) setTimeout(() => Library.open(saved.slug), 250);
+  },
+
+  confirmRemove(id){
+    const row = DB.find("usercrops", id); if(!row) return;
+    const u = UserCrops.usage(row.slug);
+    const busy = u.plantings + u.seeds + u.harvests;
+    confirmSheet("Delete " + (row.name || "this crop") + "?",
+      busy
+        ? "It is still used by " + [u.plantings && u.plantings + " planting" + (u.plantings > 1 ? "s" : ""),
+            u.seeds && u.seeds + " seed packet" + (u.seeds > 1 ? "s" : ""),
+            u.harvests && u.harvests + " harvest record" + (u.harvests > 1 ? "s" : "")].filter(Boolean).join(", ") +
+          ". Those records stay, but they will show as an unknown crop."
+        : "Nothing is using it, so nothing else changes.",
+      "Delete", () => {
+        UserCrops.remove(id);
+        closeSheet();
+        if(APP.tab === "library") Library.render();
+        toast("Removed");
+      }, true);
+  }
+};
+
+/* ---------- make them appear ---------- */
+(function wireUserCrops(){
+  /* the vault is not open yet when this file runs, so apply after it loads */
+  const origLoad = DB.load;
+  DB.load = async function(){
+    const r = await origLoad.apply(DB, arguments);
+    try{ UserCrops.apply(); }catch(e){ console.warn("user crops", e); }
+    return r;
+  };
+  const origImport = DB.importJSON;
+  DB.importJSON = async function(text){
+    const r = await origImport.call(DB, text);
+    try{ UserCrops.apply(); }catch(e){}
+    return r;
+  };
+
+  /* the crop page has to be honest about where its numbers came from */
+  const origOpen = Library.open;
+  Library.open = function(id){
+    origOpen.call(Library, id);
+    if(!UserCrops.isMine(id)) return;
+    const body = $("#sheet-body") || $("#s-library");
+    if(!body) return;
+    const row = DB.all("usercrops").find(r => r.slug === id);
+    body.insertAdjacentHTML("afterbegin",
+      '<div class="note w" style="margin-bottom:12px">✎ <b>Your own crop.</b> Every figure on this page is one you typed. ' +
+      'No extension service stands behind them — which is exactly why the rest of the app\'s numbers are worth something.' +
+      (row ? '<br><button class="btn sm" style="margin-top:8px" onclick="UserCrops.open(\'' + row.id + '\')">Edit these figures</button>' : '') +
+      '</div>');
+  };
+
+  /* a way in from the crop library */
+  const origRender = Library.render;
+  Library.render = function(opts){
+    origRender.call(Library, opts);
+    const box = $("#s-library"); if(!box) return;
+    const mine = DB.count("usercrops");
+    box.insertAdjacentHTML("beforeend",
+      '<button class="btn ghost block" style="margin-top:14px" onclick="UserCrops.open()">＋ Add a crop of your own</button>' +
+      '<div class="tiny muted center" style="margin-top:6px">' +
+      (mine ? mine + " crop" + (mine > 1 ? "s" : "") + " you added yourself. Open one and it says plainly that the figures are yours."
+            : "Anything the app does not know about: a regional green, a herb, a tea, whatever came back from the seed swap.") +
+      '</div>');
+  };
+})();
+</script>
+
+<script>
+/* ============================================================
    WEATHER — daily & weekly detail + shareable PNG snapshots
    ============================================================ */
 const Weather = {
@@ -12008,7 +12602,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-04.3";
+const BUILD = "2026-08-04.4";
 
 const Updater = {
   prompt: null, installed: false,

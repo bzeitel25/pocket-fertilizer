@@ -20,7 +20,7 @@ so a push goes live within a minute or two with no extra configuration.
 
 ```bash
 node build.mjs                        # src/ -> dist/index.html
-node src/smoke.mjs dist/index.html    # 502 checks
+node src/smoke.mjs dist/index.html    # 541 checks
 node verify_camera.mjs dist/index.html # 26 checks on the camera -> AI -> form path
 ```
 
@@ -134,6 +134,35 @@ app argues with itself.
 `p8f_dragplants.js` is a tombstone: the sandbox cannot delete inside OneDrive, so the file
 holds a comment explaining what replaced it. `build.mjs` skips any part starting `<!--`.
 
+## Flowers, tea and crops she adds herself
+
+`p5c_garden_plants.js` adds twelve non-vegetables — chamomile, lemon balm, lavender,
+anise hyssop, bee balm, alyssum, phacelia, yarrow, zinnia, cosmos, cornflower, coneflower.
+Same pattern as everywhere else: **`srcs` names two or three pages actually read, `est`
+names the fields none of them states.** Germination temperature and seed life are almost
+never published for ornamentals, so those are estimates and the app says so. Sources go
+into `SOURCES` and each crop gets its own `CROP_REF` entry.
+
+The defensible claim for this whole group is that they feed adult hoverflies, lacewings
+and parasitic wasps whose larvae eat aphids, and pull in pollinators. That is what the
+notes say. Do not write folklore into `tips`.
+
+**`CROP_ALIAS` fixed a silent six-year bug.** The base table's companion lists said
+"squash" and "bean", which are not crop ids — six crops each named them and those
+relationships never once fired. Aliases expand them at load. `CROP_ABSENT` documents the
+lore about plants the app does not carry (apricot, grape, rose…) so a real typo still
+fails the suite.
+
+`p5d_usercrops.js` lets anyone add a crop. It is a real table with real columns so the
+`.sqlite` export sees it, it folds into `CROPS`/`CROP` on vault load and on import, and it
+is **never** shown as sourced — the crop page says the figures are hers. `SCHEMA.usercrops`
+lives in `p4_db.js`, not here, because the DB builds its caches from `SCHEMA` at IIFE time.
+
+**`psf` and `sp` are two different conventions and both are right.** `psf` is square-foot
+gardening density on an equidistant grid; `sp` is extension in-row spacing. Lettuce is 4
+per square foot and 8″ apart in a row. The canvas measures everything off `sp` —
+`Geom.fitsIn` is the exact inverse of `Geom.rootR` — so never mix them.
+
 ## Micro-climate
 
 A zone describes a county. `sites` records the sun, slope, wind, shelter and frost of one
@@ -177,7 +206,7 @@ bug here.
 node src/smoke.mjs dist/index.html
 ```
 
-502 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
+541 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
 round-trips, season maths, companion logic, grid spans, seed and maturity maths, the SQL guard,
 every screen and modal, assistant tool execution, and data-accuracy invariants. It has caught
 real bugs — an infinite retry loop, a data-truncating patch, stale-task rendering. Run it

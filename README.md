@@ -65,6 +65,16 @@ Cold nights work the same way. The app asks whether it really frosted, and if a 
 
 You can also just say it: *"it was supposed to rain yesterday but we got nothing"* is enough.
 
+### Flowers, tea and the plants that earn their keep
+A vegetable garden is not only vegetables. Marigolds go in to keep pests down, alyssum to bring the hoverflies that eat the aphids, chamomile and lemon balm because someone wants a cup of tea in September. Those plants take bed space, cast shade and need spacing like anything else, so they are in the same table — chamomile, lemon balm, lavender, anise hyssop, bee balm, sweet alyssum, lacy phacelia, yarrow, zinnia, cosmos, cornflower and coneflower, alongside the marigolds, nasturtiums, calendula, borage and sunflowers already there.
+
+Each was checked against two or three independent extension sources, read on the publisher's own site. Where they agree, the figure is used and cited. Where none of them states a figure — and for ornamentals that usually means germination temperature and seed life — it is marked as an estimate rather than dressed up as fact.
+
+The claim these make is not folklore. Trials in lettuce found sweet alyssum pulls in hoverflies whose maggots then hunt aphids inside the crop itself; yarrow's flat flower heads are the shape short-tongued predators can actually feed from; phacelia is a honey-bee magnet used in cover-crop mixes. That is what the notes say, and it is what the app plans around.
+
+### Anything else you grow
+The crop table is open. Add your own — a regional green, a herb, a tea, whatever came back from the seed swap — and it behaves like every other crop: it spaces, waters, rotates, appears in the calendar, the seed bank and the companion checks. With one deliberate difference. Every built-in figure traces to an extension service; yours traces to you, and the app says so plainly on the crop's own page rather than quietly presenting your guess as research. That distinction is what makes the rest of the numbers worth anything.
+
 ### Varieties
 Every planting and seed packet can carry a variety. The app ships a reference list of long-established varieties with days to maturity, growth habit, disease-resistance codes and a note on what makes each one distinctive — Sungold, Cherokee Purple, Marketmore 76, Waltham Butternut, Provider, Lacinato and dozens more. Anything not on the list can be typed in by hand, or looked up: with the assistant connected, **Look it up** searches the web and fills in the details for review before saving. Saved varieties are reusable across plantings and packets. ### Days to maturity that learns your garden
 Published days-to-maturity is a single number pretending to be precise — it swings with variety, heat, light and season. So the app shows a **range** and says where it came from: typical for the crop, typical for this variety, or your own average.
@@ -72,7 +82,7 @@ Published days-to-maturity is a single number pretending to be precise — it sw
 Record a first harvest on any planting and it starts learning. One record and it blends yours with the catalogue figure; after three it plans with **your** number instead. The season recap tabulates every crop's real timing against the published figure, so you can see at a glance that your garden runs, say, nine days slower than the packet claims — and every future harvest projection quietly corrects for it. Logging a harvest against a planting records this automatically, so it usually happens without being asked.
 
 ### Crop database
-60 crops with sun hours, weekly water, spacing, sow depth, germination days and soil temperatures, days to maturity, pH range, feeder class, seed viability, succession interval and typical yield — plus companions, antagonists, and written guidance on growing, feeding and harvesting each one.
+72 crops with sun hours, weekly water, spacing, sow depth, germination days and soil temperatures, days to maturity, pH range, feeder class, seed viability, succession interval and typical yield — plus companions, antagonists, and written guidance on growing, feeding and harvesting each one.
 
 ### Seed bank
 Photograph packets or type them in. Tracks quantity, brand, lot, packed year, printed expiry, germination rate and cost. Each packet gets a viability level and an expected germination percentage derived from that crop's seed life, so fading and expired packets surface before they waste bed space. Includes the 10-seed paper-towel test calculator.
