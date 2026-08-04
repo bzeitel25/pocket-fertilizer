@@ -20,7 +20,7 @@ so a push goes live within a minute or two with no extra configuration.
 
 ```bash
 node build.mjs                        # src/ -> dist/index.html
-node src/smoke.mjs dist/index.html    # 347 checks
+node src/smoke.mjs dist/index.html    # 502 checks
 node verify_camera.mjs dist/index.html # 26 checks on the camera -> AI -> form path
 ```
 
@@ -80,13 +80,104 @@ All camera access goes through **`Cam.rear()`** in `p3_core.js`. `facingMode:{id
 is only a hint and some Android builds hand back the selfie camera anyway, so it tries
 a device labelled "back" first, then `exact`, then `ideal`, then anything.
 
+## The planting canvas
+
+**The grid is gone.** A bed is an outline measured in inches (`beds.shape`, `w_in`,
+`h_in`, `poly`); a planting is a point in it (`plantings.px`, `py`) carrying two radii —
+`rr`, the root zone it needs to itself, and `rc`, the spread of its mature foliage.
+Overlapping canopies are normal and drawn as such; overlapping *roots* are the warning.
+
+`Geom.bed` and `Geom.plant` migrate a legacy row **on read** and are idempotent, so there
+is no migration pass that can half-finish. Anything still speaking in squares —
+`Garden.W/H/covers/at/blocked`, the assistant's `plant_crop` — is a *view* of the canvas,
+not a second model. `Garden.place(bed,x,y,…)` still takes cell coordinates and delegates
+to `Garden.placeAt(bed,inches,inches,…)`.
+
+The parts, in build order:
+
+- `p8j_geom.js` — shapes, containment, area, corner snapping, the radii, and the legacy
+  grid API rewritten on top of the canvas.
+- `p8k_plantart.js` — `PlantArt`. **The icon is the crop's own emoji**, the same one every
+  list in the app uses. An earlier version drew each plant procedurally; it looked like a
+  garden and was useless, because a bed of green blobs cannot tell you what is in it. The
+  organic part lives in the two measured circles, not in the leaves. What survives is the
+  growth maths — `growth`/`stage`/`sizeAt` — which the scrubber and the canvas both read.
+- `Canvas.wantLabels` **forces labels on when two crops share an icon.** Six herbs are all
+  🌿, as are asparagus and rhubarb; without names that bed is a lie. `Canvas.label` shows
+  the variety when one is set, because by August "Mountain Fresh" is the useful word and
+  "Tomato" is already the picture.
+- `p8l_canvas.js` — the SVG renderer, in inches, plus `Recommend.conflicts/friends/crowding/shading`.
+- `p8m_canvasui.js` — the bed screen, the planting sheet, the season scrubber.
+- `p8n_canvasdrag.js` — press-and-hold to move, drag the handle to resize, live overlay.
+- `p8o_shapes.js` — shape picker, the polygon tracer, bed creation, map snapping.
+- `p8p_habit.js` — **sourced** mature spread and height (below).
+
+**One definition of "next to".** `Geom.relation().near` — canopies meeting, or under
+`Geom.NEAR_GAP` (12″) of clear soil between root zones. The bed view, the drag overlay and
+the planting sheet all read it. If they ever disagree, that is the bug.
+
+**Sizes are sourced or they say they are estimates.** `p8p_habit.js` follows the
+`p5b_sources.js` pattern: a corrections layer over a derived default. The default is
+honest — in-row spacing *is* a spread figure, because that is how extension services set
+it — and it is badly wrong for sprawlers, which is why cucumber, the squashes, melons and
+the tall shading crops are corrected against sources read on the publisher's own site.
+`estSpread`/`estHeight` mark figures the source does not state; `Habit.provenance()`
+surfaces all of it in the planting sheet. **Do not add a figure without a URL you have
+actually seen.** No extension source consulted gives a mature height for sweet corn; that
+one is flagged as an estimate rather than dressed up.
+
+**The shading check defers to the companion table.** Tomato over basil is shade, and it is
+also the oldest recommendation in gardening. `Recommend.shading` marks a pairing `ok` when
+the crop underneath tolerates shade *or* the two are recommended together — otherwise the
+app argues with itself.
+
+`p8f_dragplants.js` is a tombstone: the sandbox cannot delete inside OneDrive, so the file
+holds a comment explaining what replaced it. `build.mjs` skips any part starting `<!--`.
+
+## Micro-climate
+
+A zone describes a county. `sites` records the sun, slope, wind, shelter and frost of one
+actual spot. A row is attached to a **plot**; every bed in that plot inherits it, and a bed
+may carry its own row that overrides the plot's **field by field** (`Micro.profile`).
+`horizon`, `photos`, `shots`, `rain_obs` and `frost_obs` are JSON strings on disk so the
+`.sqlite` export stays real — always go through `Micro.encode/decode`, never touch the row.
+
+`Solar` in `p8g_micro.js` is genuine astronomy: Spencer's declination series, altitude and
+azimuth by hour angle, stepped 1° at a time (4 minutes) across the day against an 8-sector
+horizon. **Sun hours are calculated, not entered.** Two things follow from that:
+
+- `Solar.MIN_ALT` (3°) is applied to the surveyed site *and* to the open reference site, so
+  the two stay comparable. Never raise one without the other.
+- Nothing is compared against a hardcoded "8 hours", which means nothing at 60°N. The
+  yardstick is `sunOpen` — what an unobstructed flat site at this same latitude would get —
+  and `sunShare` is the ratio. Water and shade judgements use `sunShare`.
+
+The clever part is `MicroUI.applySunChecks`. A photo with a known bearing and a known time
+is not a picture, it is a measurement: if the sun was 40° up in the south-east and the
+gardener says the spot was in shade, something at least 40° high stands to the south-east.
+That constraint outranks every estimate in the survey and is why the questions after each
+shot matter more than the shot.
+
+**Ground truth beats the forecast.** A forecast cell is miles wide; gardeners watch it
+promise half an inch and get dust. `MicroLog` asks, on days the forecast claimed rain, what
+actually landed at each spot, and keeps the ratio. Under three confirmed days the canopy
+estimate stands; it blends in to full weight at eight (`Micro.rainCal`). Frost works the
+same way but only ever **suggests** a change to `frost_pocket` — evidence is never applied
+behind the gardener's back. An unanswered day is not counted; nothing is inferred from
+silence.
+
+`Recommend.water` and `Recommend.now` are wrapped in `p8g_micro.js`. Both are additive: with
+no profile they hand straight back to the original. Every adjustment carries its reason in
+`micro.why` or in the rec's own `why`/`warn` — a number that moves without saying why is a
+bug here.
+
 ## Testing — do not skip
 
 ```bash
 node src/smoke.mjs dist/index.html
 ```
 
-347 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
+502 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
 round-trips, season maths, companion logic, grid spans, seed and maturity maths, the SQL guard,
 every screen and modal, assistant tool execution, and data-accuracy invariants. It has caught
 real bugs — an infinite retry loop, a data-truncating patch, stale-task rendering. Run it

@@ -1,6 +1,6 @@
 # Pocket Fertilizer
 
-A gardener's pocket assistant: plan beds on a grid, track a seed bank, get a calendar built from your own frost dates, diagnose sick plants from a photo, read the weather for what it means to your plants, and ask for any of it by voice.
+A gardener's pocket assistant: lay out beds of any shape on an organic canvas, track a seed bank, get a calendar built from your own frost dates, diagnose sick plants from a photo, read the weather for what it means to your plants, and ask for any of it by voice.
 
 **Live app → [bzeitel25.github.io/pocket-fertilizer](https://bzeitel25.github.io/pocket-fertilizer/)**
 
@@ -19,16 +19,51 @@ On a phone, use **Add to Home Screen**. It installs like a native app — own ic
 ## Features
 
 ### Garden planner
-Plots contain beds; beds are adjustable grids from 1×1 to 24×24, with any square size (12″ by default, the classic square-foot method). Tap a square to plant it, or arm a crop and paint across several.
+**There is no grid.** Nothing in a garden grows in a box — leaves weave together overhead while roots keep their distance below — and a lattice cannot express either. So a bed is an outline measured in inches, and you place plants anywhere inside it.
 
-**Plantings stretch to any shape.** Select one and drag its corner handle, or use the width and height steppers, to cover 1×2, 2×3, 1×10 — whatever the plant actually takes. Each spanning planting is one of two things, and the app tracks which:
+Pick the outline: rectangle, rounded, circle, oval, triangle, trapezoid, hexagon or L-shape, each freely resized and rotated. Or trace your own, corner by corner. The tracer snaps to a three-inch grid and to corners you have already dropped, so a shape closes cleanly instead of leaving a sliver — and on the garden map, dragging one bed against another snaps them corner to corner. Butt two triangles into a diamond, tile hexagons, wrap a path. Any layout you can walk, you can draw.
 
-- **One plant, sprawling** — a single cucumber that ate six square feet. Recording it this way means the app remembers that footprint and offers it the next time you plant that crop.
-- **Filled with plants** — the area packed at proper spacing, auto-populated from real per-square-foot data (1 tomato, 4 lettuce, 9 beets, 16 carrots per square foot).
+**Every plant gets two circles.** A solid inner one is the root zone it needs to itself. A soft outer one is the foliage it will actually throw when mature. Overlapping leaves are fine — that is what a full bed looks like in July, and whatever sits in front is drawn see-through so nothing hides underneath. Overlapping *roots* are the thing worth knowing about, and they are what the app warns you off.
 
-Either way it works out how many seeds to sow, adjusted for the germination rate of the actual packet you linked — an old packet at 40% viability asks for more seed than a fresh one.
+Those sizes are not invented. In-row spacing is a spread figure — extension services set spacing from how wide a plant gets — so that is the baseline. Where it is badly wrong, which is sprawlers, real figures are used and cited: a cucumber is spaced 12″ and then runs two to three feet either side of the row; a pumpkin wants six to eight feet between mounds. Tap any planting and it shows you where its size came from, and says plainly when a number is an estimate rather than something a source states.
 
-Companion conflicts are flagged on the grid as you plant, measured edge-to-edge between plantings, and rotation history tracks which plant family last occupied each bed.
+**You can see what is planted where.** Each plant is drawn as its own crop — a tomato looks like a tomato — sized to how far along it is on the date you are looking at, and tilted a few degrees so a row does not read as a row of stamps. The label underneath names the *variety* when you have set one, because once the icon has told you it is a tomato, "Mountain Fresh" is the thing you actually wanted to know. Where two crops share a picture — six of the herbs are all the same leaf — the app stops treating labels as optional and always shows them.
+
+**Drag the season.** A bed looks sensible in April because in April everything is a seedling. Drag the slider to July and the tomato you put on the south side is four feet across and the lettuce behind it has not seen sun in a month. Plants scale by their real growth rate, change from two seed leaves to a bushy mass to something carrying fruit, and the app tells you who is standing in whose light on that date — and when it is a guild rather than a mistake, it says so. Tomato over basil is shade; it is also the oldest companion advice there is, and the app does not argue with itself.
+
+**Feedback while the plant is still in your hand.** Press and hold to lift a plant and move it anywhere. As it comes near its neighbours they light up — a heart for a pairing worth having, a warning for one worth avoiding, an amber ring where two root zones have started to compete. Advice that only arrives after you have committed is advice you have to undo. Plants that like each other pull gently into proper spacing as you drag, and you can switch that off if you would rather place freehand.
+
+Resize a plant either way: sliders in its sheet, or drag the white handle on the selected plant right on the bed. Record what it really did and the app offers that much room next season.
+
+The square-foot grid is still here for anyone who wants rows — a switch turns on the overlay and snaps new plants to it. It is a preference now, not the model. Companion conflicts are measured as real distances between plants, and rotation history still tracks which family last occupied each bed.
+
+### Micro-climate
+Your hardiness zone describes a county. It cannot know that the strip in front of the house bakes against a south wall and never sees rain under the eaves, while the bed out back loses the afternoon to a maple and frosts a week early. That difference decides what grows, and almost nothing records it. This does.
+
+Give a plot a micro-climate and every bed in it inherits one; a single bed that genuinely differs can override it field by field.
+
+**Survey it with the camera.** Stand in the middle of the space and shoot north, east, south and west. After each shot the app asks the short questions that make the photo readable: which way you were facing (it will read the compass if the phone has one), what time it is, whether the ground is flat or sloping, and whether that spot is in sun or shade *right now*. That last question is the important one. Knowing your latitude and the time, the app knows exactly where the sun was — so if it was 40° up in the south-east and you say you were standing in shade, then something at least 40° high stands to the south-east. No estimating required. With an AI key connected the photo is also read for what surrounds you, how high it rises, the slope, the surface and what is overhead; without one the app measures sky, brightness and shadow on the device and asks you the rest. Either way you land on the same form, with everything filled in as an editable estimate.
+
+**Or just fill in the form.** Eight sliders for how high the skyline rises in each direction, plus slope, wind, shelter, what is overhead, reflected heat and whether cold air settles there. No camera, no key, no network.
+
+**Then it does real astronomy.** Sun hours are not typed in and not guessed — they are calculated from solar geometry at your latitude, stepped four minutes at a time across the day and blocked by the skyline you recorded, for all twelve months. You get a month-by-month sun chart, how many hours you lose to what is around you compared with open ground, and whether a slope is tilted into the sun or away from it.
+
+All of it feeds the advice rather than sitting in a form:
+
+- **Watering** — the weekly figure is scaled for wind, sun, slope runoff, reflected heat and drainage, and rainfall is discounted by how much actually reaches that spot. A bed under eaves is effectively hand-watered year round, and the app says so.
+- **Frost** — a cold pocket frosts earlier in autumn and later in spring; a sunny masonry wall does the opposite. Each spot gets its own two dates.
+- **What to plant** — recommendations use the surveyed sun rather than the number you typed, and warn when a crop needs more days than that particular bed has left.
+
+Every adjustment shows its reasoning in plain language. Nothing moves silently.
+
+### The forecast is a claim, not a fact
+A forecast cell is several miles across and a summer shower is not. Everyone has watched it promise half an inch and walked out to dust.
+
+So the app checks. On days the forecast called for rain, it asks what actually landed — per spot, because the bed under the eaves and the bed in the open do not get the same answer. A rain gauge is ideal; an honest guess still beats trusting a grid square. Under three confirmed days nothing changes. From three it starts to matter, and by eight your record has replaced the forecast entirely in the watering call. The weather screen reports the running figure: *over 11 rain days it promised 3.2″ and you recorded 1.9″ — about 59%.*
+
+Cold nights work the same way. The app asks whether it really frosted, and if a spot keeps frosting on nights the forecast said were safe, it tells you what that means and offers to record it as a cold pocket. It never changes your garden on its own evidence — you decide.
+
+You can also just say it: *"it was supposed to rain yesterday but we got nothing"* is enough.
 
 ### Varieties
 Every planting and seed packet can carry a variety. The app ships a reference list of long-established varieties with days to maturity, growth habit, disease-resistance codes and a note on what makes each one distinctive — Sungold, Cherokee Purple, Marketmore 76, Waltham Butternut, Provider, Lacinato and dozens more. Anything not on the list can be typed in by hand, or looked up: with the assistant connected, **Look it up** searches the web and fills in the details for review before saving. Saved varieties are reusable across plantings and packets. ### Days to maturity that learns your garden
@@ -52,7 +87,7 @@ Capture from the in-app camera or upload a photo. The image is analysed on-devic
 Current conditions, the week ahead and the week just gone, sunrise/sunset and UV, plus a per-bed watering call that subtracts actual rainfall from what each bed needs. Forecasts are read for what they mean to plants: frost nights, heat above the 90°F threshold where tomato and pepper pollen goes sterile, wet spells that spread blight, dry weeks that need deep watering. Snapshot buttons render the day or the week as a shareable image.
 
 ### Ask — the assistant
-A tab in the bottom bar. Type, or hold the mic and talk. It's wired to the app's real functions, so it acts rather than just advises: *"add tomatoes to plot A"* opens Plot A with tomatoes ready to place, and warns you if the bed is short on sun or already holds a bad neighbour. It also creates beds, adds seed packets, logs harvests and watering, reads the weather, pulls any crop's full guide, answers questions about your own records, and searches the web when the built-in data falls short. Answers can be read aloud.
+A tab in the bottom bar. Type, or hold the mic and talk. It's wired to the app's real functions, so it acts rather than just advises: *"add tomatoes to plot A"* opens Plot A with tomatoes ready to place, and warns you if the bed is short on sun or already holds a bad neighbour. It also creates beds, adds seed packets, logs harvests and watering, reads the weather, pulls any crop's full guide, answers questions about your own records, and searches the web when the built-in data falls short. It knows each spot's micro-climate too: ask why one bed needs more water than another and it quotes that bed's own surveyed figures, and when you mention something in passing — *"it's against the south wall"*, *"nothing grows there after two o'clock"*, *"the rain never reached us"* — it records it. Answers can be read aloud.
 
 ### Journal and season recap
 Log watering, feeding, amendments, treatments, weeding, soil tests, purchases and harvests with weight, count, value, cost and time. The recap computes yield by crop, pounds per square foot by bed, cost per pound, spend breakdown, recurring problems, and written takeaways for next season. Exports to CSV.
