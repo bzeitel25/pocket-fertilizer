@@ -7,7 +7,16 @@
 .pl{cursor:pointer}
 .pl.sel .canring{stroke-width:0.9;stroke-dasharray:none}
 .pl.ghosted{opacity:.55}
+.pl.marked .markring{stroke-dasharray:2 1.4}
 .grip{cursor:nwse-resize}
+.pmenu{cursor:pointer}
+.hitpad{cursor:pointer}
+.canvaswrap svg.zoomed{touch-action:none;cursor:grab}
+.zoomtag{position:absolute;right:14px;top:14px;z-index:4;background:rgba(20,16,12,.72);
+  color:#fff;border-radius:999px;padding:3px 10px;font-size:.68rem;font-weight:700;
+  letter-spacing:.02em;pointer-events:none}
+.selbar{margin-top:8px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:14px;padding:10px 12px}
 .cvbar{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .cvbar .chip{flex:0 0 auto}
 .tlwrap{margin-top:12px;background:var(--surface-2);border:1px solid var(--line);
@@ -53,6 +62,25 @@ const Canvas = {
   iconR(bed, rc, grown){
     const floor = Math.min(Geom.W(bed), Geom.H(bed)) * 0.055;
     return Math.round(Math.max(rc * grown * 0.62, floor) * 10) / 10;
+  },
+
+  /* How big a companion badge should be.
+     This was a flat `Math.max(2.4, rc * 0.42)` — a radius in *inches*, with a
+     hard 2.4" floor. On a radish that is a badge nearly as wide as the plant,
+     so a bed of small crops turned into a field of hearts and told you less
+     than the plants themselves did. It is a fraction of the bed now, which
+     means a constant small size on screen whatever the plot measures, with a
+     warning allowed to be a little larger than a heart because a warning is
+     the one you must not miss. */
+  badgeR(bed, rc, bad){
+    const span = Math.min(Geom.W(bed), Geom.H(bed));
+    const ts = typeof Zoom !== "undefined" ? Zoom.textScale() : 1;
+    const p = num(rc, 6);
+    /* the floor keeps a badge visible on a big plot; the cap against the
+       plant's own canopy is the point of the whole change — a marker that is
+       wider than the thing it marks tells you nothing you wanted to know */
+    const r = Math.min(clamp(p * 0.26, span * 0.009, span * 0.020), p * 0.6) * ts;
+    return Math.round((bad ? r * 1.3 : r) * 100) / 100;
   },
 
   wantLabels(bed){
@@ -111,7 +139,13 @@ const Canvas = {
     const inter = !!o.interactive;
     const clip = "clip-" + bed.id;
 
-    let h = '<svg viewBox="' + (-P) + ' ' + (-P) + ' ' + (W + P*2) + ' ' + (H + P*2) +
+    /* Zoom is a viewBox change and nothing else. Canvas.toIn reads the live
+       viewBox off the element, so every gesture in the app — tap, drag,
+       resize, the buttons — stays correct at any magnification for free. A
+       CSS transform would have broken all of them. At 1× this emits exactly
+       the string it always did. */
+    const vb = (inter && typeof Zoom !== "undefined") ? Zoom.viewBox(bed, P) : null;
+    let h = '<svg viewBox="' + (vb || ((-P) + ' ' + (-P) + ' ' + (W + P*2) + ' ' + (H + P*2))) +
       '" xmlns="http://www.w3.org/2000/svg"' + (inter ? ' id="pcanvas"' : '') + '>';
     h += '<defs>' + Canvas.soilDefs(bed) +
       '<clipPath id="' + clip + '">' + Canvas.bedShapeSVG(bed, '') + '</clipPath></defs>';
@@ -141,11 +175,18 @@ const Canvas = {
       const g = PlantArt.growth(p, when);
       const grown = Math.max(0.18, PlantArt.sizeAt(g));
       const over = ps.slice(0, i).some(q => Geom.dist(p, q) < rc + Geom.RC(q) - 0.5);
-      const sel = Garden.sel === p.id;
+      const marked = typeof Sel !== "undefined" && Sel.has(p.id);
+      const sel = Garden.sel === p.id && !marked;
       const f = flags[p.id] || {};
 
-      h += '<g class="pl' + (sel ? " sel" : "") + (over ? " ghosted" : "") + '" data-pid="' + p.id +
+      h += '<g class="pl' + (sel ? " sel" : "") + (marked ? " marked" : "") + (over ? " ghosted" : "") +
+           '" data-pid="' + p.id +
            '" transform="translate(' + (Math.round(px*10)/10) + ' ' + (Math.round(py*10)/10) + ')">';
+
+      if(marked)
+        h += '<circle class="markring" r="' + (Math.round(rc * grown * 1.06 * 10) / 10) +
+             '" fill="none" stroke="#f0a500" stroke-width="' +
+             (Math.round(Math.max(0.4, Math.min(Geom.W(bed), Geom.H(bed)) * 0.006) * 100) / 100) + '"/>';
 
       if(Canvas.showCanopy && g >= 0)
         h += '<circle class="canring" r="' + (Math.round(rc * grown * 10) / 10) +
@@ -167,18 +208,36 @@ const Canvas = {
              '" fill="#fff" fill-opacity="0.82" font-weight="700">×' + num(p.qty, 1) + '</text>';
 
       if(f.bad || f.good){
-        const bs = Math.max(2.4, rc * 0.42);
-        h += '<g transform="translate(' + (Math.round(rc*0.68*10)/10) + ' ' + (-Math.round(rc*0.68*10)/10) + ')">' +
-          '<circle r="' + bs + '" fill="' + (f.bad ? "#c9453c" : "#2a8c5e") + '"/>' +
-          '<text y="' + (bs * 0.38) + '" text-anchor="middle" font-size="' + (bs * 1.15) +
-          '" fill="#fff">' + (f.bad ? "!" : "♥") + '</text></g>';
+        const bs = Canvas.badgeR(bed, rc, f.bad);
+        /* outboard of the canopy, so it sits beside the plant rather than on it */
+        const bo = Math.round((rc * grown + bs * 0.9) * 0.7071 * 10) / 10;
+        h += '<g class="cbadge" transform="translate(' + bo + ' ' + (-bo) + ')">' +
+          '<circle r="' + bs + '" fill="' + (f.bad ? "#c9453c" : "#2a8c5e") +
+          '" stroke="#fff" stroke-opacity="0.55" stroke-width="' + (Math.round(bs*0.18*100)/100) + '"/>' +
+          '<text y="' + (Math.round(bs * 0.38 * 100) / 100) + '" text-anchor="middle" font-size="' +
+          (Math.round(bs * 1.15 * 100) / 100) + '" fill="#fff">' + (f.bad ? "!" : "♥") + '</text></g>';
       }
 
       if(sel && inter){
-        const gx = rc * 0.7071, gy = rc * 0.7071;
-        h += '<circle class="grip" data-grip="' + p.id + '" cx="' + (Math.round(gx*10)/10) +
-             '" cy="' + (Math.round(gy*10)/10) + '" r="' + Math.max(2, rc * 0.2) +
-             '" fill="#fff" stroke="#2a8c5e" stroke-width="0.5"/>';
+        /* Both buttons are drawn in garden inches, so on a forty-foot plot a
+           radish's handle would be two screen pixels. Each gets an invisible
+           hit circle with a bed-relative floor behind it — zoom is the real
+           cure, this is the belt. */
+        const gx = Math.round(rc * 0.7071 * 10) / 10;
+        const br = Math.max(2, rc * 0.2);
+        const tap = Math.max(br, Math.min(Geom.W(bed), Geom.H(bed)) * 0.035);
+        h += '<circle class="hitpad" data-grip="' + p.id + '" cx="' + gx + '" cy="' + gx +
+             '" r="' + (Math.round(tap*10)/10) + '" fill="transparent"/>' +
+             '<circle class="grip" data-grip="' + p.id + '" cx="' + gx + '" cy="' + gx +
+             '" r="' + (Math.round(br*10)/10) + '" fill="#fff" stroke="#2a8c5e" stroke-width="0.5"/>';
+        /* …and its twin bottom-left: everything about this plant — variety,
+           how many, which packet, dates, notes. */
+        h += '<circle class="hitpad" data-menu="' + p.id + '" cx="' + (-gx) + '" cy="' + gx +
+             '" r="' + (Math.round(tap*10)/10) + '" fill="transparent"/>' +
+             '<g class="pmenu" data-menu="' + p.id + '" transform="translate(' + (-gx) + ' ' + gx + ')">' +
+             '<circle r="' + (Math.round(br*10)/10) + '" fill="#fff" stroke="#2a8c5e" stroke-width="0.5"/>' +
+             '<text y="' + (Math.round(br*0.34*10)/10) + '" text-anchor="middle" font-size="' +
+             (Math.round(br*1.25*10)/10) + '" fill="#2a8c5e" font-weight="700">⋯</text></g>';
       }
       h += '</g>';
     });
@@ -188,7 +247,8 @@ const Canvas = {
       h += '<g class="labels" pointer-events="none">';
       ps.forEach(p => {
         const rc = Geom.RC(p);
-        const fs = clamp(Math.min(W, H) * 0.045, 2.1, 4.2);
+        const fs = clamp(Math.min(W, H) * 0.045, 2.1, 4.2) *
+          (inter && typeof Zoom !== "undefined" ? Zoom.textScale() : 1);
         const grown = Math.max(0.18, PlantArt.sizeAt(PlantArt.growth(p, when)));
         const below = Math.max(rc * grown, Canvas.iconR(bed, rc, grown) * 1.15);
         h += '<text x="' + (Math.round(Geom.PX(p)*10)/10) + '" y="' +
@@ -284,6 +344,7 @@ Object.assign(Garden, {
       w: 1, h: 1
     });
     if(!o.silent) toast(cropName(cropId) + " planted");
+    if(!o.noUndo) Undo.push("place", "Planted " + cropName(cropId), [{ id: p.id, created: true }]);
     Cal.forPlanting(p);
     return p;
   },
@@ -350,11 +411,18 @@ Object.assign(Garden, {
     Garden.render();
   },
 
-  removePlanting(id, silent){
+  /* A removal is a soft delete — status goes to "removed" and the row stays —
+     so putting one back is a matter of clearing two fields. That is what makes
+     undo honest here rather than a re-creation that quietly loses the variety,
+     the packet it came from and the date it went in. */
+  removePlanting(id, silent, noUndo){
+    const p = DB.find("plantings", id); if(!p) return;
+    if(!noUndo) Undo.push("remove", "Removed " + cropName(p.crop_id),
+      [{ id: id, status: p.status || "planned", removed_on: p.removed_on || null }]);
     DB.update("plantings", id, { status:"removed", removed_on: iso(today()) });
     DB.bulkRemove("events", e => e.planting_id === id && e.done !== "1");
     if(Garden.sel === id) Garden.sel = null;
-    if(!silent){ closeSheet(); Garden.render(); toast("Removed"); }
+    if(!silent){ closeSheet(); Garden.render(); toast("Removed", 3200); }
   },
 
   /* ---------- taps ---------- */
@@ -363,13 +431,19 @@ Object.assign(Garden, {
     const bed = Geom.bed(DB.find("beds", APP.bedId)); if(!bed) return;
     const ex = Garden.hit(bed.id, px, py);
 
+    if(typeof Sel !== "undefined" && Sel.on){ if(ex) Sel.toggle(ex.id); return; }
     if(Garden.clip){ if(!ex) Garden.pasteAt(px, py); else toast("Something is already there"); return; }
     if(Garden.erase){ if(ex){ Garden.removePlanting(ex.id, true); Garden.render(); } return; }
     if(Garden.paint){ Garden.placeAt(bed, px, py, Garden.paint, { silent:true }); Garden.render(); return; }
     if(ex){
-      Garden.sel = (Garden.sel === ex.id) ? null : ex.id;
+      /* Tapping a plant used to TOGGLE selection, and the details sheet only
+         opened on the tap that selected. A freshly placed plant is already
+         selected, so the very next tap deselected it and nothing opened —
+         which is why the variety picker looked as though it had been removed.
+         A tap on a plant always opens that plant. Bare soil deselects. */
+      Garden.sel = ex.id;
       Garden.render();
-      if(Garden.sel) Garden.plantingSheet(ex);
+      Garden.plantingSheet(ex);
       return;
     }
     Garden.sel = null;

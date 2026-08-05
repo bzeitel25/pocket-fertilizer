@@ -36,7 +36,7 @@ site ever 404s after a push, that setting is the first thing to check.
 
 ```bash
 node build.mjs                       # src/ -> docs/index.html
-node src/smoke.mjs docs/index.html   # 541 checks
+node src/smoke.mjs docs/index.html   # 600 checks
 node verify_camera.mjs docs/index.html # 26 checks on the camera -> AI -> form path
 ```
 
@@ -52,11 +52,19 @@ re-run it rather than redoing the edits by hand.
 `index.html` is assembled by concatenating the parts in `src/` **in this exact order**:
 
 ```
-p1_head.html  p2_body.html  p3_core.js  p4_db.js  p5_plants.js  p5b_sources.js
-p6_live.js    p7_shell.js   p8_garden.js p8b_span.js p8c_varieties.js
-p9_seeds.js   p10_doctor.js p10b_condsrc.js p11_journal.js p8d_maturity.js
-p12_library.js p14_weather.js p15_assistant.js p15b_providers.js
-p16_sources_ui.js p13_init.js
+p1_head.html  p2_body.html  p3_core.js  p4_db.js
+p5_plants.js  p5b_sources.js  p5c_garden_plants.js  p6_live.js
+p7_shell.js  p6b_place.js  p8_garden.js  p8b_span.js
+p8c_varieties.js  p8e_map.js  p8j_geom.js  p8k_plantart.js
+p8l_canvas.js  p8m_canvasui.js  p8n_canvasdrag.js  p8o_shapes.js
+p8p_habit.js  p8q_zoom.js  p8r_undo.js  p8s_select.js
+p8t_bedrecs.js  p8u_orient.js  p8v_templates.js  p8g_micro.js
+p8h_microui.js  p9_seeds.js  p10_doctor.js  p10b_condsrc.js
+p11_journal.js  p8d_maturity.js  p12_library.js  p5d_usercrops.js
+p14_weather.js  p8i_microlog.js  p15_assistant.js  p15b_providers.js
+p15c_assist_rules.js  p15e_microtools.js  p15d_coach.js  p16_sources_ui.js
+p17_tips.js  p18_help.js  p12b_settings.js  p20_calsync.js
+p19_native.js  p13_init.js
 ```
 
 Order matters. `p13_init.js` is last because it closes `</body></html>` and calls `boot()`.
@@ -127,6 +135,33 @@ The parts, in build order:
 - `p8n_canvasdrag.js` — press-and-hold to move, drag the handle to resize, live overlay.
 - `p8o_shapes.js` — shape picker, the polygon tracer, bed creation, map snapping.
 - `p8p_habit.js` — **sourced** mature spread and height (below).
+- `p8q_zoom.js` — **zoom is a viewBox change and nothing else.** `Canvas.toIn` reads the
+  live `viewBox` off the element, so pinching magnifies the picture *and* every gesture
+  follows for free. A CSS transform would look identical and break all four of them. At
+  1× `Zoom.viewBox` returns null and the caller emits the original string byte for byte —
+  the smoke suite asserts that literal. A second finger calls `CanvasDrag.abort`.
+- `p8r_undo.js` — an undo stack of *previous values*. Removal was always a soft delete
+  (`status:"removed"`, row intact), which is what lets a plant come back as itself rather
+  than as a copy that lost its variety and dates. One entry is a list of patches, so eight
+  plants moved together undo as one action. `{id, created:true}` means "did not exist
+  before — remove it again".
+- `p8s_select.js` — multi-select. Tap to gather, press-and-hold any member to move the set
+  keeping its shape. Group remove and duplicate are single undo entries.
+- `p8t_bedrecs.js` — `BedRecs`, what would go well with **what is already planted**, and
+  `WaterGroups`. Anything that conflicts with an occupant is excluded outright rather than
+  ranked low, because the list has to be safe to plant from. The water bands sit where the
+  data actually clusters (1½″+, 1″, and the herbs/flowers below that) — not on invented
+  thresholds.
+- `p8u_orient.js` — `beds.north_deg`, the bearing the **top of the drawing** points at.
+  The micro-climate survey's photo bearings describe the *site*; nothing ever told the app
+  which way the drawing was oriented, so `Recommend.shading` was assuming north-up and
+  computing a `north` flag it then never used. Shade now falls away from the midday sun,
+  and which way that is comes from the stored latitude — nothing is hardcoded to the
+  northern hemisphere.
+- `p8v_templates.js` — saved bed layouts. Positions are stored as **fractions** of the
+  bed so a layout survives a different-sized one. It stores **no dates and no harvest
+  records**: reusing last year's plan must never manufacture a maturity figure, because
+  those are the numbers the whole app defers to.
 
 **One definition of "next to".** `Geom.relation().near` — canopies meeting, or under
 `Geom.NEAR_GAP` (12″) of clear soil between root zones. The bed view, the drag overlay and
@@ -179,6 +214,20 @@ gardening density on an equidistant grid; `sp` is extension in-row spacing. Lett
 per square foot and 8″ apart in a row. The canvas measures everything off `sp` —
 `Geom.fitsIn` is the exact inverse of `Geom.rootR` — so never mix them.
 
+## The calendar, and getting it off the phone
+
+`p20_calsync.js` exports the schedule as RFC 5545 iCalendar. Two things there are not
+decoration: every event carries a **stable UID** derived from `events.auto` or the row id,
+so a second import *updates* the first rather than doubling it — which is why most exports
+only ever get imported once; and lines are **folded at 75 octets**, which some importers
+reject outright and others silently truncate.
+
+**It is a file, not an account connection, and the UI says so.** A live Google sync needs
+OAuth, a registered Cloud client and a server holding a refresh token. This app has no
+server, no account and an encrypted local vault; calling a download "sync" would be a lie
+about where the data goes. A *single* date can go straight into Google through their
+compose URL, which needs no credentials because the person is already signed in.
+
 ## Micro-climate
 
 A zone describes a county. `sites` records the sun, slope, wind, shelter and frost of one
@@ -222,7 +271,7 @@ bug here.
 node src/smoke.mjs docs/index.html
 ```
 
-541 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
+600 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
 round-trips, season maths, companion logic, grid spans, seed and maturity maths, the SQL guard,
 every screen and modal, assistant tool execution, and data-accuracy invariants. It has caught
 real bugs — an infinite retry loop, a data-truncating patch, stale-task rendering. Run it

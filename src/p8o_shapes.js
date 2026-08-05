@@ -52,16 +52,15 @@ const Shape = {
     h += '<div class="field" style="margin-top:10px"><label class="f">Square size (inches)</label>' +
       '<input type="number" id="sh-cell" min="3" max="48" value="' + esc(num(bed.cell_in, 12)) + '"></div>';
 
-    h += '<div class="row between" style="margin-top:12px"><div><div class="b sm">Companion magnetism</div>' +
-      '<div class="tiny muted">Plants that like each other pull gently into proper spacing while you drag.</div></div>' +
-      '<button class="switch ' + (CanvasDrag.magnet ? "on" : "") + '" id="sh-magnet"></button></div>';
+    /* Companion magnetism used to be buried here. It is a thing you change
+       while you are dragging plants about, not while you are choosing how big
+       the bed is, so it lives on the bed's own toolbar now — 🧲 Snap. */
 
     h += '<button class="btn ghost block" style="margin-top:14px" onclick="Shape.drawStart(\'' + bed.id + '\')">✎ Trace my own outline</button>';
     h += '<button class="btn block" style="margin-top:8px" onclick="Shape.save(\'' + bed.id + '\')">Save</button>';
 
     openSheet("Shape and size", h);
     const g = $("#sh-grid"); if(g) g.onclick = () => g.classList.toggle("on");
-    const m = $("#sh-magnet"); if(m) m.onclick = () => m.classList.toggle("on");
   },
 
   ft(inches){
@@ -90,7 +89,6 @@ const Shape = {
   save(bedId){
     const cell = clamp(num(($("#sh-cell") || {}).value, 12), 3, 48);
     const gridOn = $("#sh-grid") && $("#sh-grid").classList.contains("on") ? 1 : 0;
-    CanvasDrag.magnet = !($("#sh-magnet") && !$("#sh-magnet").classList.contains("on"));
     const bed = Geom.bed(DB.find("beds", bedId));
     /* cols and rows are only the grid overlay now, but the map, the recap
        and the assistant still read them, so keep them honest */

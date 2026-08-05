@@ -41,7 +41,8 @@ const dom = new JSDOM(html, {
 const w = dom.window;
 const G = w.eval("({DB,CROPS,CONDITIONS,Season,Recommend,Garden,Seeds,Cal,Doctor,Journal,Recap,Library,Settings,SqlView,APP,go,iso,today,pairRating,companionsFor,closeSheet,Photos,Vault,Weather,Assist,AI_TOOLS,SOURCES,COND_SRC,VERIFIED,Sources,Updater,BUILD,cropSource,FIELD_CONFIDENCE,CLAIM_NOTES,Varieties,VARIETY_REF,PROVIDERS,Maturity,INFO,TIPS,Tips,Notify,Coach,GUIDE,Help,Onboard,Live,Gmap,FEATURES,Native,Solar,Micro,MicroUI,MicroLog,SECTORS,SECTOR_AZ," +
   "Geom,PlantArt,Canvas,CanvasDrag,Shape,Habit,HABIT_SRC,addDays,diffDays,crop,cropName,FAMILY," +
-  "GARDEN_PLANTS,GARDEN_SRC,PLANT_ROLE,UserCrops,SCHEMA,companionsFor,CROP_ABSENT,CROP_ALIAS})");
+  "GARDEN_PLANTS,GARDEN_SRC,PLANT_ROLE,UserCrops,SCHEMA,companionsFor,CROP_ABSENT,CROP_ALIAS," +
+  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,EV})");
 for(const k of Object.keys(G)) w[k] = G[k];
 const origErr = console.error;
 const JSDOM_NOISE = /^Not implemented:/;
@@ -2107,7 +2108,7 @@ check("the vault carries schema columns and nothing else", () => {
   const dump = JSON.parse(w.DB.exportJSON());
   const SCHEMA_KEYS = {
     beds:["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil",
-          "irrigation","notes","mx","my","rot","created","shape","w_in","h_in","poly","grid_on","snap_in"],
+          "irrigation","notes","mx","my","rot","created","shape","w_in","h_in","poly","grid_on","snap_in","north_deg"],
     plantings:["id","bed_id","x","y","w","h","span_mode","crop_id","variety","variety_id","seed_id",
                "qty","status","sown_on","transplant_on","harvest_from","harvest_to","removed_on",
                "notes","created","px","py","rr","rc","rot","sv"]
@@ -2330,6 +2331,336 @@ w.closeSheet();
 check("sql.js is looked for beside the app before the CDN", () =>
   html.indexOf('SQLJS_LOCAL = "sql/"') > 0 &&
   html.indexOf("for(const base of [SQLJS_LOCAL, SQLJS_CDN])") > 0);
+
+/* ==========================================================================
+   THE BED SCREEN, 2026-08-05
+   Zoom, undo, multi-select, the details button, orientation, bed-aware
+   recommendations, watering groups, saved layouts and calendar export.
+   ========================================================================== */
+const zb = w.DB.insert("beds", { name:"Zoom bed", shape:"rect", w_in:480, h_in:360,
+  cell_in:12, sun_hours:8, grid_on:0, snap_in:0 });
+w.APP.bedId = zb.id;
+const zt = w.Garden.placeAt(zb, 60, 60, "tomato", { mode:"single", silent:true });
+const zbz = w.Garden.placeAt(zb, 90, 60, "basil",  { mode:"single", silent:true });
+const zr = w.Garden.placeAt(zb, 200, 200, "radish", { mode:"single", silent:true });
+
+/* --- zoom is a viewBox change, and only a viewBox change --- */
+check("an unzoomed bed renders exactly the viewBox it always did", () => {
+  w.Zoom.reset();
+  return w.Canvas.svg(w.Geom.bed(w.DB.find("beds", zb.id)), { interactive:true })
+    .includes('viewBox="-5 -5 490 370"'); });
+check("zooming in halves the viewBox rather than transforming the picture", () => {
+  w.Zoom.z = 2; w.Zoom.cx = 240; w.Zoom.cy = 180;
+  const vb = w.Zoom.viewBox(w.Geom.bed(w.DB.find("beds", zb.id)), 5).split(" ").map(Number);
+  return Math.abs(vb[2] - 245) < 0.5 && Math.abs(vb[3] - 185) < 0.5; });
+check("the view never escapes the bed, however far you drag it", () => {
+  w.Zoom.z = 4; w.Zoom.cx = -9000; w.Zoom.cy = 9000;
+  const vb = w.Zoom.viewBox(w.Geom.bed(w.DB.find("beds", zb.id)), 5).split(" ").map(Number);
+  return vb[0] >= -5.01 && vb[1] + vb[3] <= 370.01; });
+check("a touch still lands on the right soil when zoomed in", () => {
+  /* the whole reason zoom is a viewBox change: toIn reads it back */
+  const el = { getBoundingClientRect: () => ({ left:0, top:0, width:400, height:400 }),
+               getAttribute: () => w.Zoom.viewBox(w.Geom.bed(w.DB.find("beds", zb.id)), 5) };
+  w.Zoom.z = 4; w.Zoom.cx = 240; w.Zoom.cy = 180;
+  const p = w.Canvas.toIn(el, 200, 200);
+  return Math.abs(p.x - 240) < 1 && Math.abs(p.y - 180) < 1; });
+check("labels do not grow with the magnification", () =>
+  w.Zoom.textScale() < 0.3 && (w.Zoom.reset(), w.Zoom.textScale() === 1));
+check("leaving the bed leaves its magnification behind", () => {
+  w.Zoom.z = 3; w.Garden.back(); w.APP.bedId = zb.id;
+  return w.Zoom.z === 1; });
+
+/* --- the badges got out of hand --- */
+check("a companion badge is a marker, not a placard", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", zb.id));
+  const r = w.Canvas.badgeR(bed, w.Geom.RC(w.DB.find("plantings", zr.id)), false);
+  return r <= Math.min(w.Geom.W(bed), w.Geom.H(bed)) * 0.021; });
+check("a small plant no longer wears a badge wider than itself", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", zb.id));
+  const p = w.Geom.plant(w.DB.find("plantings", zr.id));
+  return w.Canvas.badgeR(bed, w.Geom.RC(p), false) < w.Geom.RC(p); });
+check("a warning still outranks a heart in size", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", zb.id));
+  return w.Canvas.badgeR(bed, 12, true) > w.Canvas.badgeR(bed, 12, false); });
+
+/* --- the details button --- */
+check("a selected plant offers a details button as well as a handle", () => {
+  w.Garden.sel = zt.id;
+  const svg = w.Canvas.svg(w.Geom.bed(w.DB.find("beds", zb.id)), { interactive:true });
+  return svg.includes('data-menu="' + zt.id + '"') && svg.includes('data-grip="' + zt.id + '"'); });
+check("neither button appears on a bed that is only being looked at", () => {
+  const svg = w.Canvas.svg(w.Geom.bed(w.DB.find("beds", zb.id)), { interactive:false });
+  return !svg.includes("data-menu") && !svg.includes("data-grip"); });
+check("both buttons carry a hit target big enough to hit on a large plot", () => {
+  const svg = w.Canvas.svg(w.Geom.bed(w.DB.find("beds", zb.id)), { interactive:true });
+  const m = svg.match(/class="hitpad" data-menu="[^"]+" cx="[^"]*" cy="[^"]*" r="([\d.]+)"/);
+  return !!m && parseFloat(m[1]) >= Math.min(480, 360) * 0.03; });
+check("tapping a plant that is already selected opens it rather than closing it", () => {
+  /* the bug that made the variety picker look as though it had been removed */
+  w.Garden.sel = zt.id;
+  w.Garden.tapAt(w.Geom.PX(zt), w.Geom.PY(zt));
+  const h = w.document.getElementById("sheet-body").innerHTML || "";
+  return w.Garden.sel === zt.id && h.includes("Garden.pickVariety"); });
+check("the planting sheet still carries the variety picker and the seed packet", () => {
+  w.Garden.plantingSheet(w.DB.find("plantings", zt.id));
+  const h = w.document.getElementById("sheet-body").innerHTML || "";
+  return h.includes("Choose a variety") && h.includes("Seeds to sow"); });
+w.closeSheet();
+
+/* --- undo --- */
+check("removing a plant can be undone, and it comes back as itself", () => {
+  w.Garden.plantingSheet(w.DB.find("plantings", zbz.id));
+  w.DB.update("plantings", zbz.id, { variety:"Genovese", notes:"the good one" });
+  w.Undo.clear();
+  w.Garden.removePlanting(zbz.id, true);
+  const gone = w.DB.find("plantings", zbz.id).status === "removed";
+  w.Undo.go();
+  const back = w.DB.find("plantings", zbz.id);
+  return gone && back.status !== "removed" && back.variety === "Genovese" && back.notes === "the good one"; });
+check("undo restores the exact position after a move", () => {
+  const p = w.Geom.plant(w.DB.find("plantings", zt.id));
+  const x0 = w.Geom.PX(p), y0 = w.Geom.PY(p);
+  w.Undo.clear();
+  w.Undo.push("move", "Moved Tomato", [{ id: zt.id, px: x0, py: y0 }]);
+  w.DB.update("plantings", zt.id, { px: x0 + 40, py: y0 + 40 });
+  w.Undo.go();
+  const q = w.DB.find("plantings", zt.id);
+  return Math.abs(parseFloat(q.px) - x0) < 0.01 && Math.abs(parseFloat(q.py) - y0) < 0.01; });
+check("undoing a planting takes it away completely rather than hiding it", () => {
+  w.Undo.clear();
+  const p = w.Garden.placeAt(w.DB.find("beds", zb.id), 300, 300, "carrot", { mode:"single", silent:true });
+  w.Undo.go();
+  return !w.DB.find("plantings", p.id); });
+check("undo says what it is about to put back", () => {
+  w.Undo.clear();
+  w.Garden.removePlanting(zr.id, true);
+  const said = w.Undo.label();
+  w.Undo.go();
+  return /radish/i.test(said); });
+check("undo on an empty stack does nothing rather than throwing", () => {
+  w.Undo.clear(); w.Undo.go(); return true; });
+check("the stack does not grow without limit", () => {
+  w.Undo.clear();
+  for(let i = 0; i < 60; i++) w.Undo.push("move", "x", [{ id: zt.id, px: i }]);
+  return w.Undo.stack.length === w.Undo.LIMIT; });
+w.Undo.clear();
+
+/* --- multi-select --- */
+check("plants can be gathered into a set", () => {
+  w.Sel.start(); w.Sel.toggle(zt.id); w.Sel.toggle(zr.id);
+  return w.Sel.count() === 2 && w.Sel.has(zt.id); });
+check("tapping one already in the set takes it out again", () => {
+  w.Sel.toggle(zr.id); return w.Sel.count() === 1 && !w.Sel.has(zr.id); });
+check("the set can be filled from one crop", () => {
+  w.Garden.placeAt(w.DB.find("beds", zb.id), 150, 90, "tomato", { mode:"single", silent:true });
+  w.Sel.clear(true); w.Sel.toggle(zt.id); w.Sel.sameCrop();
+  return w.Sel.count() === 2 && w.Sel.list().every(p => p.crop_id === "tomato"); });
+check("a marked plant is drawn as marked", () => {
+  const svg = w.Canvas.svg(w.Geom.bed(w.DB.find("beds", zb.id)), { interactive:true });
+  return svg.includes("markring"); });
+check("removing a set is one undo, not eight", () => {
+  w.Sel.clear(true); w.Sel.all();
+  const n = w.Sel.count();
+  w.Undo.clear();
+  const ps = w.Sel.list();
+  w.Undo.push("remove", "Removed " + n, ps.map(p => ({ id:p.id, status:p.status, removed_on:p.removed_on || null })));
+  ps.forEach(p => w.Garden.removePlanting(p.id, true, true));
+  const allGone = w.Geom.live(zb.id).length === 0;
+  w.Undo.go();
+  return allGone && w.Geom.live(zb.id).length === n && w.Undo.stack.length === 0; });
+check("duplicating a set keeps every variety and puts them in free ground", () => {
+  w.Sel.clear(true); w.Sel.toggle(zbz.id);
+  const before = w.Geom.live(zb.id).length;
+  w.Sel.duplicateAll();
+  const made = w.Geom.live(zb.id).length - before;
+  const copy = w.Geom.live(zb.id).filter(p => p.crop_id === "basil" && p.id !== zbz.id)[0];
+  return made === 1 && copy && copy.variety === "Genovese"; });
+w.Undo.go();
+w.Sel.stop();
+
+/* --- which way the bed faces --- */
+check("a bed with no orientation set behaves exactly as it always did", () => {
+  const b = w.DB.find("beds", zb.id);
+  return w.Orient.of(b) === 0; });
+check("north-up: a plant north of a tall one is in its shadow", () => {
+  const b = w.Geom.bed(w.DB.find("beds", zb.id));
+  const tall = { px: 100, py: 100, crop_id:"corn", id:"t" };
+  const low  = { px: 100, py: 60,  crop_id:"lettuce", id:"l" };
+  return w.Orient.shaded(b, tall, low); });
+check("and a plant on the sunny side of it is not", () => {
+  const b = w.Geom.bed(w.DB.find("beds", zb.id));
+  const tall = { px: 100, py: 100, crop_id:"corn", id:"t" };
+  const low  = { px: 100, py: 140, crop_id:"lettuce", id:"l" };
+  return !w.Orient.shaded(b, tall, low); });
+check("turning the bed a quarter turn turns the shadow with it", () => {
+  w.DB.update("beds", zb.id, { north_deg: 90 });
+  const b = w.Geom.bed(w.DB.find("beds", zb.id));
+  const tall = { px: 100, py: 100, crop_id:"corn", id:"t" };
+  /* top of the drawing now points east, so compass-north is to the LEFT */
+  const upDrawing = { px: 100, py: 60,  crop_id:"lettuce", id:"l" };
+  const leftward  = { px: 60,  py: 100, crop_id:"lettuce", id:"l2" };
+  const r = !w.Orient.shaded(b, tall, upDrawing) && w.Orient.shaded(b, tall, leftward);
+  w.DB.update("beds", zb.id, { north_deg: 0 });
+  return r; });
+check("the shade check no longer reports a plant standing in the sun", () => {
+  const sb = w.DB.insert("beds", { name:"Shade bed", shape:"rect", w_in:120, h_in:120, cell_in:12, sun_hours:8 });
+  w.Garden.placeAt(sb, 60, 90, "corn", { mode:"single", silent:true });
+  w.Garden.placeAt(sb, 60, 108, "lettuce", { mode:"single", silent:true });   /* south of it */
+  return w.Recommend.shading(sb.id, w.addDays(w.today(), 60)).length === 0; });
+check("hemisphere comes from the stored latitude and is not hardcoded", () => {
+  const was = w.DB.get("lat", null);
+  w.DB.set("lat", -33.9);
+  const south = w.Orient.sunAz();
+  w.DB.set("lat", 40.1);
+  const north = w.Orient.sunAz();
+  if(was === null) w.DB.set("lat", null); else w.DB.set("lat", was);
+  return south === 0 && north === 180; });
+
+/* --- what would go well here --- */
+check("an empty bed is not told what would go well with nothing", () => {
+  const eb = w.DB.insert("beds", { name:"Empty", shape:"rect", w_in:96, h_in:96, cell_in:12, sun_hours:8 });
+  return w.BedRecs.forBed(eb.id).length === 0; });
+check("recommendations are built from what is already planted", () => {
+  const rb = w.DB.insert("beds", { name:"Rec bed", shape:"rect", w_in:144, h_in:144, cell_in:12, sun_hours:8 });
+  w.Garden.placeAt(rb, 30, 30, "tomato", { mode:"single", silent:true });
+  const recs = w.BedRecs.forBed(rb.id);
+  return recs.length > 0 && recs.every(r => r.partners.length > 0) &&
+         recs.some(r => r.crop.id === "basil"); });
+check("every suggestion names the plant it would be joining, and why", () => {
+  const rb = w.DB.all("beds").filter(b => b.name === "Rec bed")[0];
+  const r = w.BedRecs.forBed(rb.id)[0];
+  return r.partners[0].id === "tomato" && r.partners[0].why.length > 0 &&
+         /tomato/i.test(w.BedRecs.line(r)); });
+check("nothing that fights what is planted is ever suggested", () => {
+  const rb = w.DB.all("beds").filter(b => b.name === "Rec bed")[0];
+  const recs = w.BedRecs.forBed(rb.id).map(r => r.crop.id);
+  /* the crop table names these as tomato's foes */
+  return recs.indexOf("cabbage") < 0 && recs.indexOf("fennel") < 0 && recs.indexOf("potato") < 0; });
+check("a crop already in the bed is not suggested for it again", () => {
+  const rb = w.DB.all("beds").filter(b => b.name === "Rec bed")[0];
+  return w.BedRecs.forBed(rb.id).every(r => r.crop.id !== "tomato"); });
+check("the bed screen shows the list under the plot", () => {
+  const rb = w.DB.all("beds").filter(b => b.name === "Rec bed")[0];
+  w.APP.bedId = rb.id; w.Garden.render();
+  const h = w.document.getElementById("s-garden").innerHTML;
+  return h.includes("Would go well here") && /Goes with/.test(h); });
+
+/* --- watering, grouped --- */
+check("crops are banded by the water figure the bed verdict already uses", () => {
+  return w.WaterGroups.band("mint").k === "high" &&
+         w.WaterGroups.band("tomato").k === "med" &&
+         w.WaterGroups.band("rosemary").k === "low"; });
+check("a bed whose plants all want the same is not lectured about it", () => {
+  const wb2 = w.DB.insert("beds", { name:"Even bed", shape:"rect", w_in:96, h_in:96, cell_in:12, sun_hours:8 });
+  w.Garden.placeAt(wb2, 24, 24, "tomato", { mode:"single", silent:true });
+  w.Garden.placeAt(wb2, 60, 24, "cucumber", { mode:"single", silent:true });
+  return w.WaterGroups.html(wb2.id) === ""; });
+check("a mixed bed says who wants a soak and who wants leaving alone", () => {
+  const wb3 = w.DB.insert("beds", { name:"Mixed bed", shape:"rect", w_in:96, h_in:96, cell_in:12, sun_hours:8 });
+  w.Garden.placeAt(wb3, 24, 24, "celery", { mode:"single", silent:true });
+  w.Garden.placeAt(wb3, 70, 70, "rosemary", { mode:"single", silent:true });
+  const h = w.WaterGroups.html(wb3.id);
+  return /Thirsty/.test(h) && /Sparing/.test(h) && /Celery/.test(h) && /Rosemary/.test(h); });
+
+/* --- saved bed layouts --- */
+check("a bed can be saved with its plants, variety and spacing", () => {
+  const tb = w.DB.insert("beds", { name:"Template bed", shape:"rect", w_in:96, h_in:192, cell_in:12, sun_hours:8 });
+  w.APP.bedId = tb.id;
+  const tp = w.Garden.placeAt(tb, 24, 48, "tomato", { mode:"single", silent:true });
+  w.DB.update("plantings", tp.id, { variety:"Mountain Fresh" });
+  const t = w.Templates.save(tb.id, "My best bed");
+  return t && t.plants.length === 1 && t.plants[0].variety === "Mountain Fresh" &&
+         Math.abs(t.plants[0].fx - 0.25) < 0.01 && Math.abs(t.plants[0].fy - 0.25) < 0.01; });
+check("a saved layout lands in the same arrangement in a differently sized bed", () => {
+  const t = w.Templates.all()[0];
+  const nb2 = w.DB.insert("beds", { name:"Different", shape:"rect", w_in:48, h_in:96, cell_in:12, sun_hours:8 });
+  w.Templates.apply(t, nb2.id);
+  const p = w.Geom.live(nb2.id)[0];
+  return p && Math.abs(w.Geom.PX(p) - 12) < 2 && Math.abs(w.Geom.PY(p) - 24) < 2; });
+check("a saved layout never carries last year's dates into this year", () => {
+  const nb3 = w.DB.insert("beds", { name:"Fresh", shape:"rect", w_in:96, h_in:192, cell_in:12, sun_hours:8 });
+  w.Templates.apply(w.Templates.all()[0], nb3.id);
+  const p = w.Geom.live(nb3.id)[0];
+  return p.sown_on === w.iso(w.today()) && p.status === "planned"; });
+check("and it manufactures no harvest or maturity record", () => {
+  const before = w.DB.count("maturity") + w.DB.count("harvests");
+  const nb4 = w.DB.insert("beds", { name:"Fresh 2", shape:"rect", w_in:96, h_in:192, cell_in:12, sun_hours:8 });
+  w.Templates.apply(w.Templates.all()[0], nb4.id);
+  return w.DB.count("maturity") + w.DB.count("harvests") === before; });
+check("laying out a saved bed is one undo", () => {
+  const nb5 = w.DB.insert("beds", { name:"Fresh 3", shape:"rect", w_in:96, h_in:192, cell_in:12, sun_hours:8 });
+  w.Templates.apply(w.Templates.all()[0], nb5.id);
+  w.Undo.go();
+  return w.Geom.live(nb5.id).length === 0; });
+check("a new bed can be started from a saved one", () => {
+  const b = w.Templates.create(w.Templates.all()[0].id);
+  return b && w.Geom.W(b) === 96 && w.Geom.live(b.id).length === 1; });
+check("a layout naming a crop that no longer exists is skipped, not fatal", () => {
+  const list = w.Templates.all();
+  list[0].plants.push({ crop_id:"nosuchcrop", fx:0.5, fy:0.5, rr:6, rc:8, qty:1 });
+  w.Templates.write(list);
+  const nb6 = w.DB.insert("beds", { name:"Fresh 4", shape:"rect", w_in:96, h_in:192, cell_in:12, sun_hours:8 });
+  return w.Templates.apply(w.Templates.all()[0], nb6.id) === 1; });
+
+/* --- calendar export --- */
+check("the export is a valid iCalendar envelope", () => {
+  const ics = w.CalSync.ics({ to: w.addDays(w.today(), 400) });
+  return ics.startsWith("BEGIN:VCALENDAR\r\n") && ics.trim().endsWith("END:VCALENDAR") &&
+         ics.includes("VERSION:2.0") && ics.includes("PRODID:"); });
+check("dates are all-day, because a sowing window is a day and not nine in the morning", () => {
+  const ics = w.CalSync.ics({ to: w.addDays(w.today(), 400) });
+  return ics.includes("DTSTART;VALUE=DATE:") && !ics.includes("DTSTART:"); });
+check("every event carries a stable id so a second import updates rather than doubles", () => {
+  const a = w.CalSync.ics({ to: w.addDays(w.today(), 400) });
+  const b = w.CalSync.ics({ to: w.addDays(w.today(), 400) });
+  const uids = s => (s.match(/^UID:.*$/gm) || []).sort().join("|");
+  return uids(a).length > 0 && uids(a) === uids(b); });
+check("commas and semicolons in a note cannot break the file", () => {
+  w.DB.insert("events", { title:"Feed; mulch, then water", date: w.iso(w.addDays(w.today(), 3)),
+    type:"task", done:"0", notes:"one, two; three\nfour" });
+  const ics = w.CalSync.ics({ to: w.addDays(w.today(), 400) });
+  return ics.includes("Feed\\; mulch\\, then water") && ics.includes("\\n"); });
+check("no line runs past the 75 octets the spec allows", () => {
+  w.DB.insert("events", { title: "x".repeat(300), date: w.iso(w.addDays(w.today(), 4)), type:"task", done:"0" });
+  const ics = w.CalSync.ics({ to: w.addDays(w.today(), 400) });
+  return ics.split("\r\n").every(l => l.length <= 75); });
+check("a folded line continues with a space, so it unfolds back to itself", () => {
+  const ics = w.CalSync.ics({ to: w.addDays(w.today(), 400) });
+  const unfolded = ics.replace(/\r\n /g, "");
+  return unfolded.includes("SUMMARY:" + "📌 " + "x".repeat(300)) ||
+         unfolded.includes("x".repeat(300)); });
+check("filtering by kind is honoured", () => {
+  const only = w.CalSync.ics({ types:["frost"], to: w.addDays(w.today(), 400) });
+  return only.includes("CATEGORIES:Frost date") && !only.includes("CATEGORIES:Harvest window"); });
+check("a single date can go straight to Google without a key or a login of ours", () => {
+  const e = w.DB.all("events").filter(x => x.date)[0];
+  const u = w.CalSync.googleUrl(e);
+  return u.startsWith("https://calendar.google.com/calendar/render?action=TEMPLATE") &&
+         /dates=\d{8}%2F\d{8}/.test(u); });
+check("the sheet is honest that this is a file and not an account connection", () => {
+  w.CalSync.sheet();
+  const h = w.document.getElementById("sheet-body").innerHTML || "";
+  return /no server/i.test(h) && /import/i.test(h); });
+w.closeSheet();
+
+/* --- the toolbar carries what it claims to --- */
+check("the snap toggle is on the bed toolbar, not buried in the shape sheet", () => {
+  w.APP.bedId = zb.id; w.Garden.render();
+  const h = w.document.getElementById("s-garden").innerHTML;
+  w.Shape.open(zb.id);
+  const sheet = w.document.getElementById("sheet-body").innerHTML || "";
+  w.closeSheet();
+  return h.includes("Garden.toggleMagnet") && !sheet.includes("sh-magnet"); });
+check("the magnet setting survives a restart", () => {
+  const was = w.CanvasDrag.magnet;
+  w.Garden.toggleMagnet();
+  const stored = w.DB.get("magnet", "1");
+  w.CanvasDrag.magnet = !w.CanvasDrag.magnet;      /* pretend a reload */
+  w.Garden.loadMagnet();
+  const ok2 = w.CanvasDrag.magnet === (stored !== "0");
+  if(w.CanvasDrag.magnet !== was) w.Garden.toggleMagnet();
+  return ok2; });
+w.APP.bedId = null; w.Garden.setView("beds"); w.Undo.clear();
 
 w.DB.set("aiProvider", savedProv || "gemini");
 w.DB.set("gemKey", savedGem || ""); w.DB.set("aiKey", savedAi || "");

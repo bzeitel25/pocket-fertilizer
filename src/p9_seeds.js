@@ -573,7 +573,10 @@ const Cal = {
     /* upcoming list */
     const upcoming = evs.filter(e => e.date && diffDays(today(), parseISO(e.date)) >= -14)
       .sort((a,b) => a.date < b.date ? -1 : 1).slice(0, 40);
-    h += '<div class="sec"><h2>What is next</h2><button class="tiny b" onclick="Cal.addTask()">＋ Task</button></div>';
+    h += '<div class="row wrap" style="gap:6px;margin-top:10px">' +
+      '<button class="chip" onclick="CalSync.sheet()">🗓️ Sync to my calendar</button>' +
+      '<button class="chip" onclick="Cal.addTask()">＋ Task</button></div>';
+    h += '<div class="sec"><h2>What is next</h2><span class="tiny muted">' + upcoming.length + '</span></div>';
     if(!upcoming.length) h += '<div class="card center muted sm">Nothing scheduled yet. Add packets to your seed bank.</div>';
     else {
       h += '<div class="card"><div class="tl">';
@@ -628,6 +631,9 @@ const Cal = {
       (e.done === "1" ? "Mark not done" : "✓ Mark done") + '</button>';
     if(c) h += '<button class="btn ghost" onclick="closeSheet();setTimeout(function(){Library.open(\'' + c.id + '\')},250)">Guide</button>';
     h += '</div>';
+    /* one date, straight into Google — their compose URL needs no key,
+       because the person is already signed in to their own calendar */
+    h += '<button class="btn ghost block" style="margin-top:8px" onclick="CalSync.addOne(\'' + e.id + '\')">🗓️ Add this to Google Calendar</button>';
     if(!e.auto) h += '<button class="btn ghost block danger" style="margin-top:8px" onclick="DB.remove(\'events\',\'' + e.id + '\');closeSheet();Cal.render()">Delete task</button>';
     openSheet("Calendar entry", h);
   },

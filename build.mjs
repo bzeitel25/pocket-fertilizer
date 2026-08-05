@@ -86,7 +86,15 @@ const REQUIRED = [
   ["const GUIDE",      "the in-app guide"],
   ["const Notify",     "daily reminders"],
   ["const Vision",     "the shared camera/AI path"],
-  ["const Native",     "the store-build behaviour"]
+  ["const Native",     "the store-build behaviour"],
+  ["const Zoom",       "pinch zoom and pan on the bed"],
+  ["const Undo",       "undo on the bed"],
+  ["const Sel",        "multi-select"],
+  ["const BedRecs",    "what would go well in this bed"],
+  ["const WaterGroups","watering grouped by need"],
+  ["const Orient",     "which way a bed faces"],
+  ["const Templates",  "saved bed layouts"],
+  ["const CalSync",    "calendar export"]
 ];
 const lost = REQUIRED.filter(([marker]) => html.indexOf(marker) < 0);
 if (lost.length && process.argv.indexOf("--force") < 0) {

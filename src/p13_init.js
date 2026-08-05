@@ -102,6 +102,9 @@ async function boot2(firstRun){
   const savedTheme = DB.get("theme");
   if(savedTheme) applyTheme(savedTheme);
 
+  /* stored preferences that used to reset every launch */
+  Garden.loadMagnet();
+
   /* wire chrome */
   $$("nav.tabs button").forEach(b => b.onclick = () => { haptic(); go(b.dataset.tab); });
   $("#btn-theme").onclick = toggleTheme;

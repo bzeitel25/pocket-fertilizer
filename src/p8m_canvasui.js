@@ -55,15 +55,27 @@ Object.assign(Garden, {
            '<button class="chip" onclick="Shape.open()">' + sh.e + ' Shape</button>';
     }
     h += '<button class="chip' + (num(bed.grid_on) ? " on" : "") + '" onclick="Garden.toggleGrid()">▦ Grid</button>' +
+         /* Companion magnetism lived inside the shape sheet, which is a place
+            you go to decide how big the bed is — not somewhere you want to be
+            while you are dragging plants around. It belongs here. */
+         '<button class="chip' + (CanvasDrag.magnet ? " on" : "") + '" onclick="Garden.toggleMagnet()">🧲 Snap</button>' +
          '<button class="chip' + (Canvas.showRoots ? " on" : "") + '" onclick="Canvas.showRoots=!Canvas.showRoots;Garden.render()">⊙ Roots</button>' +
-         '<button class="chip' + (Canvas.wantLabels(bed) ? " on" : "") + '" onclick="Garden.toggleLabels()">🏷️ Names</button>';
+         '<button class="chip' + (Canvas.wantLabels(bed) ? " on" : "") + '" onclick="Garden.toggleLabels()">🏷️ Names</button>' +
+         '<button class="chip' + (Sel.on ? " on" : "") + '" onclick="Sel.on?Sel.stop():Sel.start()">☑︎ Select</button>' +
+         Zoom.chip() + Undo.chip();
     h += '</div>';
+    h += Sel.bar();
 
     /* ---- the canvas ---- */
     h += '<div class="canvaswrap" id="cvhost" style="margin-top:10px">' +
+      '<span class="zoomtag" id="zoomtag" style="display:none">100%</span>' +
       Canvas.svg(bed, { interactive:true, when: when }) + '</div>';
-    h += '<div class="tiny muted center" style="margin-top:6px">Tap bare soil to plant. Press and hold a plant to drag it anywhere — ' +
-      'the ring shows how wide it will get, and you can drag the white handle on a selected plant to resize it.</div>';
+    h += '<div class="tiny muted center" style="margin-top:6px">' +
+      (Sel.on
+        ? 'Tap plants to gather them up, then press and hold any of them to move the group.'
+        : 'Tap bare soil to plant, or a plant to open its details. Press and hold a plant to drag it anywhere — ' +
+          'drag the white handle to resize it, and the ⋯ button beside it opens the variety and everything else. ' +
+          'Pinch to zoom in on the small ones.') + '</div>';
 
     /* ---- the scrubber ---- */
     h += '<div class="tlwrap"><div class="tlhead">' +
@@ -91,7 +103,8 @@ Object.assign(Garden, {
         cropEmoji(s.tall.crop_id) + ' <b>' + esc(cropName(s.tall.crop_id)) + '</b> reaches about ' +
         Geom.height(s.tall.crop_id) + '" and will stand over ' + cropEmoji(s.low.crop_id) + ' <b>' +
         esc(cropName(s.low.crop_id)) + '</b>, which wants ' + crop(s.low.crop_id).sun +
-        'h of sun. Move it to the sunny side, or swap in something that tolerates shade.</div>');
+        'h of sun' + (s.side ? ' and sits to the ' + esc(s.side) + ' of it' : '') +
+        '. Move it to the sunny side, or swap in something that tolerates shade.</div>');
       const seenGuild = {};
       good.slice(0, 4).forEach(s => {
         const k = s.tall.crop_id + "|" + s.low.crop_id;
@@ -163,8 +176,14 @@ Object.assign(Garden, {
       if(heavy.length) h += '<div class="note w" style="margin-top:10px">🌿 Heavy feeders here (' +
         esc(heavy.map(c => c.n).filter((v,i,a) => a.indexOf(v) === i).join(", ")) +
         '). Side-dress with compost or a balanced organic feed every 3–4 weeks.</div>';
+      /* the bed verdict is set by the thirstiest crop in it, which is how a
+         bed of lettuce and rosemary ends up watered to suit the lettuce */
+      h += WaterGroups.html(bed.id);
       h += '</div>';
     }
+
+    /* ---- what else belongs in this bed ---- */
+    h += BedRecs.html(bed);
 
     /* ---- rotation ---- */
     const fams = Recommend.recentFamilies(bed.id);
@@ -215,7 +234,11 @@ Object.assign(Garden, {
     Garden.render();
   },
 
-  back(){ APP.bedId = null; Garden.sel = null; Garden.tl = 0; Garden.render(); }
+  back(){
+    APP.bedId = null; Garden.sel = null; Garden.tl = 0;
+    if(typeof Sel !== "undefined"){ Sel.on = false; Sel.ids = {}; }
+    Garden.render();
+  }
 });
 
 /* ============================================================

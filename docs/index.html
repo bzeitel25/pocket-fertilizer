@@ -652,8 +652,12 @@ const SCHEMA = {
      kept because the square-foot grid is still offered as an overlay and as a
      snapping step, and because every bed made before the canvas existed is
      described that way — see Geom.bed, which migrates one lazily on read. */
+  /* north_deg is the compass bearing the TOP of the drawing points at. It is
+     what turns "who is standing in whose light" from an assumption that the
+     gardener drew the bed north-up into an actual answer. 0 is north-up, so
+     every bed made before it existed keeps behaving as it did. */
   beds:       ["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil","irrigation","notes","mx","my","rot","created",
-               "shape","w_in","h_in","poly","grid_on","snap_in"],
+               "shape","w_in","h_in","poly","grid_on","snap_in","north_deg"],
   /* px,py are the plant's centre in inches from the bed's top-left. rr is the
      root radius it needs to itself, rc the spread of its mature foliage; the
      two are drawn separately because overlapping leaves are fine and
@@ -4733,7 +4737,16 @@ const PlantArt = (() => {
 .pl{cursor:pointer}
 .pl.sel .canring{stroke-width:0.9;stroke-dasharray:none}
 .pl.ghosted{opacity:.55}
+.pl.marked .markring{stroke-dasharray:2 1.4}
 .grip{cursor:nwse-resize}
+.pmenu{cursor:pointer}
+.hitpad{cursor:pointer}
+.canvaswrap svg.zoomed{touch-action:none;cursor:grab}
+.zoomtag{position:absolute;right:14px;top:14px;z-index:4;background:rgba(20,16,12,.72);
+  color:#fff;border-radius:999px;padding:3px 10px;font-size:.68rem;font-weight:700;
+  letter-spacing:.02em;pointer-events:none}
+.selbar{margin-top:8px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:14px;padding:10px 12px}
 .cvbar{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .cvbar .chip{flex:0 0 auto}
 .tlwrap{margin-top:12px;background:var(--surface-2);border:1px solid var(--line);
@@ -4779,6 +4792,25 @@ const Canvas = {
   iconR(bed, rc, grown){
     const floor = Math.min(Geom.W(bed), Geom.H(bed)) * 0.055;
     return Math.round(Math.max(rc * grown * 0.62, floor) * 10) / 10;
+  },
+
+  /* How big a companion badge should be.
+     This was a flat `Math.max(2.4, rc * 0.42)` — a radius in *inches*, with a
+     hard 2.4" floor. On a radish that is a badge nearly as wide as the plant,
+     so a bed of small crops turned into a field of hearts and told you less
+     than the plants themselves did. It is a fraction of the bed now, which
+     means a constant small size on screen whatever the plot measures, with a
+     warning allowed to be a little larger than a heart because a warning is
+     the one you must not miss. */
+  badgeR(bed, rc, bad){
+    const span = Math.min(Geom.W(bed), Geom.H(bed));
+    const ts = typeof Zoom !== "undefined" ? Zoom.textScale() : 1;
+    const p = num(rc, 6);
+    /* the floor keeps a badge visible on a big plot; the cap against the
+       plant's own canopy is the point of the whole change — a marker that is
+       wider than the thing it marks tells you nothing you wanted to know */
+    const r = Math.min(clamp(p * 0.26, span * 0.009, span * 0.020), p * 0.6) * ts;
+    return Math.round((bad ? r * 1.3 : r) * 100) / 100;
   },
 
   wantLabels(bed){
@@ -4837,7 +4869,13 @@ const Canvas = {
     const inter = !!o.interactive;
     const clip = "clip-" + bed.id;
 
-    let h = '<svg viewBox="' + (-P) + ' ' + (-P) + ' ' + (W + P*2) + ' ' + (H + P*2) +
+    /* Zoom is a viewBox change and nothing else. Canvas.toIn reads the live
+       viewBox off the element, so every gesture in the app — tap, drag,
+       resize, the buttons — stays correct at any magnification for free. A
+       CSS transform would have broken all of them. At 1× this emits exactly
+       the string it always did. */
+    const vb = (inter && typeof Zoom !== "undefined") ? Zoom.viewBox(bed, P) : null;
+    let h = '<svg viewBox="' + (vb || ((-P) + ' ' + (-P) + ' ' + (W + P*2) + ' ' + (H + P*2))) +
       '" xmlns="http://www.w3.org/2000/svg"' + (inter ? ' id="pcanvas"' : '') + '>';
     h += '<defs>' + Canvas.soilDefs(bed) +
       '<clipPath id="' + clip + '">' + Canvas.bedShapeSVG(bed, '') + '</clipPath></defs>';
@@ -4867,11 +4905,18 @@ const Canvas = {
       const g = PlantArt.growth(p, when);
       const grown = Math.max(0.18, PlantArt.sizeAt(g));
       const over = ps.slice(0, i).some(q => Geom.dist(p, q) < rc + Geom.RC(q) - 0.5);
-      const sel = Garden.sel === p.id;
+      const marked = typeof Sel !== "undefined" && Sel.has(p.id);
+      const sel = Garden.sel === p.id && !marked;
       const f = flags[p.id] || {};
 
-      h += '<g class="pl' + (sel ? " sel" : "") + (over ? " ghosted" : "") + '" data-pid="' + p.id +
+      h += '<g class="pl' + (sel ? " sel" : "") + (marked ? " marked" : "") + (over ? " ghosted" : "") +
+           '" data-pid="' + p.id +
            '" transform="translate(' + (Math.round(px*10)/10) + ' ' + (Math.round(py*10)/10) + ')">';
+
+      if(marked)
+        h += '<circle class="markring" r="' + (Math.round(rc * grown * 1.06 * 10) / 10) +
+             '" fill="none" stroke="#f0a500" stroke-width="' +
+             (Math.round(Math.max(0.4, Math.min(Geom.W(bed), Geom.H(bed)) * 0.006) * 100) / 100) + '"/>';
 
       if(Canvas.showCanopy && g >= 0)
         h += '<circle class="canring" r="' + (Math.round(rc * grown * 10) / 10) +
@@ -4893,18 +4938,36 @@ const Canvas = {
              '" fill="#fff" fill-opacity="0.82" font-weight="700">×' + num(p.qty, 1) + '</text>';
 
       if(f.bad || f.good){
-        const bs = Math.max(2.4, rc * 0.42);
-        h += '<g transform="translate(' + (Math.round(rc*0.68*10)/10) + ' ' + (-Math.round(rc*0.68*10)/10) + ')">' +
-          '<circle r="' + bs + '" fill="' + (f.bad ? "#c9453c" : "#2a8c5e") + '"/>' +
-          '<text y="' + (bs * 0.38) + '" text-anchor="middle" font-size="' + (bs * 1.15) +
-          '" fill="#fff">' + (f.bad ? "!" : "♥") + '</text></g>';
+        const bs = Canvas.badgeR(bed, rc, f.bad);
+        /* outboard of the canopy, so it sits beside the plant rather than on it */
+        const bo = Math.round((rc * grown + bs * 0.9) * 0.7071 * 10) / 10;
+        h += '<g class="cbadge" transform="translate(' + bo + ' ' + (-bo) + ')">' +
+          '<circle r="' + bs + '" fill="' + (f.bad ? "#c9453c" : "#2a8c5e") +
+          '" stroke="#fff" stroke-opacity="0.55" stroke-width="' + (Math.round(bs*0.18*100)/100) + '"/>' +
+          '<text y="' + (Math.round(bs * 0.38 * 100) / 100) + '" text-anchor="middle" font-size="' +
+          (Math.round(bs * 1.15 * 100) / 100) + '" fill="#fff">' + (f.bad ? "!" : "♥") + '</text></g>';
       }
 
       if(sel && inter){
-        const gx = rc * 0.7071, gy = rc * 0.7071;
-        h += '<circle class="grip" data-grip="' + p.id + '" cx="' + (Math.round(gx*10)/10) +
-             '" cy="' + (Math.round(gy*10)/10) + '" r="' + Math.max(2, rc * 0.2) +
-             '" fill="#fff" stroke="#2a8c5e" stroke-width="0.5"/>';
+        /* Both buttons are drawn in garden inches, so on a forty-foot plot a
+           radish's handle would be two screen pixels. Each gets an invisible
+           hit circle with a bed-relative floor behind it — zoom is the real
+           cure, this is the belt. */
+        const gx = Math.round(rc * 0.7071 * 10) / 10;
+        const br = Math.max(2, rc * 0.2);
+        const tap = Math.max(br, Math.min(Geom.W(bed), Geom.H(bed)) * 0.035);
+        h += '<circle class="hitpad" data-grip="' + p.id + '" cx="' + gx + '" cy="' + gx +
+             '" r="' + (Math.round(tap*10)/10) + '" fill="transparent"/>' +
+             '<circle class="grip" data-grip="' + p.id + '" cx="' + gx + '" cy="' + gx +
+             '" r="' + (Math.round(br*10)/10) + '" fill="#fff" stroke="#2a8c5e" stroke-width="0.5"/>';
+        /* …and its twin bottom-left: everything about this plant — variety,
+           how many, which packet, dates, notes. */
+        h += '<circle class="hitpad" data-menu="' + p.id + '" cx="' + (-gx) + '" cy="' + gx +
+             '" r="' + (Math.round(tap*10)/10) + '" fill="transparent"/>' +
+             '<g class="pmenu" data-menu="' + p.id + '" transform="translate(' + (-gx) + ' ' + gx + ')">' +
+             '<circle r="' + (Math.round(br*10)/10) + '" fill="#fff" stroke="#2a8c5e" stroke-width="0.5"/>' +
+             '<text y="' + (Math.round(br*0.34*10)/10) + '" text-anchor="middle" font-size="' +
+             (Math.round(br*1.25*10)/10) + '" fill="#2a8c5e" font-weight="700">⋯</text></g>';
       }
       h += '</g>';
     });
@@ -4914,7 +4977,8 @@ const Canvas = {
       h += '<g class="labels" pointer-events="none">';
       ps.forEach(p => {
         const rc = Geom.RC(p);
-        const fs = clamp(Math.min(W, H) * 0.045, 2.1, 4.2);
+        const fs = clamp(Math.min(W, H) * 0.045, 2.1, 4.2) *
+          (inter && typeof Zoom !== "undefined" ? Zoom.textScale() : 1);
         const grown = Math.max(0.18, PlantArt.sizeAt(PlantArt.growth(p, when)));
         const below = Math.max(rc * grown, Canvas.iconR(bed, rc, grown) * 1.15);
         h += '<text x="' + (Math.round(Geom.PX(p)*10)/10) + '" y="' +
@@ -5010,6 +5074,7 @@ Object.assign(Garden, {
       w: 1, h: 1
     });
     if(!o.silent) toast(cropName(cropId) + " planted");
+    if(!o.noUndo) Undo.push("place", "Planted " + cropName(cropId), [{ id: p.id, created: true }]);
     Cal.forPlanting(p);
     return p;
   },
@@ -5076,11 +5141,18 @@ Object.assign(Garden, {
     Garden.render();
   },
 
-  removePlanting(id, silent){
+  /* A removal is a soft delete — status goes to "removed" and the row stays —
+     so putting one back is a matter of clearing two fields. That is what makes
+     undo honest here rather than a re-creation that quietly loses the variety,
+     the packet it came from and the date it went in. */
+  removePlanting(id, silent, noUndo){
+    const p = DB.find("plantings", id); if(!p) return;
+    if(!noUndo) Undo.push("remove", "Removed " + cropName(p.crop_id),
+      [{ id: id, status: p.status || "planned", removed_on: p.removed_on || null }]);
     DB.update("plantings", id, { status:"removed", removed_on: iso(today()) });
     DB.bulkRemove("events", e => e.planting_id === id && e.done !== "1");
     if(Garden.sel === id) Garden.sel = null;
-    if(!silent){ closeSheet(); Garden.render(); toast("Removed"); }
+    if(!silent){ closeSheet(); Garden.render(); toast("Removed", 3200); }
   },
 
   /* ---------- taps ---------- */
@@ -5089,13 +5161,19 @@ Object.assign(Garden, {
     const bed = Geom.bed(DB.find("beds", APP.bedId)); if(!bed) return;
     const ex = Garden.hit(bed.id, px, py);
 
+    if(typeof Sel !== "undefined" && Sel.on){ if(ex) Sel.toggle(ex.id); return; }
     if(Garden.clip){ if(!ex) Garden.pasteAt(px, py); else toast("Something is already there"); return; }
     if(Garden.erase){ if(ex){ Garden.removePlanting(ex.id, true); Garden.render(); } return; }
     if(Garden.paint){ Garden.placeAt(bed, px, py, Garden.paint, { silent:true }); Garden.render(); return; }
     if(ex){
-      Garden.sel = (Garden.sel === ex.id) ? null : ex.id;
+      /* Tapping a plant used to TOGGLE selection, and the details sheet only
+         opened on the tap that selected. A freshly placed plant is already
+         selected, so the very next tap deselected it and nothing opened —
+         which is why the variety picker looked as though it had been removed.
+         A tap on a plant always opens that plant. Bare soil deselects. */
+      Garden.sel = ex.id;
       Garden.render();
-      if(Garden.sel) Garden.plantingSheet(ex);
+      Garden.plantingSheet(ex);
       return;
     }
     Garden.sel = null;
@@ -5315,15 +5393,27 @@ Object.assign(Garden, {
            '<button class="chip" onclick="Shape.open()">' + sh.e + ' Shape</button>';
     }
     h += '<button class="chip' + (num(bed.grid_on) ? " on" : "") + '" onclick="Garden.toggleGrid()">▦ Grid</button>' +
+         /* Companion magnetism lived inside the shape sheet, which is a place
+            you go to decide how big the bed is — not somewhere you want to be
+            while you are dragging plants around. It belongs here. */
+         '<button class="chip' + (CanvasDrag.magnet ? " on" : "") + '" onclick="Garden.toggleMagnet()">🧲 Snap</button>' +
          '<button class="chip' + (Canvas.showRoots ? " on" : "") + '" onclick="Canvas.showRoots=!Canvas.showRoots;Garden.render()">⊙ Roots</button>' +
-         '<button class="chip' + (Canvas.wantLabels(bed) ? " on" : "") + '" onclick="Garden.toggleLabels()">🏷️ Names</button>';
+         '<button class="chip' + (Canvas.wantLabels(bed) ? " on" : "") + '" onclick="Garden.toggleLabels()">🏷️ Names</button>' +
+         '<button class="chip' + (Sel.on ? " on" : "") + '" onclick="Sel.on?Sel.stop():Sel.start()">☑︎ Select</button>' +
+         Zoom.chip() + Undo.chip();
     h += '</div>';
+    h += Sel.bar();
 
     /* ---- the canvas ---- */
     h += '<div class="canvaswrap" id="cvhost" style="margin-top:10px">' +
+      '<span class="zoomtag" id="zoomtag" style="display:none">100%</span>' +
       Canvas.svg(bed, { interactive:true, when: when }) + '</div>';
-    h += '<div class="tiny muted center" style="margin-top:6px">Tap bare soil to plant. Press and hold a plant to drag it anywhere — ' +
-      'the ring shows how wide it will get, and you can drag the white handle on a selected plant to resize it.</div>';
+    h += '<div class="tiny muted center" style="margin-top:6px">' +
+      (Sel.on
+        ? 'Tap plants to gather them up, then press and hold any of them to move the group.'
+        : 'Tap bare soil to plant, or a plant to open its details. Press and hold a plant to drag it anywhere — ' +
+          'drag the white handle to resize it, and the ⋯ button beside it opens the variety and everything else. ' +
+          'Pinch to zoom in on the small ones.') + '</div>';
 
     /* ---- the scrubber ---- */
     h += '<div class="tlwrap"><div class="tlhead">' +
@@ -5351,7 +5441,8 @@ Object.assign(Garden, {
         cropEmoji(s.tall.crop_id) + ' <b>' + esc(cropName(s.tall.crop_id)) + '</b> reaches about ' +
         Geom.height(s.tall.crop_id) + '" and will stand over ' + cropEmoji(s.low.crop_id) + ' <b>' +
         esc(cropName(s.low.crop_id)) + '</b>, which wants ' + crop(s.low.crop_id).sun +
-        'h of sun. Move it to the sunny side, or swap in something that tolerates shade.</div>');
+        'h of sun' + (s.side ? ' and sits to the ' + esc(s.side) + ' of it' : '') +
+        '. Move it to the sunny side, or swap in something that tolerates shade.</div>');
       const seenGuild = {};
       good.slice(0, 4).forEach(s => {
         const k = s.tall.crop_id + "|" + s.low.crop_id;
@@ -5423,8 +5514,14 @@ Object.assign(Garden, {
       if(heavy.length) h += '<div class="note w" style="margin-top:10px">🌿 Heavy feeders here (' +
         esc(heavy.map(c => c.n).filter((v,i,a) => a.indexOf(v) === i).join(", ")) +
         '). Side-dress with compost or a balanced organic feed every 3–4 weeks.</div>';
+      /* the bed verdict is set by the thirstiest crop in it, which is how a
+         bed of lettuce and rosemary ends up watered to suit the lettuce */
+      h += WaterGroups.html(bed.id);
       h += '</div>';
     }
+
+    /* ---- what else belongs in this bed ---- */
+    h += BedRecs.html(bed);
 
     /* ---- rotation ---- */
     const fams = Recommend.recentFamilies(bed.id);
@@ -5475,7 +5572,11 @@ Object.assign(Garden, {
     Garden.render();
   },
 
-  back(){ APP.bedId = null; Garden.sel = null; Garden.tl = 0; Garden.render(); }
+  back(){
+    APP.bedId = null; Garden.sel = null; Garden.tl = 0;
+    if(typeof Sel !== "undefined"){ Sel.on = false; Sel.ids = {}; }
+    Garden.render();
+  }
 });
 
 /* ============================================================
@@ -5686,6 +5787,10 @@ Garden.suggest = function(){
 const CanvasDrag = {
   magnet: true,
   active: null,
+  /* set by whichever gesture is in flight so a second finger landing on the
+     canvas (a pinch) can call it off rather than flinging the plant across
+     the bed. Zoom is the only caller. */
+  abort: null,
 
   bind(){
     const svg = $("#pcanvas"); if(!svg) return;
@@ -5703,11 +5808,28 @@ const CanvasDrag = {
   down(ev){
     if(ev.button !== undefined && ev.button > 0) return;
     const svg = $("#pcanvas"); if(!svg) return;
+    /* a second finger on the canvas is a pinch, not a drag */
+    if(typeof Zoom !== "undefined" && Zoom.pinching()) return;
+
+    /* the little ⋯ button on a selected plant opens its details. It has to be
+       tested before the .pl branch below, or press-and-hold swallows it. */
+    const menu = ev.target && ev.target.closest && ev.target.closest("[data-menu]");
+    if(menu){
+      ev.preventDefault(); ev.stopPropagation();
+      const mid = menu.getAttribute("data-menu");
+      const mp = DB.find("plantings", mid);
+      if(mp){ Garden.sel = mid; haptic(); Garden.repaint(); Garden.plantingSheet(mp); }
+      return;
+    }
     const grip = ev.target && ev.target.closest && ev.target.closest("[data-grip]");
     if(grip) return CanvasDrag.resizeStart(ev, grip.getAttribute("data-grip"));
     const el = ev.target && ev.target.closest && ev.target.closest(".pl");
-    if(el && !Garden.erase && !Garden.paint && !Garden.clip)
-      return CanvasDrag.moveStart(ev, el.getAttribute("data-pid"), el);
+    if(el && !Garden.erase && !Garden.paint && !Garden.clip){
+      const pid = el.getAttribute("data-pid");
+      /* in multi-select mode a tap adds to the set rather than dragging one */
+      if(typeof Sel !== "undefined" && Sel.on) return Sel.tapStart(ev, pid);
+      return CanvasDrag.moveStart(ev, pid, el);
+    }
     CanvasDrag.tapStart(ev);
   },
 
@@ -5791,7 +5913,10 @@ const CanvasDrag = {
       el.removeAttribute("opacity");
       CanvasDrag.active = null;
       CanvasDrag.live("");
+      CanvasDrag.abort = null;
       if(!drop || !lifted){ if(!lifted && far < 8) Garden.tapAt(start.x, start.y); return; }
+      if(Math.abs(pos.x - ox) < 0.2 && Math.abs(pos.y - oy) < 0.2) return;
+      Undo.push("move", "Moved " + cropName(p.crop_id), [{ id: id, px: ox, py: oy }]);
       DB.update("plantings", id, { px: Math.round(pos.x*10)/10, py: Math.round(pos.y*10)/10,
         x: Math.floor(pos.x / Garden.cell(bed)), y: Math.floor(pos.y / Garden.cell(bed)) });
       Garden.sel = id;
@@ -5800,6 +5925,7 @@ const CanvasDrag = {
       toast(msg || (cropName(p.crop_id) + " moved"));
     };
     const onUp = () => finish(true);
+    CanvasDrag.abort = () => { el.setAttribute("transform", "translate(" + ox + " " + oy + ")"); finish(false); };
 
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", onUp);
@@ -5869,7 +5995,10 @@ const CanvasDrag = {
              (Math.round(ox*10)/10) + ' ' + (Math.round(oy*10)/10) + '" stroke="' + col +
              '" stroke-width="0.5" stroke-dasharray="1.4 1.2" stroke-opacity="0.9"/>';
       const mx = (pos.x + ox) / 2, my = (pos.y + oy) / 2;
-      const bs = Math.max(2.4, Math.min(Geom.W(bed), Geom.H(bed)) * 0.035);
+      /* a marker, not a placard. Sized off the bed so it is the same size on
+         screen whatever the plot measures, and small enough that it never
+         hides the plant it is telling you about. */
+      const bs = Canvas.badgeR(bed, Geom.RC(p), kind === "bad");
       out += '<g transform="translate(' + (Math.round(mx*10)/10) + ' ' + (Math.round(my*10)/10) + ')">' +
         '<circle r="' + bs + '" fill="' + col + '"/>' +
         '<text y="' + (bs*0.38) + '" text-anchor="middle" font-size="' + (bs*1.2) + '" fill="#fff">' + sym + '</text></g>';
@@ -5956,6 +6085,8 @@ const CanvasDrag = {
       window.removeEventListener("pointercancel", up);
       document.removeEventListener("touchmove", blockScroll);
       svg.classList.remove("dragging");
+      CanvasDrag.abort = null;
+      if(Math.abs(rc - rc0) > 0.2) Undo.push("resize", "Resized " + cropName(p.crop_id), [{ id: id, rc: rc0, rr: rr0 }]);
       Garden.setRadius(id, rc, rc * ratio);
       /* a footprint that changed by hand is a footprint she means —
          record it as one plant that sprawls, not a clump that grew */
@@ -5969,15 +6100,20 @@ const CanvasDrag = {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
+    CanvasDrag.abort = () => { rc = rc0; paint(); up(); };
   }
 };
 
-/* the magnet is a preference, and some people want none of it */
+/* The magnet is a preference, and some people want none of it. It used to be
+   an in-memory flag that reset to on at every launch, which made it look like
+   the setting had not stuck — so it is a stored preference now. */
 Garden.toggleMagnet = function(){
   CanvasDrag.magnet = !CanvasDrag.magnet;
+  DB.set("magnet", CanvasDrag.magnet ? "1" : "0");
   Garden.render();
   toast(CanvasDrag.magnet ? "Companions will pull into place" : "Free placement — nothing snaps");
 };
+Garden.loadMagnet = function(){ CanvasDrag.magnet = DB.get("magnet", "1") !== "0"; };
 </script>
 
 <script>
@@ -6034,16 +6170,15 @@ const Shape = {
     h += '<div class="field" style="margin-top:10px"><label class="f">Square size (inches)</label>' +
       '<input type="number" id="sh-cell" min="3" max="48" value="' + esc(num(bed.cell_in, 12)) + '"></div>';
 
-    h += '<div class="row between" style="margin-top:12px"><div><div class="b sm">Companion magnetism</div>' +
-      '<div class="tiny muted">Plants that like each other pull gently into proper spacing while you drag.</div></div>' +
-      '<button class="switch ' + (CanvasDrag.magnet ? "on" : "") + '" id="sh-magnet"></button></div>';
+    /* Companion magnetism used to be buried here. It is a thing you change
+       while you are dragging plants about, not while you are choosing how big
+       the bed is, so it lives on the bed's own toolbar now — 🧲 Snap. */
 
     h += '<button class="btn ghost block" style="margin-top:14px" onclick="Shape.drawStart(\'' + bed.id + '\')">✎ Trace my own outline</button>';
     h += '<button class="btn block" style="margin-top:8px" onclick="Shape.save(\'' + bed.id + '\')">Save</button>';
 
     openSheet("Shape and size", h);
     const g = $("#sh-grid"); if(g) g.onclick = () => g.classList.toggle("on");
-    const m = $("#sh-magnet"); if(m) m.onclick = () => m.classList.toggle("on");
   },
 
   ft(inches){
@@ -6072,7 +6207,6 @@ const Shape = {
   save(bedId){
     const cell = clamp(num(($("#sh-cell") || {}).value, 12), 3, 48);
     const gridOn = $("#sh-grid") && $("#sh-grid").classList.contains("on") ? 1 : 0;
-    CanvasDrag.magnet = !($("#sh-magnet") && !$("#sh-magnet").classList.contains("on"));
     const bed = Geom.bed(DB.find("beds", bedId));
     /* cols and rows are only the grid overlay now, but the map, the recap
        and the assistant still read them, so keep them honest */
@@ -6661,6 +6795,1158 @@ Geom.fitsIn = function(cropId, r){
     const anchor = '<div class="grid2" style="margin-top:16px">';
     if(body.innerHTML.indexOf(anchor) >= 0) body.innerHTML = body.innerHTML.replace(anchor, h + anchor);
     else body.insertAdjacentHTML("beforeend", h);
+  };
+})();
+</script>
+
+<script>
+/* ============================================================
+   ZOOMING THE BED
+
+   A forty-foot plot drawn to fit a phone screen renders a radish
+   about two pixels across. You cannot drag it, you cannot hit its
+   handle, and you certainly cannot tell it from the beetroot beside
+   it. Everything else on this screen is measured honestly in inches;
+   without a magnifier that honesty is what makes small plants
+   unusable on a big plot.
+
+   The whole feature is one idea: ZOOM IS A VIEWBOX CHANGE.
+
+   Canvas.toIn reads the live viewBox attribute off the element every
+   time it converts a touch into garden inches, so shrinking the
+   viewBox magnifies the picture AND every gesture in the app follows
+   correctly with no further work — tap, press-and-hold drag, the
+   resize handle, the details button. A CSS transform would have
+   looked identical and broken all four, because none of them would
+   have known the picture had moved.
+
+   Two gestures:
+   · pinch and spread with two fingers, anchored so the point of
+     garden between your fingers stays between your fingers;
+   · once magnified, one finger on bare soil pans.
+
+   And because a mouse has no pinch, ctrl+wheel and a pair of buttons
+   do the same thing.
+   ============================================================ */
+
+const Zoom = {
+  MAX: 8,
+  z: 1,
+  cx: null, cy: null,        /* centre of the view, in garden inches */
+
+  pointers: {},
+  n: 0,
+  pinch: null,
+  pan: null,
+
+  pinching(){ return Zoom.n >= 2; },
+  active(){ return Zoom.z > 1.001; },
+  reset(){ Zoom.z = 1; Zoom.cx = null; Zoom.cy = null; Zoom.pinch = null; Zoom.pan = null; },
+
+  /* ---------- the viewBox ----------
+     Returns null at 1×, and the caller then emits exactly the string it
+     always emitted. That matters: the test suite asserts the unzoomed
+     viewBox literally, and a bed at rest should render byte for byte as
+     it did before this file existed. */
+  viewBox(bed, P){
+    if(!Zoom.active()) return null;
+    const W = Geom.W(bed), H = Geom.H(bed);
+    const fw = W + P * 2, fh = H + P * 2;
+    const z = clamp(Zoom.z, 1, Zoom.MAX);
+    const vw = fw / z, vh = fh / z;
+    const cx = Zoom.cx === null ? W / 2 : Zoom.cx;
+    const cy = Zoom.cy === null ? H / 2 : Zoom.cy;
+    const vx = clamp(cx - vw / 2, -P, -P + fw - vw);
+    const vy = clamp(cy - vh / 2, -P, -P + fh - vh);
+    return (Math.round(vx*100)/100) + ' ' + (Math.round(vy*100)/100) + ' ' +
+           (Math.round(vw*100)/100) + ' ' + (Math.round(vh*100)/100);
+  },
+
+  /* text and badges are drawn in inches, so at 4× they would render four
+     times larger on screen. Maps do not do that and neither should this —
+     a label is a label at any magnification. */
+  textScale(){ return Zoom.active() ? 1 / clamp(Zoom.z, 1, Zoom.MAX) : 1; },
+
+  /* push the current view onto the live element without a re-render;
+     a gesture at 60fps must not rebuild the DOM */
+  paint(){
+    const svg = $("#pcanvas"); if(!svg) return;
+    const bed = Geom.bed(DB.find("beds", APP.bedId)); if(!bed) return;
+    const vb = Zoom.viewBox(bed, Canvas.PAD);
+    if(vb) svg.setAttribute("viewBox", vb);
+    else svg.setAttribute("viewBox", (-Canvas.PAD) + ' ' + (-Canvas.PAD) + ' ' +
+      (Geom.W(bed) + Canvas.PAD*2) + ' ' + (Geom.H(bed) + Canvas.PAD*2));
+    svg.classList.toggle("zoomed", Zoom.active());
+    const tag = $("#zoomtag");
+    if(tag) tag.textContent = Math.round(clamp(Zoom.z, 1, Zoom.MAX) * 100) + "%";
+    if(tag) tag.style.display = Zoom.active() ? "" : "none";
+  },
+
+  /* ---------- setting the level, about a fixed screen point ----------
+     `anchor` is a client point that should keep showing the same soil. */
+  to(z, anchor){
+    const svg = $("#pcanvas");
+    const bed = Geom.bed(DB.find("beds", APP.bedId)); if(!bed) return;
+    const W = Geom.W(bed), H = Geom.H(bed), P = Canvas.PAD;
+    const fw = W + P*2, fh = H + P*2;
+    const before = (svg && anchor) ? Canvas.toIn(svg, anchor.x, anchor.y) : null;
+    Zoom.z = clamp(num(z, 1), 1, Zoom.MAX);
+    if(!Zoom.active()){ Zoom.cx = null; Zoom.cy = null; Zoom.paint(); return; }
+    if(Zoom.cx === null){ Zoom.cx = W/2; Zoom.cy = H/2; }
+    if(before && svg){
+      /* keep `before` under the same fraction of the box it was under */
+      const r = svg.getBoundingClientRect();
+      const fx = r.width ? (anchor.x - r.left) / r.width : 0.5;
+      const fy = r.height ? (anchor.y - r.top) / r.height : 0.5;
+      const vw = fw / Zoom.z, vh = fh / Zoom.z;
+      Zoom.cx = before.x - (fx - 0.5) * vw;
+      Zoom.cy = before.y - (fy - 0.5) * vh;
+    }
+    Zoom.paint();
+  },
+
+  by(mult){
+    const svg = $("#pcanvas");
+    let anchor = null;
+    if(svg){ const r = svg.getBoundingClientRect(); anchor = { x: r.left + r.width/2, y: r.top + r.height/2 }; }
+    Zoom.to(Zoom.z * mult, anchor);
+  },
+  in(){ Zoom.by(1.6); haptic(); },
+  out(){ Zoom.by(1/1.6); haptic(); },
+  fit(){ Zoom.reset(); Zoom.paint(); Garden.repaint(); toast("Whole bed"); },
+
+  /* ---------- gestures ---------- */
+  bind(svg){
+    if(!svg || svg._zbound) return;
+    svg._zbound = true;
+    svg.addEventListener("pointerdown", Zoom.down, true);
+    svg.addEventListener("wheel", Zoom.wheel, { passive: false });
+    Zoom.paint();
+  },
+
+  down(ev){
+    Zoom.pointers[ev.pointerId] = { x: ev.clientX, y: ev.clientY };
+    Zoom.n = Object.keys(Zoom.pointers).length;
+    window.addEventListener("pointermove", Zoom.move, { passive: false });
+    window.addEventListener("pointerup", Zoom.up);
+    window.addEventListener("pointercancel", Zoom.up);
+
+    if(Zoom.n === 2){
+      /* a pinch has begun. Whatever single-finger gesture was running is
+         no longer what the gardener means — call it off rather than fling
+         the plant across the bed while she zooms. */
+      if(CanvasDrag.abort){ const a = CanvasDrag.abort; CanvasDrag.abort = null; try{ a(); }catch(e){} }
+      Zoom.pan = null;
+      const ids = Object.keys(Zoom.pointers);
+      const a = Zoom.pointers[ids[0]], b = Zoom.pointers[ids[1]];
+      Zoom.pinch = { d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), z0: Zoom.z };
+      return;
+    }
+
+    /* one finger on bare soil, already magnified, is a pan */
+    if(Zoom.n === 1 && Zoom.active()){
+      const onPlant = ev.target && ev.target.closest &&
+        (ev.target.closest(".pl") || ev.target.closest("[data-grip]") || ev.target.closest("[data-menu]"));
+      if(!onPlant && !Garden.paint && !Garden.erase && !Garden.clip){
+        const svg = $("#pcanvas");
+        const g = svg ? Canvas.toIn(svg, ev.clientX, ev.clientY) : null;
+        Zoom.pan = g ? { gx: g.x, gy: g.y, cx: Zoom.cx, cy: Zoom.cy, moved: 0,
+                         sx: ev.clientX, sy: ev.clientY } : null;
+      }
+    }
+  },
+
+  move(ev){
+    if(Zoom.pointers[ev.pointerId]) Zoom.pointers[ev.pointerId] = { x: ev.clientX, y: ev.clientY };
+
+    if(Zoom.n >= 2 && Zoom.pinch){
+      if(ev.cancelable) ev.preventDefault();
+      const ids = Object.keys(Zoom.pointers);
+      const a = Zoom.pointers[ids[0]], b = Zoom.pointers[ids[1]];
+      if(!a || !b) return;
+      const d = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      Zoom.to(Zoom.pinch.z0 * (d / Zoom.pinch.d0), mid);
+      return;
+    }
+
+    if(Zoom.n === 1 && Zoom.pan){
+      const svg = $("#pcanvas"); if(!svg) return;
+      Zoom.pan.moved = Math.max(Zoom.pan.moved,
+        Math.abs(ev.clientX - Zoom.pan.sx), Math.abs(ev.clientY - Zoom.pan.sy));
+      if(Zoom.pan.moved < 6) return;
+      if(ev.cancelable) ev.preventDefault();
+      const now = Canvas.toIn(svg, ev.clientX, ev.clientY);
+      Zoom.cx = num(Zoom.pan.cx, 0) - (now.x - Zoom.pan.gx);
+      Zoom.cy = num(Zoom.pan.cy, 0) - (now.y - Zoom.pan.gy);
+      Zoom.paint();
+    }
+  },
+
+  up(ev){
+    delete Zoom.pointers[ev.pointerId];
+    Zoom.n = Object.keys(Zoom.pointers).length;
+    if(Zoom.n < 2 && Zoom.pinch){
+      Zoom.pinch = null;
+      /* one redraw at the end: labels and badges are sized against the zoom */
+      Garden.repaint();
+      haptic();
+    }
+    if(Zoom.n === 0){
+      Zoom.pan = null;
+      window.removeEventListener("pointermove", Zoom.move);
+      window.removeEventListener("pointerup", Zoom.up);
+      window.removeEventListener("pointercancel", Zoom.up);
+    }
+  },
+
+  /* a mouse has no pinch */
+  wheel(ev){
+    if(!ev.ctrlKey && !ev.metaKey) return;
+    ev.preventDefault();
+    Zoom.to(Zoom.z * (ev.deltaY < 0 ? 1.12 : 1/1.12), { x: ev.clientX, y: ev.clientY });
+    clearTimeout(Zoom._wt);
+    Zoom._wt = setTimeout(() => Garden.repaint(), 220);
+  },
+
+  /* the toolbar control */
+  chip(){
+    return '<button class="chip' + (Zoom.active() ? " on" : "") + '" onclick="Zoom.in()">🔍 Zoom</button>' +
+      (Zoom.active()
+        ? '<button class="chip" onclick="Zoom.out()">− Out</button>' +
+          '<button class="chip" onclick="Zoom.fit()">⤢ Whole bed</button>'
+        : '');
+  }
+};
+
+/* bind the zoom listeners wherever the drag listeners are bound — one
+   canvas, one place that knows when it has been rebuilt */
+(function(){
+  const orig = CanvasDrag.bind;
+  CanvasDrag.bind = function(){
+    orig.apply(CanvasDrag, arguments);
+    Zoom.bind($("#pcanvas"));
+  };
+})();
+
+/* leaving a bed must leave its magnification behind, or the next bed opens
+   zoomed into a corner of somewhere else */
+(function(){
+  const back = Garden.back;
+  Garden.back = function(){ Zoom.reset(); return back.apply(Garden, arguments); };
+  const open = Garden.open;
+  if(typeof open === "function")
+    Garden.open = function(){ Zoom.reset(); return open.apply(Garden, arguments); };
+})();
+</script>
+
+<script>
+/* ============================================================
+   UNDO
+
+   Until now the bed was the one screen in this app you had to be
+   careful on. Removing a plant took one tap with no confirmation
+   and no way back, and re-creating it meant remembering the variety,
+   the packet it came from, the date it went in, the size you had
+   dragged it to and where it stood. People edit timidly when a
+   mistake is expensive, and a plan you are afraid to change is not
+   really a plan.
+
+   The saving grace is that a removal here has always been a SOFT
+   delete — `status` goes to "removed" and the row stays whole. So
+   putting one back is a matter of clearing two fields, and the plant
+   comes back as itself rather than as a fresh copy that lost half of
+   what you knew about it.
+
+   The stack holds the PREVIOUS values of whatever changed. Every
+   entry is a list of patches, so one entry can cover eight plants
+   moved together as easily as one removed.
+   ============================================================ */
+
+const Undo = {
+  LIMIT: 40,
+  stack: [],
+
+  /* rows: [{ id, ...fields as they were before }]  or  { id, created:true }
+     for something that did not exist yet and should be removed again. */
+  push(kind, label, rows){
+    if(!rows || !rows.length) return;
+    Undo.stack.push({ kind: kind, label: label || "Change", rows: rows, at: Date.now() });
+    if(Undo.stack.length > Undo.LIMIT) Undo.stack.shift();
+    Undo.paint();
+  },
+
+  can(){ return Undo.stack.length > 0; },
+  peek(){ return Undo.stack.length ? Undo.stack[Undo.stack.length - 1] : null; },
+  clear(){ Undo.stack = []; Undo.paint(); },
+
+  /* what the button should say — "Undo remove" is less use than the name
+     of the thing you are about to get back */
+  label(){
+    const e = Undo.peek();
+    return e ? e.label : "";
+  },
+
+  go(){
+    const e = Undo.stack.pop();
+    if(!e){ toast("Nothing to undo"); return; }
+    let gone = 0;
+    e.rows.forEach(r => {
+      if(!r || !r.id) return;
+      const row = DB.find("plantings", r.id);
+      if(!row){ gone++; return; }
+      if(r.created){
+        /* it never existed before this action — take it away completely,
+           along with the calendar entries it generated */
+        DB.bulkRemove("events", ev => ev.planting_id === r.id);
+        DB.remove("plantings", r.id);
+        return;
+      }
+      const patch = {};
+      Object.keys(r).forEach(k => { if(k !== "id") patch[k] = r[k]; });
+      DB.update("plantings", r.id, patch);
+    });
+    /* a restored planting wants its sowing and harvest dates back on the
+       calendar; rebuild rather than try to reconstruct which ones went */
+    if(typeof Cal !== "undefined" && Cal.rebuild) Cal.rebuild();
+    Garden.sel = null;
+    if(typeof Sel !== "undefined") Sel.clear(true);
+    haptic();
+    Garden.render();
+    toast(gone === e.rows.length ? "Nothing left to put back" : "Undone — " + e.label.toLowerCase());
+  },
+
+  /* the chip in the bed toolbar */
+  chip(){
+    if(!Undo.can()) return "";
+    return '<button class="chip" id="undochip" onclick="Undo.go()" title="' + esc(Undo.label()) +
+      '">↩︎ Undo</button>';
+  },
+  paint(){
+    const box = $(".cvbar"); if(!box) return;
+    const ex = $("#undochip");
+    if(!Undo.can()){ if(ex) ex.remove(); return; }
+    if(ex){ ex.title = Undo.label(); return; }
+    const b = document.createElement("button");
+    b.className = "chip"; b.id = "undochip"; b.textContent = "↩︎ Undo";
+    b.title = Undo.label(); b.onclick = Undo.go;
+    box.appendChild(b);
+  }
+};
+
+/* ---------- the other places a change happens ---------- */
+
+/* the sliders and the steppers in the planting sheet */
+(function(){
+  const orig = Garden.resizeBy;
+  Garden.resizeBy = function(id, dw, dh){
+    const p = Geom.plant(DB.find("plantings", id));
+    if(p) Undo.push("resize", "Resized " + cropName(p.crop_id),
+      [{ id: id, rc: Geom.RC(p), rr: Geom.RR(p) }]);
+    return orig.apply(Garden, arguments);
+  };
+})();
+
+/* clearing a whole bed is the most expensive single tap in the app */
+(function(){
+  const orig = Garden.clearBed;
+  Garden.clearBed = function(){
+    const live = DB.where("plantings", p => p.bed_id === APP.bedId && p.status !== "removed");
+    if(live.length) Undo.push("clear", "Cleared " + live.length + " plant" + (live.length === 1 ? "" : "s"),
+      live.map(p => ({ id: p.id, status: p.status || "planned", removed_on: p.removed_on || null })));
+    return orig.apply(Garden, arguments);
+  };
+})();
+
+/* pasting a copied plant, and duplicating one */
+(function(){
+  const dup = Garden.duplicate;
+  Garden.duplicate = function(id){
+    const before = DB.count("plantings");
+    const r = dup.apply(Garden, arguments);
+    const all = DB.all("plantings");
+    if(DB.count("plantings") > before){
+      const made = all[all.length - 1];
+      Undo.push("duplicate", "Duplicated " + cropName(made.crop_id), [{ id: made.id, created: true }]);
+    }
+    return r;
+  };
+})();
+</script>
+
+<script>
+/* ============================================================
+   SELECTING SEVERAL PLANTS AT ONCE
+
+   A row of twelve lettuces is twelve press-and-hold drags, and
+   moving the row six inches off the path is twelve chances to put
+   one of them somewhere you did not mean. The bed already knew how
+   to copy one plant; what it never had was the idea of "these".
+
+   Tap to add, tap again to drop. Press and hold anything already in
+   the set and the whole set moves together, keeping its shape — a
+   row stays a row. Remove and duplicate work on the set too, and
+   both go on the undo stack as ONE action, because undoing a
+   twelve-plant move one plant at a time would be its own punishment.
+   ============================================================ */
+
+const Sel = {
+  on: false,
+  ids: {},
+
+  count(){ return Object.keys(Sel.ids).length; },
+  has(id){ return !!Sel.ids[id]; },
+  list(){ return Object.keys(Sel.ids).map(id => DB.find("plantings", id)).filter(Boolean).map(Geom.plant); },
+
+  start(){
+    Sel.on = true; Sel.ids = {};
+    Garden.sel = null; Garden.paint = null; Garden.erase = false; Garden.clip = null;
+    Garden.render();
+    toast("Tap plants to gather them up");
+  },
+  stop(){ Sel.on = false; Sel.ids = {}; Garden.render(); },
+  clear(silent){ Sel.ids = {}; if(!silent) Garden.render(); },
+
+  toggle(id){
+    if(Sel.ids[id]) delete Sel.ids[id]; else Sel.ids[id] = 1;
+    haptic();
+    Garden.repaint();
+    Sel.paintBar();
+  },
+
+  all(){
+    const bed = DB.find("beds", APP.bedId); if(!bed) return;
+    Geom.live(bed.id).forEach(p => Sel.ids[p.id] = 1);
+    Garden.repaint(); Sel.paintBar();
+  },
+  /* everything of the same crop — the usual reason you wanted a set */
+  sameCrop(){
+    const first = Sel.list()[0];
+    if(!first) return toast("Pick one first and this gathers the rest of that crop");
+    Geom.live(first.bed_id).forEach(p => { if(p.crop_id === first.crop_id) Sel.ids[p.id] = 1; });
+    Garden.repaint(); Sel.paintBar();
+    toast("All the " + cropName(first.crop_id).toLowerCase());
+  },
+
+  /* ---------- the bar under the toolbar ---------- */
+  bar(){
+    if(!Sel.on) return "";
+    const n = Sel.count();
+    let h = '<div class="selbar" id="selbar"><div class="row between" style="gap:8px">' +
+      '<div class="b sm">' + (n ? n + " selected" : "Tap plants to select") + '</div>' +
+      '<button class="chip" onclick="Sel.stop()">Done</button></div>' +
+      '<div class="row wrap" style="gap:6px;margin-top:8px">' +
+      '<button class="chip" onclick="Sel.all()">All</button>' +
+      '<button class="chip" onclick="Sel.sameCrop()">Same crop</button>' +
+      (n ? '<button class="chip" onclick="Sel.clear()">None</button>' +
+           '<button class="chip" onclick="Sel.duplicateAll()">⧉ Duplicate</button>' +
+           '<button class="chip bad" onclick="Sel.removeAll()">🧹 Remove</button>' : '') +
+      '</div>';
+    if(n) h += '<div class="tiny muted" style="margin-top:6px">Press and hold any of them to move the whole group.</div>';
+    return h + '</div>';
+  },
+  paintBar(){
+    const b = $("#selbar"); if(!b) return;
+    const wrap = document.createElement("div");
+    wrap.innerHTML = Sel.bar();
+    if(wrap.firstChild) b.replaceWith(wrap.firstChild);
+  },
+
+  /* ---------- acting on the set ---------- */
+  removeAll(){
+    const ps = Sel.list(); if(!ps.length) return;
+    confirmSheet("Remove " + ps.length + " plant" + (ps.length === 1 ? "" : "s") + "?",
+      "They come off the bed. Harvest records stay, and you can undo this.",
+      "Remove them", () => {
+        Undo.push("remove", "Removed " + ps.length + " plant" + (ps.length === 1 ? "" : "s"),
+          ps.map(p => ({ id: p.id, status: p.status || "planned", removed_on: p.removed_on || null })));
+        ps.forEach(p => Garden.removePlanting(p.id, true, true));
+        Sel.ids = {};
+        Garden.render();
+        toast("Removed " + ps.length, 3200);
+      }, true);
+  },
+
+  duplicateAll(){
+    const ps = Sel.list(); if(!ps.length) return;
+    const bed = Geom.bed(DB.find("beds", ps[0].bed_id)); if(!bed) return;
+    const made = [];
+    ps.forEach(p => {
+      const spot = Garden.openSpot(bed, Geom.RR(p), Geom.PX(p) + Geom.RC(p) * 2, Geom.PY(p));
+      if(!spot) return;
+      const copy = DB.insert("plantings", {
+        bed_id: bed.id, crop_id: p.crop_id, variety: p.variety, variety_id: p.variety_id,
+        seed_id: p.seed_id, qty: p.qty, status: p.status, sown_on: p.sown_on, notes: p.notes,
+        span_mode: p.span_mode, px: Math.round(spot.x*10)/10, py: Math.round(spot.y*10)/10,
+        rr: Geom.RR(p), rc: Geom.RC(p),
+        rot: Math.round(Math.random()*40 - 20), sv: Math.floor(Math.random()*100000),
+        x: Math.floor(spot.x / Garden.cell(bed)), y: Math.floor(spot.y / Garden.cell(bed)), w:1, h:1
+      });
+      made.push(copy);
+    });
+    if(!made.length) return toast("No free ground for copies in this bed");
+    Undo.push("duplicate", "Duplicated " + made.length + " plant" + (made.length === 1 ? "" : "s"),
+      made.map(m => ({ id: m.id, created: true })));
+    Cal.rebuild();
+    Sel.ids = {}; made.forEach(m => Sel.ids[m.id] = 1);
+    Garden.render();
+    toast(made.length < ps.length ? "Room for " + made.length + " of " + ps.length : "Duplicated " + made.length);
+  },
+
+  /* ---------- tap, and press-and-hold to move the group ---------- */
+  tapStart(ev, pid){
+    if(!Sel.has(pid)){
+      /* not in the set yet — a tap adds it, and nothing drags */
+      const sx = ev.clientX, sy = ev.clientY;
+      let moved = false;
+      const mv = e => { if(Math.abs(e.clientX - sx) > 8 || Math.abs(e.clientY - sy) > 8) moved = true; };
+      const up = () => {
+        window.removeEventListener("pointermove", mv);
+        window.removeEventListener("pointerup", up);
+        if(!moved) Sel.toggle(pid);
+      };
+      window.addEventListener("pointermove", mv);
+      window.addEventListener("pointerup", up);
+      return;
+    }
+    Sel.groupDrag(ev, pid);
+  },
+
+  groupDrag(ev, pid){
+    const bed = Geom.bed(DB.find("beds", APP.bedId)); if(!bed) return;
+    const svg = $("#pcanvas"); if(!svg) return;
+    const ps = Sel.list(); if(!ps.length) return;
+    const start = Canvas.toIn(svg, ev.clientX, ev.clientY);
+    const origin = ps.map(p => ({ id: p.id, x: Geom.PX(p), y: Geom.PY(p), rr: Geom.RR(p),
+                                  el: svg.querySelector('.pl[data-pid="' + p.id + '"]') }));
+    let lifted = false, dead = false, dx = 0, dy = 0, done = false;
+
+    const blockScroll = e => { if(lifted && e.cancelable) e.preventDefault(); };
+    document.addEventListener("touchmove", blockScroll, { passive:false });
+
+    const lift = () => {
+      if(dead || lifted) return;
+      lifted = true;
+      svg.classList.add("dragging");
+      origin.forEach(o => { if(o.el) o.el.setAttribute("opacity", "0.9"); });
+      haptic();
+    };
+    const timer = setTimeout(lift, 190);
+
+    /* the whole set keeps its shape: one delta, and the largest delta that
+       still leaves every member inside the outline wins */
+    const fits = (ddx, ddy) => origin.every(o =>
+      Geom.inside(bed, o.x + ddx, o.y + ddy, Math.min(o.rr, 2)));
+
+    const move = e => {
+      if(!lifted){
+        const ax = Math.abs(e.clientX - ev.clientX), ay = Math.abs(e.clientY - ev.clientY);
+        if(ax < 6 && ay < 6) return;
+        if((ev.pointerType === "touch" || ev.pointerType === "pen") && ay > ax * 1.4){
+          dead = true; clearTimeout(timer); finish(false); return;
+        }
+        clearTimeout(timer); lift();
+      }
+      if(e.cancelable) e.preventDefault();
+      const now = Canvas.toIn(svg, e.clientX, e.clientY);
+      let ndx = now.x - start.x, ndy = now.y - start.y;
+      if(num(bed.snap_in) > 0){ ndx = Geom.snap(ndx, num(bed.snap_in)); ndy = Geom.snap(ndy, num(bed.snap_in)); }
+      if(fits(ndx, ndy)){ dx = ndx; dy = ndy; }
+      origin.forEach(o => { if(o.el)
+        o.el.setAttribute("transform", "translate(" + (Math.round((o.x+dx)*10)/10) + " " +
+          (Math.round((o.y+dy)*10)/10) + ")"); });
+    };
+
+    const finish = drop => {
+      if(done) return;
+      done = true;
+      clearTimeout(timer);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      document.removeEventListener("touchmove", blockScroll);
+      document.removeEventListener("touchmove", blockScroll);
+      svg.classList.remove("dragging");
+      origin.forEach(o => { if(o.el) o.el.removeAttribute("opacity"); });
+      CanvasDrag.abort = null;
+      if(!drop || !lifted) return;
+      if(Math.abs(dx) < 0.2 && Math.abs(dy) < 0.2){ Garden.repaint(); return; }
+      Undo.push("move", "Moved " + origin.length + " plant" + (origin.length === 1 ? "" : "s"),
+        origin.map(o => ({ id: o.id, px: o.x, py: o.y })));
+      const c = Garden.cell(bed);
+      origin.forEach(o => DB.update("plantings", o.id, {
+        px: Math.round((o.x + dx) * 10) / 10, py: Math.round((o.y + dy) * 10) / 10,
+        x: Math.floor((o.x + dx) / c), y: Math.floor((o.y + dy) / c) }));
+      Garden.render();
+      toast("Moved " + origin.length + " together");
+    };
+    const onUp = () => finish(true);
+    CanvasDrag.abort = () => {
+      origin.forEach(o => { if(o.el)
+        o.el.setAttribute("transform", "translate(" + o.x + " " + o.y + ")"); });
+      dx = 0; dy = 0; finish(false);
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+};
+</script>
+
+<script>
+/* ============================================================
+   WHAT WOULD GO WELL WITH WHAT IS ALREADY HERE
+
+   The app had two kinds of advice about companions and neither did
+   this job. The bed view told you about pairings you had ALREADY
+   made — good neighbours, warnings — which is a report card, not a
+   suggestion. The crop picker badged individual crops as you
+   scrolled past them, which only helps if you already had a
+   shortlist in mind. "Suggest" ranked by season first, so in July
+   it hands you the same list whatever is growing in the bed.
+
+   What was missing is the obvious question: I have tomatoes and
+   carrots in this bed — what else belongs in here?
+
+   So: every crop the app knows, scored against WHAT IS PLANTED,
+   named partner by partner with the reason, and anything that
+   actively fights something already there thrown out rather than
+   ranked low. Season and sun still speak, but as annotations on the
+   answer rather than as the question.
+   ============================================================ */
+
+const BedRecs = {
+  /* how much clear ground is left, roughly — used to say whether there is
+     honestly room, not to refuse anything */
+  freeSqFt(bed){
+    const used = Geom.live(bed.id).reduce((a, p) => a + Math.PI * Geom.RR(p) * Geom.RR(p), 0);
+    return Math.max(0, Math.round((Geom.areaSqIn(bed) - used) / 144 * 10) / 10);
+  },
+
+  forBed(bedId, limit){
+    const bed = Geom.bed(DB.find("beds", bedId));
+    if(!bed) return [];
+    const live = Geom.live(bedId);
+    if(!live.length) return [];
+
+    /* one entry per crop in the bed, however many plants of it there are */
+    const present = [];
+    live.forEach(p => { if(present.indexOf(p.crop_id) < 0) present.push(p.crop_id); });
+
+    const stock = {}; DB.all("seeds").forEach(s => { if(s.crop_id) stock[s.crop_id] = (stock[s.crop_id] || 0) + 1; });
+    const recentFams = Recommend.recentFamilies(bedId);
+    const sun = (typeof Micro !== "undefined" && Micro.sunHours) ? Micro.sunHours(bedId) : num(bed.sun_hours, 8);
+    const out = [];
+
+    CROPS.forEach(c => {
+      if(present.indexOf(c.id) >= 0) return;
+
+      const partners = [], clashes = [];
+      present.forEach(oc => {
+        const r = pairRating(c.id, oc);
+        if(r.score >= 1) partners.push({ id: oc, score: r.score, why: r.why });
+        else if(r.score <= -2) clashes.push({ id: oc, why: r.why });
+      });
+      /* the whole point is that this list is safe to plant from. Something
+         that fights what is already in the bed does not belong on it at all,
+         however well it scores otherwise. */
+      if(clashes.length || !partners.length) return;
+
+      let score = partners.reduce((a, x) => a + (x.score >= 2 ? 10 : 5), 0);
+      const notes = [], warn = [];
+
+      const st = Season.status(c.id, 10);
+      if(st && st.inWindow){ score += 8; notes.push(st.w.icon + " " + st.w.label + " window is open now"); }
+      else if(st && st.days > 0 && st.days < 75){ score += 2; notes.push("🗓️ " + st.w.label + " " + relDay(st.w.date)); }
+      else { score -= 6; warn.push("Not in a sowing window at the moment."); }
+
+      if(stock[c.id]){ score += 6; notes.push("🌰 You already have seed for this"); }
+
+      if(sun >= c.sun) score += 3;
+      else if(sun >= c.sun - 2){ score -= 5; warn.push("Wants " + c.sun + "h of sun and this bed gets " + sun + "h — a lighter crop."); }
+      else { score -= 18; warn.push("Needs " + c.sun + "h of sun; this bed gets " + sun + "h."); }
+
+      if(recentFams[c.fam]){ score -= 10; warn.push("A " + FAMILY[c.fam].n.toLowerCase() + " grew here " + recentFams[c.fam] + " — rotate if you can."); }
+
+      const fits = Season.stillFits(c.id);
+      if(fits && !fits.fits){ score -= 8; warn.push("Needs " + fits.needs + " days and " + fits.left + " remain before first frost."); }
+
+      out.push({ crop: c, partners: partners, score: score, notes: notes, warn: warn,
+                 hasSeed: !!stock[c.id], room: Geom.rootR(c.id, 1) });
+    });
+
+    out.sort((a, b) => (b.partners.length - a.partners.length) || (b.score - a.score));
+    return limit ? out.slice(0, limit) : out;
+  },
+
+  /* one line naming who it would be joining — the reason is the useful part */
+  line(r){
+    const names = r.partners.slice(0, 3).map(x => cropEmoji(x.id) + " " + cropName(x.id));
+    const more = r.partners.length - names.length;
+    return "Goes with " + names.join(", ") + (more > 0 ? " and " + more + " more" : "");
+  },
+
+  /* ---------- the section under the bed ---------- */
+  html(bed){
+    const recs = BedRecs.forBed(bed.id, 6);
+    if(!recs.length) return "";
+    const free = BedRecs.freeSqFt(bed);
+    let h = '<div class="sec"><h2>Would go well here</h2>' +
+      '<span class="tiny muted">' + free + ' sq ft free</span></div><div class="card">';
+    h += '<div class="tiny muted" style="margin-bottom:10px">Chosen for what is already planted in this bed, not just what is in season. ' +
+      'Anything that would fight one of these plants has been left out.</div>';
+    recs.forEach(r => {
+      h += '<div class="note g" style="margin-bottom:8px"><div class="row between" style="gap:10px">' +
+        '<div class="grow"><div class="b">' + r.crop.e + ' ' + esc(r.crop.n) + '</div>' +
+        '<div class="tiny" style="margin-top:2px">💚 ' + esc(BedRecs.line(r)) + '</div>' +
+        '<div class="tiny muted" style="margin-top:2px">' + esc(r.partners[0].why) + '</div>' +
+        r.notes.slice(0, 2).map(n => '<div class="tiny muted" style="margin-top:2px">' + esc(n) + '</div>').join("") +
+        r.warn.slice(0, 1).map(n => '<div class="tiny" style="margin-top:2px;color:var(--warn)">' + esc(n) + '</div>').join("") +
+        '</div>' +
+        '<button class="btn sm" onclick="BedRecs.plant(\'' + r.crop.id + '\')">Plant</button></div></div>';
+    });
+    h += '</div>';
+    return h;
+  },
+
+  plant(cropId){
+    Garden.paint = cropId; Garden.erase = false;
+    if(typeof Sel !== "undefined") Sel.on = false;
+    Garden.render();
+    toast("Tap the bed to plant " + cropName(cropId));
+  }
+};
+
+/* ============================================================
+   WATERING, GROUPED
+
+   `Recommend.water` answers for the bed as a whole by taking the
+   thirstiest crop in it, which is the safe answer and the reason a
+   bed of lettuce and rosemary gets watered to suit the lettuce. On
+   a mixed bed that is how you drown herbs.
+
+   So the same figures, grouped: who wants a soak, who wants a
+   drink, and who would rather you left them alone. It is drawn
+   from the same `water` column in inches per week that the bed
+   verdict already uses, so the two can never disagree.
+   ============================================================ */
+
+const WaterGroups = {
+  /* The thresholds sit where the crop data actually clusters. Nearly every
+     vegetable in the table is the extension services' flat 1"/week; what
+     stands apart is a short list that wants more, and the Mediterranean
+     herbs and most of the flowers, which want distinctly less and are the
+     ones that suffer when a bed is watered to suit the lettuce. */
+  BANDS: [
+    { k:"high", n:"Thirsty",  i:"💧💧", d:"1½\" a week or more — a deep soak, and mulch earns its keep", lo: 1.25 },
+    { k:"med",  n:"Average",  i:"💧",   d:"about an inch a week",                                         lo: 0.9 },
+    { k:"low",  n:"Sparing",  i:"🌵",   d:"half to three-quarters of an inch — let the top inch dry out between waterings", lo: 0 }
+  ],
+
+  band(cropId){
+    const c = crop(cropId); if(!c) return null;
+    const w = num(c.water, 1);
+    return WaterGroups.BANDS.find(b => w >= b.lo) || WaterGroups.BANDS[2];
+  },
+
+  forBed(bedId){
+    const out = {};
+    Geom.live(bedId).forEach(p => {
+      const b = WaterGroups.band(p.crop_id); if(!b) return;
+      (out[b.k] = out[b.k] || { band: b, crops: {} });
+      out[b.k].crops[p.crop_id] = (out[b.k].crops[p.crop_id] || 0) + num(p.qty, 1);
+    });
+    return WaterGroups.BANDS.map(b => out[b.k]).filter(Boolean);
+  },
+
+  html(bedId){
+    const groups = WaterGroups.forBed(bedId);
+    if(groups.length < 2) return "";     /* nothing to separate */
+    let h = '<div class="note i" style="margin-top:10px"><div class="b sm" style="margin-bottom:6px">Not everything here wants the same amount</div>';
+    groups.forEach(g => {
+      const names = Object.keys(g.crops).map(id => cropEmoji(id) + " " + cropName(id));
+      h += '<div class="tiny" style="margin-bottom:4px"><b>' + g.band.i + ' ' + esc(g.band.n) + '</b> · ' +
+        esc(g.band.d) + '<br><span class="muted">' + esc(names.join(", ")) + '</span></div>';
+    });
+    h += '<div class="tiny muted" style="margin-top:6px">The verdict above is set by the thirstiest of them, which is the safe call for the bed. ' +
+      'Water by hand at the base and the sparing group will thank you for being missed out.</div></div>';
+    return h;
+  }
+};
+</script>
+
+<script>
+/* ============================================================
+   WHICH WAY THE BED FACES
+
+   The micro-climate survey does ask which direction you are facing
+   when you take each photo, and that bearing is doing real work —
+   it is what turns a photograph into a measurement of the skyline
+   and feeds the eight-sector horizon that Solar reads. But it
+   describes THE SITE. It never learned which way the drawing points.
+
+   That gap is why the shade check was quietly guessing. It decided
+   who stood in whose light with:
+
+       const north = Geom.PY(low) < Geom.PY(tall);
+
+   — the top of the canvas is north — which is true only if you
+   happened to draw the bed that way, and is the wrong answer by 90°
+   for anyone who drew it to match how the bed looks from the path.
+   Worse, `north` was computed and then never used, so the check
+   flagged a tomato as shading a lettuce standing on the SUNNY side
+   of it, which is the one place the lettuce is fine.
+
+   So a bed now carries `north_deg`: the compass bearing that "up" on
+   its drawing points to. Zero, the default, means north-up and the
+   app behaves exactly as it did. You can set it with the dial, or
+   stand at the bottom edge of the bed, point the phone up along it
+   and let the compass read it — the same reader the survey uses.
+
+   The sun is in the south at midday in the northern hemisphere and
+   in the north in the southern, so shade falls on the far side from
+   it. That is the whole calculation, and the latitude the gardener
+   already gave decides which hemisphere she is in.
+   ============================================================ */
+
+const Orient = {
+  /* bearing that the top edge of the drawing points at, 0 = north */
+  of(bed){ return ((num((bed || {}).north_deg, 0) % 360) + 360) % 360; },
+
+  /* Which way is the sun at midday, as a compass bearing. The gardener's
+     latitude is already stored — the solar maths reads the same setting —
+     and it is the only thing that decides this. Nothing here is hardcoded
+     to the northern hemisphere. */
+  sunAz(){
+    const lat = DB.get("lat", null);
+    if(lat === null || lat === undefined) return 180;
+    return num(lat, 40) >= 0 ? 180 : 0;
+  },
+
+  /* Convert a vector on the drawing into a compass bearing.
+     On the canvas y grows DOWNWARD, so a plant with a smaller y is further
+     "up" the drawing, which is `north_deg`. */
+  bearing(bed, dx, dy){
+    const a = Math.atan2(dx, -dy) * 180 / Math.PI;   /* 0 = up the drawing */
+    return (((a + Orient.of(bed)) % 360) + 360) % 360;
+  },
+
+  /* smallest angle between two bearings */
+  delta(a, b){
+    let d = Math.abs((((a - b) % 360) + 360) % 360);
+    return d > 180 ? 360 - d : d;
+  },
+
+  /* Does `low` actually stand in `tall`'s shadow?
+     True when it sits on the far side from the midday sun — within a wide
+     arc, because the sun moves and a tall crop throws shade east in the
+     morning and west in the evening too. */
+  shaded(bed, tall, low){
+    const dx = Geom.PX(low) - Geom.PX(tall), dy = Geom.PY(low) - Geom.PY(tall);
+    if(Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return true;
+    const away = (Orient.sunAz() + 180) % 360;       /* the shadow points this way */
+    return Orient.delta(Orient.bearing(bed, dx, dy), away) <= 75;
+  },
+
+  name(deg){
+    const dirs = ["north","north-east","east","south-east","south","south-west","west","north-west"];
+    return dirs[Math.round((((num(deg,0) % 360) + 360) % 360) / 45) % 8];
+  },
+
+  /* ---------- the control ---------- */
+  sheet(bedId){
+    const bed = Geom.bed(DB.find("beds", bedId || APP.bedId)); if(!bed) return;
+    const d = Orient.of(bed);
+    let h = '<p class="muted sm" style="margin-top:0">Which way does the <b>top of the drawing</b> point? ' +
+      'The app needs this to know which plants stand in the shade of the tall ones, rather than assuming you drew the bed with north at the top.</p>';
+    h += '<div class="center" style="margin:14px 0">' + Orient.dial(d) + '</div>';
+    h += '<div class="field"><label class="f">Top of the bed points <b id="or-name">' + esc(Orient.name(d)) + '</b> · <b id="or-deg">' + Math.round(d) + '°</b></label>' +
+      '<input type="range" id="or-range" min="0" max="355" step="5" value="' + Math.round(d/5)*5 + '" oninput="Orient.live(this.value)"></div>';
+    h += '<div class="row wrap" style="gap:6px;margin-top:8px">' +
+      [["N",0],["E",90],["S",180],["W",270]].map(x =>
+        '<button class="chip" onclick="Orient.live(' + x[1] + ',1)">' + x[0] + '</button>').join("") + '</div>';
+    h += '<button class="btn ghost block" style="margin-top:12px" onclick="Orient.readCompass()">🧭 Read it from the phone</button>';
+    h += '<div class="tiny muted" style="margin-top:6px">Stand at the bottom edge of the bed, point the top of the phone up along it, and tap. ' +
+      'Same compass the micro-climate survey uses.</div>';
+    h += '<div class="note i" style="margin-top:12px">The midday sun is in the ' +
+      esc(Orient.name(Orient.sunAz())) + ' where you are, so shade falls to the ' +
+      esc(Orient.name((Orient.sunAz() + 180) % 360)) + ' of anything tall.</div>';
+    h += '<button class="btn block" style="margin-top:14px" onclick="Orient.save(\'' + bed.id + '\')">Save</button>';
+    openSheet("Which way the bed faces", h);
+  },
+
+  dial(deg){
+    const r = 46, cx = 60, cy = 60;
+    const a = (num(deg, 0) - 90) * Math.PI / 180;
+    return '<svg id="or-dial" width="120" height="120" viewBox="0 0 120 120">' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="var(--line)" stroke-width="2"/>' +
+      ["N","E","S","W"].map((t, i) => {
+        const th = (i * 90 - 90) * Math.PI / 180;
+        return '<text x="' + (cx + Math.cos(th) * (r - 11)) + '" y="' + (cy + Math.sin(th) * (r - 11) + 4) +
+          '" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">' + t + '</text>';
+      }).join("") +
+      '<line id="or-needle" x1="' + cx + '" y1="' + cy + '" x2="' + (cx + Math.cos(a) * (r - 18)) +
+      '" y2="' + (cy + Math.sin(a) * (r - 18)) + '" stroke="var(--green-600)" stroke-width="4" stroke-linecap="round"/>' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="4" fill="var(--green-600)"/></svg>';
+  },
+
+  live(v, setSlider){
+    const d = ((num(v, 0) % 360) + 360) % 360;
+    const s = $("#or-range"); if(s && setSlider) s.value = Math.round(d/5)*5;
+    const n = $("#or-name"); if(n) n.textContent = Orient.name(d);
+    const g = $("#or-deg"); if(g) g.textContent = Math.round(d) + "°";
+    const nd = $("#or-needle");
+    if(nd){
+      const a = (d - 90) * Math.PI / 180;
+      nd.setAttribute("x2", 60 + Math.cos(a) * 28);
+      nd.setAttribute("y2", 60 + Math.sin(a) * 28);
+    }
+  },
+
+  readCompass(){
+    if(typeof MicroUI === "undefined" || !MicroUI.heading) return toast("No compass on this device");
+    toast("Hold still…");
+    MicroUI.heading().then(deg => {
+      if(deg === null || deg === undefined) return toast("No compass reading — set it by hand");
+      Orient.live(Math.round(deg), 1);
+      haptic();
+      toast("Top of the bed points " + Orient.name(deg));
+    });
+  },
+
+  save(bedId){
+    const s = $("#or-range");
+    const d = ((num(s ? s.value : 0, 0) % 360) + 360) % 360;
+    DB.update("beds", bedId, { north_deg: Math.round(d) });
+    closeSheet(); Garden.render();
+    toast("Top of the bed points " + Orient.name(d));
+  }
+};
+
+/* ---------- teach the shade check about it ----------
+   Additive: a bed with no orientation set behaves exactly as before, because
+   north_deg defaults to 0 and the old code assumed north-up anyway. What
+   changes for everyone is that a plant standing on the SUNNY side of a tall
+   crop is no longer reported as being shaded by it. */
+(function(){
+  const orig = Recommend.shading;
+  Recommend.shading = function(bedId, when){
+    const rows = orig.call(Recommend, bedId, when);
+    const bed = Geom.bed(DB.find("beds", bedId));
+    if(!bed) return rows;
+    return rows.filter(r => Orient.shaded(bed, r.tall, r.low)).map(r => {
+      const dx = Geom.PX(r.low) - Geom.PX(r.tall), dy = Geom.PY(r.low) - Geom.PY(r.tall);
+      r.side = Orient.name(Orient.bearing(bed, dx, dy));
+      return r;
+    });
+  };
+})();
+</script>
+
+<script>
+/* ============================================================
+   SAVED BEDS
+
+   Duplicating a bed already worked, but only sideways — one bed to
+   another, right now, in this garden. What it could not do is carry
+   a plan across a season. The bed that worked last year is the most
+   valuable thing a gardener owns, and every February it had to be
+   rebuilt plant by plant from memory.
+
+   So a bed can be SAVED: its outline, its size, and every plant on
+   it with the variety, the spacing you dragged it to and where it
+   stood. Starting a new bed from a saved one lays the whole thing
+   out again in one tap.
+
+   Two rules keep this honest:
+
+   · A saved bed stores no dates and no harvest history. Reusing last
+     year's layout must not tell the app you sowed last year's seed
+     today, and it must never manufacture a maturity record — those
+     are the figures the whole app defers to, and inventing one would
+     poison the gardener's own data with a copy of itself.
+   · Positions are stored as FRACTIONS of the bed, so a layout saved
+     from a 4×8 works on a 3×10. The plants land in the same relative
+     arrangement and anything that no longer fits is pulled inside
+     the outline rather than dropped.
+
+   It lives in settings rather than a table of its own because it is
+   a preference about how you garden, not a record of what happened.
+   ============================================================ */
+
+const Templates = {
+  KEY: "bedTemplates",
+
+  all(){
+    const raw = DB.get(Templates.KEY, null);
+    if(!raw) return [];
+    try{ const v = typeof raw === "string" ? JSON.parse(raw) : raw; return Array.isArray(v) ? v : []; }
+    catch(e){ return []; }
+  },
+  write(list){ DB.set(Templates.KEY, JSON.stringify(list.slice(0, 40))); },
+
+  /* ---------- saving ---------- */
+  save(bedId, name){
+    const bed = Geom.bed(DB.find("beds", bedId || APP.bedId)); if(!bed) return null;
+    const W = Geom.W(bed), H = Geom.H(bed);
+    const plants = Geom.live(bed.id).map(p => ({
+      crop_id: p.crop_id,
+      variety: p.variety || null,
+      qty: num(p.qty, 1),
+      span_mode: p.span_mode || "fill",
+      /* fractions, so the layout survives a different-sized bed */
+      fx: Math.round(Geom.PX(p) / W * 1000) / 1000,
+      fy: Math.round(Geom.PY(p) / H * 1000) / 1000,
+      rr: Geom.RR(p), rc: Geom.RC(p),
+      notes: p.notes || null
+    }));
+    const t = {
+      id: uid(),
+      name: (name || bed.name || "Saved bed").trim(),
+      shape: Geom.shape(bed), w_in: W, h_in: H,
+      poly: bed.poly || null,
+      cell_in: num(bed.cell_in, 12), grid_on: num(bed.grid_on, 0),
+      north_deg: num(bed.north_deg, 0),
+      sun_hours: bed.sun_hours || null, soil: bed.soil || null, irrigation: bed.irrigation || null,
+      plants: plants,
+      saved: iso(today())
+    };
+    const list = Templates.all();
+    list.unshift(t);
+    Templates.write(list);
+    return t;
+  },
+
+  remove(id){
+    Templates.write(Templates.all().filter(t => t.id !== id));
+  },
+  rename(id, name){
+    const list = Templates.all();
+    const t = list.find(x => x.id === id); if(!t) return;
+    t.name = String(name || "").trim() || t.name;
+    Templates.write(list);
+  },
+
+  /* ---------- using one ---------- */
+  create(tid, plotId){
+    const t = Templates.all().find(x => x.id === tid); if(!t) return null;
+    const bed = DB.insert("beds", {
+      name: t.name, shape: t.shape, w_in: t.w_in, h_in: t.h_in, poly: t.poly || null,
+      cell_in: t.cell_in, grid_on: t.grid_on, snap_in: t.grid_on ? t.cell_in : 0,
+      north_deg: t.north_deg || 0,
+      cols: Math.max(1, Math.round(t.w_in / (t.cell_in || 12))),
+      rows: Math.max(1, Math.round(t.h_in / (t.cell_in || 12))),
+      sun_hours: t.sun_hours, soil: t.soil, irrigation: t.irrigation,
+      plot_id: plotId || APP.plotId || null
+    });
+    Templates.apply(t, bed.id);
+    return bed;
+  },
+
+  /* lay a saved layout onto an existing bed */
+  apply(t, bedId){
+    const bed = Geom.bed(DB.find("beds", bedId)); if(!bed || !t) return 0;
+    const W = Geom.W(bed), H = Geom.H(bed);
+    const made = [];
+    (t.plants || []).forEach(p => {
+      if(!crop(p.crop_id)) return;          /* a crop she has since deleted */
+      const fit = Geom.clampInto(bed, num(p.fx, 0.5) * W, num(p.fy, 0.5) * H, Math.min(num(p.rr, 6), 2));
+      const row = DB.insert("plantings", {
+        bed_id: bed.id, crop_id: p.crop_id, variety: p.variety || null,
+        qty: Math.max(1, num(p.qty, 1)), span_mode: p.span_mode || "fill",
+        /* planned, and dated today — never carrying last year's sowing date */
+        status: "planned", sown_on: iso(today()), notes: p.notes || null,
+        px: Math.round(fit.x * 10) / 10, py: Math.round(fit.y * 10) / 10,
+        rr: num(p.rr, 6), rc: Math.max(num(p.rr, 6), num(p.rc, 8)),
+        rot: Math.round(Math.random() * 40 - 20), sv: Math.floor(Math.random() * 100000),
+        x: Math.floor(fit.x / Garden.cell(bed)), y: Math.floor(fit.y / Garden.cell(bed)), w: 1, h: 1
+      });
+      made.push(row);
+    });
+    if(made.length){
+      Undo.push("template", "Laid out " + made.length + " plant" + (made.length === 1 ? "" : "s"),
+        made.map(m => ({ id: m.id, created: true })));
+      Cal.rebuild();
+    }
+    return made.length;
+  },
+
+  /* ---------- UI ---------- */
+  sheet(){
+    const list = Templates.all();
+    const bed = APP.bedId ? Geom.bed(DB.find("beds", APP.bedId)) : null;
+    let h = '<p class="muted sm" style="margin-top:0">A saved bed keeps its outline and every plant on it — variety, spacing and position — but no dates and no harvest records. ' +
+      'Start next season from the one that worked.</p>';
+
+    if(bed) h += '<button class="btn block" onclick="Templates.saveCurrent()">☆ Save “' +
+      esc(bed.name) + '” as a layout</button>';
+
+    if(!list.length) h += '<div class="note i" style="margin-top:12px">Nothing saved yet.</div>';
+    else {
+      h += '<div class="sec" style="margin-top:16px"><h2>Saved layouts</h2><span class="tiny muted">' + list.length + '</span></div>';
+      h += '<div class="card pad0"><div class="list">';
+      list.forEach(t => {
+        const n = (t.plants || []).length;
+        const icons = (t.plants || []).slice(0, 6).map(p => cropEmoji(p.crop_id)).join("");
+        h += '<div class="item"><div class="av">' + ((Geom.SHAPES[t.shape] || {}).e || "▭") + '</div>' +
+          '<div class="grow"><div class="b">' + esc(t.name) + '</div>' +
+          '<div class="tiny muted">' + Math.round(t.w_in/12*10)/10 + '×' + Math.round(t.h_in/12*10)/10 + ' ft · ' +
+          n + ' plant' + (n === 1 ? "" : "s") + ' · saved ' + esc(t.saved || "") + '</div>' +
+          '<div class="tiny" style="margin-top:2px">' + icons + '</div></div></div>' +
+          '<div class="row wrap" style="gap:6px;padding:0 12px 12px">' +
+          '<button class="chip" onclick="Templates.useNew(\'' + t.id + '\')">＋ New bed from this</button>' +
+          (bed ? '<button class="chip" onclick="Templates.useHere(\'' + t.id + '\')">Add to this bed</button>' : '') +
+          '<button class="chip bad" onclick="Templates.drop(\'' + t.id + '\')">Delete</button></div>';
+      });
+      h += '</div></div>';
+    }
+    openSheet("Saved beds", h);
+  },
+
+  saveCurrent(){
+    const bed = Geom.bed(DB.find("beds", APP.bedId)); if(!bed) return;
+    const n = Geom.live(bed.id).length;
+    const t = Templates.save(bed.id, bed.name);
+    if(!t) return;
+    toast("Saved “" + t.name + "” · " + n + " plant" + (n === 1 ? "" : "s"));
+    Templates.sheet();
+  },
+  useNew(tid){
+    const bed = Templates.create(tid);
+    if(!bed) return toast("That layout has gone");
+    closeSheet();
+    Garden.open(bed.id);
+    toast("Bed created from your saved layout");
+  },
+  useHere(tid){
+    const t = Templates.all().find(x => x.id === tid); if(!t) return;
+    const n = Templates.apply(t, APP.bedId);
+    closeSheet(); Garden.render();
+    toast(n ? "Added " + n + " plant" + (n === 1 ? "" : "s") : "Nothing to add");
+  },
+  drop(tid){
+    const t = Templates.all().find(x => x.id === tid); if(!t) return;
+    confirmSheet("Delete “" + t.name + "”?", "The saved layout goes. Beds you already made from it are untouched.",
+      "Delete", () => { Templates.remove(tid); Templates.sheet(); }, true);
+  }
+};
+
+/* the bed menu grows two entries: save this as a layout, and which way it faces */
+(function(){
+  const orig = Garden.bedMenu;
+  Garden.bedMenu = function(){
+    orig.apply(Garden, arguments);
+    const body = $("#sheet-body"); if(!body) return;
+    const bed = Geom.bed(DB.find("beds", APP.bedId));
+    const extra = document.createElement("div");
+    extra.innerHTML =
+      '<button class="btn ghost block" style="margin-top:8px" onclick="Orient.sheet()">🧭 Which way this bed faces · ' +
+        esc(Orient.name(Orient.of(bed || {}))) + ' at the top</button>' +
+      '<button class="btn ghost block" style="margin-top:8px" onclick="Templates.sheet()">☆ Saved beds and layouts</button>';
+    const save = body.querySelector('button[onclick*="saveBed"]');
+    if(save && save.parentNode) save.parentNode.insertBefore(extra, save.nextSibling);
+    else body.appendChild(extra);
   };
 })();
 </script>
@@ -8545,7 +9831,10 @@ const Cal = {
     /* upcoming list */
     const upcoming = evs.filter(e => e.date && diffDays(today(), parseISO(e.date)) >= -14)
       .sort((a,b) => a.date < b.date ? -1 : 1).slice(0, 40);
-    h += '<div class="sec"><h2>What is next</h2><button class="tiny b" onclick="Cal.addTask()">＋ Task</button></div>';
+    h += '<div class="row wrap" style="gap:6px;margin-top:10px">' +
+      '<button class="chip" onclick="CalSync.sheet()">🗓️ Sync to my calendar</button>' +
+      '<button class="chip" onclick="Cal.addTask()">＋ Task</button></div>';
+    h += '<div class="sec"><h2>What is next</h2><span class="tiny muted">' + upcoming.length + '</span></div>';
     if(!upcoming.length) h += '<div class="card center muted sm">Nothing scheduled yet. Add packets to your seed bank.</div>';
     else {
       h += '<div class="card"><div class="tl">';
@@ -8600,6 +9889,9 @@ const Cal = {
       (e.done === "1" ? "Mark not done" : "✓ Mark done") + '</button>';
     if(c) h += '<button class="btn ghost" onclick="closeSheet();setTimeout(function(){Library.open(\'' + c.id + '\')},250)">Guide</button>';
     h += '</div>';
+    /* one date, straight into Google — their compose URL needs no key,
+       because the person is already signed in to their own calendar */
+    h += '<button class="btn ghost block" style="margin-top:8px" onclick="CalSync.addOne(\'' + e.id + '\')">🗓️ Add this to Google Calendar</button>';
     if(!e.auto) h += '<button class="btn ghost block danger" style="margin-top:8px" onclick="DB.remove(\'events\',\'' + e.id + '\');closeSheet();Cal.render()">Delete task</button>';
     openSheet("Calendar entry", h);
   },
@@ -12602,7 +13894,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-04.5";
+const BUILD = "2026-08-05.1";
 
 const Updater = {
   prompt: null, installed: false,
@@ -13323,6 +14615,264 @@ Settings.render = function(){
 
 <script>
 /* ============================================================
+   PUTTING THE PLANTING SCHEDULE IN A REAL CALENDAR
+
+   The app already works out every date that matters — when each
+   sowing window opens, when a packet reaches the end of its
+   viability, when each planting should start cropping, and the two
+   frost dates the whole year hangs off. All of it lives on a screen
+   you have to remember to open.
+
+   That is the wrong place for a reminder. The calendar people
+   actually keep is the one on their phone, next to the dentist.
+
+   WHAT THIS IS, HONESTLY.
+
+   This exports a standard iCalendar (.ics) file, which Google
+   Calendar, Apple Calendar and Outlook all import. It is a one-way
+   snapshot: import it and those dates appear alongside everything
+   else; change your plan here and you export again. Events carry a
+   stable UID derived from the app's own event id, so a second import
+   UPDATES the entries from the first rather than duplicating them —
+   which is the part most exports get wrong and the reason people
+   only ever import once.
+
+   What it deliberately is NOT is a live two-way Google account
+   connection. That needs OAuth, a registered Google Cloud client and
+   a server to hold the refresh token; this app has no server by
+   design, keeps its data encrypted on the device, and asks for no
+   account at all. Claiming "sync" while shipping a download would be
+   a lie about where the data goes. A single event can also be pushed
+   straight into Google Calendar through their own compose URL, which
+   needs no credentials because the person is already signed in.
+
+   All-day events throughout: a sowing window is a day, not 9am.
+   ============================================================ */
+
+const CalSync = {
+  PRODID: "-//Pocket Fertilizer//Garden Schedule//EN",
+
+  /* ---------- iCalendar plumbing ---------- */
+
+  /* RFC 5545 wants commas, semicolons, backslashes and newlines escaped */
+  esc(s){
+    return String(s === null || s === undefined ? "" : s)
+      .replace(/\\/g, "\\\\")
+      .replace(/;/g, "\\;")
+      .replace(/,/g, "\\,")
+      .replace(/\r?\n/g, "\\n");
+  },
+
+  /* Lines must not exceed 75 octets. Unfolding is a spec requirement, so a
+     long crop note is not optional to wrap — an unwrapped file is rejected
+     outright by some importers and silently truncated by others. */
+  fold(line){
+    if(line.length <= 75) return line;
+    let out = line.slice(0, 75), rest = line.slice(75);
+    while(rest.length > 74){ out += "\r\n " + rest.slice(0, 74); rest = rest.slice(74); }
+    return out + (rest.length ? "\r\n " + rest : "");
+  },
+
+  stamp(d){
+    const x = d instanceof Date ? d : new Date(d);
+    const p = n => String(n).padStart(2, "0");
+    return x.getUTCFullYear() + p(x.getUTCMonth()+1) + p(x.getUTCDate()) + "T" +
+           p(x.getUTCHours()) + p(x.getUTCMinutes()) + p(x.getUTCSeconds()) + "Z";
+  },
+  ymd(d){
+    const x = d instanceof Date ? d : parseISO(d);
+    if(!x) return null;
+    const p = n => String(n).padStart(2, "0");
+    return x.getFullYear() + p(x.getMonth()+1) + p(x.getDate());
+  },
+
+  /* ---------- what goes in ---------- */
+  types(){
+    return Object.keys(EV).map(k => ({ k: k, n: EV[k].n, i: EV[k].i }));
+  },
+
+  events(opts){
+    const o = opts || {};
+    const from = o.from || addDays(today(), -30);
+    const to = o.to || addDays(today(), 400);
+    const want = o.types || null;
+    const doneToo = !!o.includeDone;
+    return DB.all("events").filter(e => {
+      if(!e.date) return false;
+      if(want && want.indexOf(e.type) < 0) return false;
+      if(!doneToo && e.done === "1") return false;
+      const d = parseISO(e.date);
+      return d && d >= from && d <= to;
+    }).sort((a, b) => a.date < b.date ? -1 : 1);
+  },
+
+  /* a line of context the calendar entry can stand on its own with */
+  describe(e){
+    const bits = [];
+    if(e.notes) bits.push(e.notes);
+    if(e.bed_id){ const b = DB.find("beds", e.bed_id); if(b) bits.push("Bed: " + b.name); }
+    if(e.crop_id){
+      const c = crop(e.crop_id);
+      if(c) bits.push(c.n + " · " + c.dtm + " days to maturity · " + c.sp + '" spacing · ' + c.sun + "h sun");
+    }
+    if(e.seed_id){ const s = DB.find("seeds", e.seed_id); if(s) bits.push("Packet: " + s.name + (s.variety ? " · " + s.variety : "")); }
+    bits.push("From Pocket Fertilizer.");
+    return bits.join("\n");
+  },
+
+  ics(opts){
+    const o = opts || {};
+    const evs = CalSync.events(o);
+    const now = CalSync.stamp(new Date());
+    const L = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:" + CalSync.PRODID,
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:" + CalSync.esc(o.name || "Pocket Fertilizer"),
+      "X-WR-CALDESC:" + CalSync.esc("Sowing windows, harvest dates and frost dates from your garden plan."),
+      "X-WR-TIMEZONE:UTC"
+    ];
+    evs.forEach(e => {
+      const start = CalSync.ymd(e.date); if(!start) return;
+      const end = CalSync.ymd(addDays(parseISO(e.date), 1));
+      const kind = EV[e.type] || EV.task;
+      L.push("BEGIN:VEVENT");
+      /* stable, so re-importing updates rather than duplicates */
+      L.push("UID:pf-" + (e.auto ? String(e.auto).replace(/[^a-zA-Z0-9:._-]/g, "_") : e.id) + "@pocket-fertilizer");
+      L.push("DTSTAMP:" + now);
+      L.push("DTSTART;VALUE=DATE:" + start);
+      L.push("DTEND;VALUE=DATE:" + end);
+      L.push("SUMMARY:" + CalSync.esc(kind.i + " " + e.title));
+      L.push("DESCRIPTION:" + CalSync.esc(CalSync.describe(e)));
+      L.push("CATEGORIES:" + CalSync.esc(kind.n));
+      L.push("TRANSP:TRANSPARENT");
+      if(e.done === "1") L.push("STATUS:COMPLETED");
+      if(o.alarm){
+        /* 9am the day before, which is when you can still act on it */
+        L.push("BEGIN:VALARM");
+        L.push("TRIGGER:-PT15H");
+        L.push("ACTION:DISPLAY");
+        L.push("DESCRIPTION:" + CalSync.esc(e.title));
+        L.push("END:VALARM");
+      }
+      L.push("END:VEVENT");
+    });
+    L.push("END:VCALENDAR");
+    return L.map(CalSync.fold).join("\r\n") + "\r\n";
+  },
+
+  /* ---------- one event, straight into Google ----------
+     Their compose URL needs no key and no OAuth: the person is already
+     signed in, and the entry opens pre-filled for them to confirm. */
+  googleUrl(e){
+    const start = CalSync.ymd(e.date);
+    const end = CalSync.ymd(addDays(parseISO(e.date), 1));
+    if(!start) return null;
+    const kind = EV[e.type] || EV.task;
+    const q = {
+      action: "TEMPLATE",
+      text: kind.i + " " + e.title,
+      dates: start + "/" + end,
+      details: CalSync.describe(e)
+    };
+    return "https://calendar.google.com/calendar/render?" +
+      Object.keys(q).map(k => k + "=" + encodeURIComponent(q[k])).join("&");
+  },
+
+  addOne(id){
+    const e = DB.find("events", id); if(!e) return;
+    const u = CalSync.googleUrl(e);
+    if(!u) return toast("That event has no date");
+    try{ window.open(u, "_blank", "noopener"); }
+    catch(err){ toast("Could not open Google Calendar"); }
+  },
+
+  /* ---------- export ---------- */
+  download(opts){
+    const o = opts || {};
+    const evs = CalSync.events(o);
+    if(!evs.length) return toast("Nothing in that range to export");
+    const text = CalSync.ics(o);
+    download("pocket-fertilizer-" + iso(today()) + ".ics",
+      new Blob([text], { type: "text/calendar;charset=utf-8" }));
+    toast(evs.length + " date" + (evs.length === 1 ? "" : "s") + " exported");
+  },
+
+  /* ---------- the sheet ---------- */
+  sheet(){
+    if(!Season.lastFrost()){
+      return openSheet("Calendar sync",
+        '<div class="note i">Set your location first — the schedule is built from your frost dates.</div>' +
+        '<button class="btn block" style="margin-top:12px" onclick="closeSheet();setTimeout(Onboard.open,250)">Set location</button>');
+    }
+    Cal.rebuild();
+    const all = CalSync.events({ types: null });
+    let h = '<p class="muted sm" style="margin-top:0">Export your sowing windows, harvest dates, seed expiry and frost dates as a calendar file. ' +
+      'Google Calendar, Apple Calendar and Outlook all import it.</p>';
+
+    h += '<div class="card"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">What to include</div>';
+    h += '<div class="row wrap" style="gap:6px">' +
+      CalSync.types().map(t => '<button class="chip on" data-t="' + t.k + '">' + t.i + ' ' + esc(t.n) + '</button>').join("") +
+      '</div>';
+    h += '<div class="field" style="margin-top:12px"><label class="f">How far ahead</label><select id="cs-range">' +
+      '<option value="365">The next twelve months</option>' +
+      '<option value="180">The next six months</option>' +
+      '<option value="90">The next three months</option>' +
+      '<option value="1200">Everything the app knows</option></select></div>';
+    h += '<div class="row between" style="margin-top:10px"><div><div class="b sm">Remind me the day before</div>' +
+      '<div class="tiny muted">Adds an alert at 9am the day before, while you can still act on it.</div></div>' +
+      '<button class="switch on" id="cs-alarm"></button></div>';
+    h += '<div class="tiny muted" style="margin-top:10px" id="cs-count">' + all.length + ' dates on the schedule</div></div>';
+
+    h += '<button class="btn block" style="margin-top:14px" onclick="CalSync.go()">🗓️ Export calendar file</button>';
+
+    h += '<div class="card" style="margin-top:14px"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Getting it into Google Calendar</div>' +
+      '<div class="tiny muted">On a computer: calendar.google.com → the gear → <b>Settings</b> → <b>Import &amp; export</b> → choose the file. ' +
+      'On a phone the file usually opens straight into the calendar app when you tap it.<br><br>' +
+      'Re-export any time you change the plan and import again — each entry carries a stable id, so the second import ' +
+      '<b>updates</b> what the first one added instead of doubling it.</div></div>';
+
+    h += '<div class="note i" style="margin-top:12px"><b>Why a file and not a Google login.</b> A live account connection needs a server ' +
+      'holding a token for you. This app has no server and no account — your garden is encrypted on this device and goes nowhere. ' +
+      'A file keeps it that way. Single dates can still be pushed straight into Google from the calendar screen.</div>';
+
+    openSheet("Calendar sync", h);
+    const a = $("#cs-alarm"); if(a) a.onclick = () => a.classList.toggle("on");
+    $$('#sheet-body .chip[data-t]').forEach(el => el.onclick = () => { el.classList.toggle("on"); CalSync.recount(); });
+    const r = $("#cs-range"); if(r) r.onchange = CalSync.recount;
+  },
+
+  picked(){
+    const on = $$('#sheet-body .chip[data-t].on').map(el => el.dataset.t);
+    return on.length ? on : null;
+  },
+  opts(){
+    const days = num(($("#cs-range") || {}).value, 365);
+    return {
+      types: CalSync.picked(),
+      from: addDays(today(), -30),
+      to: addDays(today(), days),
+      alarm: !!($("#cs-alarm") && $("#cs-alarm").classList.contains("on")),
+      includeDone: false
+    };
+  },
+  recount(){
+    const el = $("#cs-count"); if(!el) return;
+    const n = CalSync.events(CalSync.opts()).length;
+    el.textContent = n + " date" + (n === 1 ? "" : "s") + " will be exported";
+  },
+  go(){
+    const o = CalSync.opts();
+    if(!o.types) return toast("Pick at least one kind of date");
+    CalSync.download(o);
+  }
+};
+</script>
+
+<script>
+/* ============================================================
    NATIVE SHELL  —  Android and iOS store builds
    ============================================================
 
@@ -13728,6 +15278,9 @@ async function boot2(firstRun){
 
   const savedTheme = DB.get("theme");
   if(savedTheme) applyTheme(savedTheme);
+
+  /* stored preferences that used to reset every launch */
+  Garden.loadMagnet();
 
   /* wire chrome */
   $$("nav.tabs button").forEach(b => b.onclick = () => { haptic(); go(b.dataset.tab); });

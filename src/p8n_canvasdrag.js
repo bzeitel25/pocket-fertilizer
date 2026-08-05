@@ -21,6 +21,10 @@
 const CanvasDrag = {
   magnet: true,
   active: null,
+  /* set by whichever gesture is in flight so a second finger landing on the
+     canvas (a pinch) can call it off rather than flinging the plant across
+     the bed. Zoom is the only caller. */
+  abort: null,
 
   bind(){
     const svg = $("#pcanvas"); if(!svg) return;
@@ -38,11 +42,28 @@ const CanvasDrag = {
   down(ev){
     if(ev.button !== undefined && ev.button > 0) return;
     const svg = $("#pcanvas"); if(!svg) return;
+    /* a second finger on the canvas is a pinch, not a drag */
+    if(typeof Zoom !== "undefined" && Zoom.pinching()) return;
+
+    /* the little ⋯ button on a selected plant opens its details. It has to be
+       tested before the .pl branch below, or press-and-hold swallows it. */
+    const menu = ev.target && ev.target.closest && ev.target.closest("[data-menu]");
+    if(menu){
+      ev.preventDefault(); ev.stopPropagation();
+      const mid = menu.getAttribute("data-menu");
+      const mp = DB.find("plantings", mid);
+      if(mp){ Garden.sel = mid; haptic(); Garden.repaint(); Garden.plantingSheet(mp); }
+      return;
+    }
     const grip = ev.target && ev.target.closest && ev.target.closest("[data-grip]");
     if(grip) return CanvasDrag.resizeStart(ev, grip.getAttribute("data-grip"));
     const el = ev.target && ev.target.closest && ev.target.closest(".pl");
-    if(el && !Garden.erase && !Garden.paint && !Garden.clip)
-      return CanvasDrag.moveStart(ev, el.getAttribute("data-pid"), el);
+    if(el && !Garden.erase && !Garden.paint && !Garden.clip){
+      const pid = el.getAttribute("data-pid");
+      /* in multi-select mode a tap adds to the set rather than dragging one */
+      if(typeof Sel !== "undefined" && Sel.on) return Sel.tapStart(ev, pid);
+      return CanvasDrag.moveStart(ev, pid, el);
+    }
     CanvasDrag.tapStart(ev);
   },
 
@@ -126,7 +147,10 @@ const CanvasDrag = {
       el.removeAttribute("opacity");
       CanvasDrag.active = null;
       CanvasDrag.live("");
+      CanvasDrag.abort = null;
       if(!drop || !lifted){ if(!lifted && far < 8) Garden.tapAt(start.x, start.y); return; }
+      if(Math.abs(pos.x - ox) < 0.2 && Math.abs(pos.y - oy) < 0.2) return;
+      Undo.push("move", "Moved " + cropName(p.crop_id), [{ id: id, px: ox, py: oy }]);
       DB.update("plantings", id, { px: Math.round(pos.x*10)/10, py: Math.round(pos.y*10)/10,
         x: Math.floor(pos.x / Garden.cell(bed)), y: Math.floor(pos.y / Garden.cell(bed)) });
       Garden.sel = id;
@@ -135,6 +159,7 @@ const CanvasDrag = {
       toast(msg || (cropName(p.crop_id) + " moved"));
     };
     const onUp = () => finish(true);
+    CanvasDrag.abort = () => { el.setAttribute("transform", "translate(" + ox + " " + oy + ")"); finish(false); };
 
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", onUp);
@@ -204,7 +229,10 @@ const CanvasDrag = {
              (Math.round(ox*10)/10) + ' ' + (Math.round(oy*10)/10) + '" stroke="' + col +
              '" stroke-width="0.5" stroke-dasharray="1.4 1.2" stroke-opacity="0.9"/>';
       const mx = (pos.x + ox) / 2, my = (pos.y + oy) / 2;
-      const bs = Math.max(2.4, Math.min(Geom.W(bed), Geom.H(bed)) * 0.035);
+      /* a marker, not a placard. Sized off the bed so it is the same size on
+         screen whatever the plot measures, and small enough that it never
+         hides the plant it is telling you about. */
+      const bs = Canvas.badgeR(bed, Geom.RC(p), kind === "bad");
       out += '<g transform="translate(' + (Math.round(mx*10)/10) + ' ' + (Math.round(my*10)/10) + ')">' +
         '<circle r="' + bs + '" fill="' + col + '"/>' +
         '<text y="' + (bs*0.38) + '" text-anchor="middle" font-size="' + (bs*1.2) + '" fill="#fff">' + sym + '</text></g>';
@@ -291,6 +319,8 @@ const CanvasDrag = {
       window.removeEventListener("pointercancel", up);
       document.removeEventListener("touchmove", blockScroll);
       svg.classList.remove("dragging");
+      CanvasDrag.abort = null;
+      if(Math.abs(rc - rc0) > 0.2) Undo.push("resize", "Resized " + cropName(p.crop_id), [{ id: id, rc: rc0, rr: rr0 }]);
       Garden.setRadius(id, rc, rc * ratio);
       /* a footprint that changed by hand is a footprint she means —
          record it as one plant that sprawls, not a clump that grew */
@@ -304,13 +334,18 @@ const CanvasDrag = {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
+    CanvasDrag.abort = () => { rc = rc0; paint(); up(); };
   }
 };
 
-/* the magnet is a preference, and some people want none of it */
+/* The magnet is a preference, and some people want none of it. It used to be
+   an in-memory flag that reset to on at every launch, which made it look like
+   the setting had not stuck — so it is a stored preference now. */
 Garden.toggleMagnet = function(){
   CanvasDrag.magnet = !CanvasDrag.magnet;
+  DB.set("magnet", CanvasDrag.magnet ? "1" : "0");
   Garden.render();
   toast(CanvasDrag.magnet ? "Companions will pull into place" : "Free placement — nothing snaps");
 };
+Garden.loadMagnet = function(){ CanvasDrag.magnet = DB.get("magnet", "1") !== "0"; };
 </script>

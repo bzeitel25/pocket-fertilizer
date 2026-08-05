@@ -11,8 +11,12 @@ const SCHEMA = {
      kept because the square-foot grid is still offered as an overlay and as a
      snapping step, and because every bed made before the canvas existed is
      described that way — see Geom.bed, which migrates one lazily on read. */
+  /* north_deg is the compass bearing the TOP of the drawing points at. It is
+     what turns "who is standing in whose light" from an assumption that the
+     gardener drew the bed north-up into an actual answer. 0 is north-up, so
+     every bed made before it existed keeps behaving as it did. */
   beds:       ["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil","irrigation","notes","mx","my","rot","created",
-               "shape","w_in","h_in","poly","grid_on","snap_in"],
+               "shape","w_in","h_in","poly","grid_on","snap_in","north_deg"],
   /* px,py are the plant's centre in inches from the bed's top-left. rr is the
      root radius it needs to itself, rc the spread of its mature foliage; the
      two are drawn separately because overlapping leaves are fine and
