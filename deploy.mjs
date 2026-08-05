@@ -81,16 +81,28 @@ if (before !== null && before !== after) {
 head("Checking the BUILD stamp");
 const stamp = (after.match(/const BUILD = "([^"]+)"/) || [])[1];
 if (!stamp) die("no BUILD constant found in the built file.");
-let live = null;
-try {
-  live = (sh("git show origin/main:index.html").match(/const BUILD = "([^"]+)"/) || [])[1];
-} catch (e) { /* origin unreachable or first push */ }
-if (live && live === stamp) die(
-  'BUILD is still "' + stamp + '", which is what is already live.\n' +
+let liveHtml = null;
+for (const p of ["docs/index.html", "index.html"]) {
+  /* NOT sh() — that trims, which silently drops the trailing newline and makes
+     an identical file compare as changed. */
+  try {
+    liveHtml = execSync("git show origin/main:" + p, { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["pipe","pipe","ignore"] });
+    break;
+  } catch (e) { /* try the other layout */ }
+}
+const live = liveHtml ? (liveHtml.match(/const BUILD = "([^"]+)"/) || [])[1] : null;
+/* The rule is not "the stamp must always change" — it is "if the app changed,
+   the stamp must change". A pure restructure ships a byte-identical app, and
+   bumping the stamp there just makes every phone re-download the same file. */
+const appChanged = liveHtml !== null && norm(liveHtml) !== after;
+if (live && live === stamp && appChanged) die(
+  'The app changed but BUILD is still "' + stamp + '", which is what is already live.\n' +
   "The in-app updater compares this string. If it does not change, the app\n" +
   'tells the gardener she is up to date and never refreshes.\n\n' +
   "Bump `const BUILD` in src/p16_sources_ui.js and run this again.");
-say('BUILD "' + stamp + '"' + (live ? ' — live is "' + live + '", so the updater will fire.' : " (no live build to compare)."));
+if (!live) say('BUILD "' + stamp + '" (no live build to compare).');
+else if (!appChanged) say('BUILD "' + stamp + '" — the app is byte-identical to what is live, so no bump is needed.');
+else say('BUILD "' + stamp + '" — live is "' + live + '", so the updater will fire.');
 
 /* ---- 5. the suites --------------------------------------------------- */
 head("Running the test suites");
