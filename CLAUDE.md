@@ -212,6 +212,31 @@ every screen and modal, assistant tool execution, and data-accuracy invariants. 
 real bugs — an infinite retry loop, a data-truncating patch, stale-task rendering. Run it
 before every deploy and add checks for anything new.
 
+## Never let this fork again
+
+On 2026-08-04 two sessions ran against `main` in parallel from `5951411` and diverged for
+most of a day. One replaced the planting model with the canvas; the other kept building on
+the grid and pushed. Git cannot know two rewrites of the same functions were meant as
+alternatives, so it correctly refused to merge them — 10 conflict blocks in `index.html`,
+several over a thousand lines. Resolved at `4450d2e` by taking the canvas wholesale, after
+checking that origin held nothing this line lacked.
+
+1. **One session against `main` at a time.** If two must run, give each an explicitly
+   disjoint scope, in both prompts.
+2. **`git fetch origin && git log HEAD..origin/main` before any large piece of work**, and
+   stop if origin has moved. Both sessions skipped this; that is the whole story.
+3. **Bump `BUILD` once, at the end of a deploy.** A colliding `.13` stamp already cost a
+   throwaway commit (`7f7db85`) because the updater compares strings and never fired.
+4. **`src/` is still unversioned.** Only `dist/` is a repo, so every source edit lives one
+   OneDrive hiccup away from being unrecoverable — and a rebuild from a rolled-back `src/`
+   will silently overwrite `dist/index.html`. **Before running `build.mjs`, confirm `src/`
+   reproduces the shipped file:** copy `dist/index.html` aside, build, and diff (normalise
+   line endings — the Windows side writes CRLF, the sandbox writes LF, which makes an
+   identical file look like it differs on every line). Putting `src/` under version control
+   is the single highest-value fix outstanding.
+5. **Snapshot before a merge.** `git branch backup/<name> <sha>` on both sides, and copy
+   `dist/index.html` aside. The canvas work existed in exactly one place.
+
 ## Deploying
 
 ```bash
