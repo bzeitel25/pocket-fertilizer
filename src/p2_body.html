@@ -1,0 +1,54 @@
+
+<div id="app">
+  <header class="appbar">
+    <div class="bar">
+      <div class="grow">
+        <div class="title" id="scr-title">Pocket Fertilizer</div>
+        <div class="sub" id="scr-sub">Loading…</div>
+      </div>
+      <button class="iconbtn" id="btn-theme" title="Toggle theme">◐</button>
+      <button class="iconbtn" id="btn-more" title="Menu">☰</button>
+    </div>
+  </header>
+
+  <div id="coach"></div>
+  <main>
+    <section class="screen active" id="s-home"></section>
+    <section class="screen" id="s-garden"></section>
+    <section class="screen" id="s-seeds"></section>
+    <section class="screen" id="s-calendar"></section>
+    <section class="screen" id="s-doctor"></section>
+    <section class="screen" id="s-weather"></section>
+    <section class="screen" id="s-assist"></section>
+    <section class="screen" id="s-sources"></section>
+    <section class="screen" id="s-help"></section>
+    <section class="screen" id="s-journal"></section>
+    <section class="screen" id="s-recap"></section>
+    <section class="screen" id="s-library"></section>
+    <section class="screen" id="s-settings"></section>
+    <section class="screen" id="s-sql"></section>
+  </main>
+
+  <nav class="tabs">
+    <button data-tab="home"><span class="ic">🏡</span><span>Home</span></button>
+    <button data-tab="garden"><span class="ic">🪴</span><span>Garden</span></button>
+    <button data-tab="seeds"><span class="ic">🌰</span><span>Seeds</span></button>
+    <button data-tab="calendar"><span class="ic">🗓️</span><span>Calendar</span></button>
+    <button data-tab="doctor"><span class="ic">🔬</span><span>Doctor</span></button>
+    <button data-tab="assist"><span class="ic">✨</span><span>Ask</span></button>
+  </nav>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet">
+  <div class="grab"></div>
+  <div class="shead">
+    <h2 class="grow truncate" id="sheet-title">—</h2>
+    <button class="iconbtn" id="sheet-close">✕</button>
+  </div>
+  <div class="sbody" id="sheet-body"></div>
+</div>
+<div class="toast" id="toast"></div>
+<input type="file" id="filepick" accept="image/*" class="hide">
+<input type="file" id="filepick-cam" accept="image/*" capture="environment" class="hide">
+<input type="file" id="filepick-json" accept=".json,application/json" class="hide">

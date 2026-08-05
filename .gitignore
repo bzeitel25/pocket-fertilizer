@@ -1,0 +1,17 @@
+# Node
+node_modules/
+
+# NB: package-lock.json is deliberately NOT ignored. mobile/ has one and the
+# store-build workflows need it for a reproducible npm install.
+
+# Editor / tool state
+.claude/
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Build scratch
+*.log
