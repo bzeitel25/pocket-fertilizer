@@ -4,6 +4,8 @@ A gardener's pocket assistant: lay out beds of any shape on an organic canvas, t
 
 **Live app → [bzeitel25.github.io/pocket-fertilizer](https://bzeitel25.github.io/pocket-fertilizer/)**
 
+*Working on this project? Read **[START-HERE.md](START-HERE.md)** before anything else.*
+
 Offline-first, no account, no server. Everything stays encrypted on the device.
 
 ---

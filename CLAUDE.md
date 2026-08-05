@@ -1,5 +1,12 @@
 # Pocket Fertilizer — working notes for future sessions
 
+> **Read [START-HERE.md](START-HERE.md) first.** This file explains how the app is built.
+> That one explains how not to break it, and lists the seven ways this project has
+> actually gone wrong — a rebuild against a rolled-back source tree, two sessions
+> forking `main`, a colliding BUILD stamp, commits stranded for two days, a Pages
+> folder setting that made the site render the README, a stale service worker, and a
+> CRLF diff that made an identical file look destroyed.
+
 ## Layout
 
 ```
