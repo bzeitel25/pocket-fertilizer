@@ -212,6 +212,32 @@ every screen and modal, assistant tool execution, and data-accuracy invariants. 
 real bugs — an infinite retry loop, a data-truncating patch, stale-task rendering. Run it
 before every deploy and add checks for anything new.
 
+## Before you push: `node deploy.mjs`
+
+One command, run from the project root. It stops at the first thing that is wrong:
+
+1. **fetches origin and refuses if it has moved** — this is the check both sessions skipped
+   on 2026-08-04, and skipping it is the entire story of that fork;
+2. rebuilds from `src/` with the guard armed (below);
+3. confirms `src/` reproduces the shipped file, normalising line endings — the Windows side
+   writes CRLF and the sandbox writes LF, which makes an identical file look wholly changed;
+4. **refuses a `BUILD` stamp that matches the live one**, because the updater compares that
+   string and a collision means the phone says "up to date" forever (this already cost the
+   throwaway commit `7f7db85`);
+5. runs both suites and fails on the first red check;
+6. prints the exact push command, and the `curl` to confirm it really went live.
+
+It never pushes on its own. The sandbox has no GitHub credentials, so the push is always
+Bruno's, from his own machine.
+
+**`build.mjs` now refuses to write a file that has lost a major part of the app.** The way
+work has actually been lost here is not a bad merge — it is a rebuild against a `src/` that
+OneDrive quietly rolled back, which overwrites the only surviving copy of a day's work and
+raises no error at all. The `REQUIRED` list at the bottom of `build.mjs` names the markers
+that must survive; if any is missing the build aborts and `dist/index.html` is left
+untouched. Add to that list whenever a major part lands. `--force` overrides it, and should
+be rare enough to feel wrong.
+
 ## Never let this fork again
 
 On 2026-08-04 two sessions ran against `main` in parallel from `5951411` and diverged for
