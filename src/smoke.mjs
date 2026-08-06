@@ -42,7 +42,7 @@ const w = dom.window;
 const G = w.eval("({DB,CROPS,CONDITIONS,Season,Recommend,Garden,Seeds,Cal,Doctor,Journal,Recap,Library,Settings,SqlView,APP,go,iso,today,pairRating,companionsFor,closeSheet,Photos,Vault,Weather,Assist,AI_TOOLS,SOURCES,COND_SRC,VERIFIED,Sources,Updater,BUILD,cropSource,FIELD_CONFIDENCE,CLAIM_NOTES,Varieties,VARIETY_REF,PROVIDERS,Maturity,INFO,TIPS,Tips,Notify,Coach,GUIDE,Help,Onboard,Live,Gmap,FEATURES,Native,Solar,Micro,MicroUI,MicroLog,SECTORS,SECTOR_AZ," +
   "Geom,PlantArt,Canvas,CanvasDrag,Shape,Habit,HABIT_SRC,addDays,diffDays,crop,cropName,FAMILY," +
   "GARDEN_PLANTS,GARDEN_SRC,PLANT_ROLE,UserCrops,SCHEMA,companionsFor,CROP_ABSENT,CROP_ALIAS," +
-  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,EV})");
+  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,EV,Ask,Vision,firstJsonObject})");
 for(const k of Object.keys(G)) w[k] = G[k];
 const origErr = console.error;
 const JSDOM_NOISE = /^Not implemented:/;
@@ -883,6 +883,63 @@ check("variety choice attaches to a planting", () => {
   w.Garden.plantingSheet(w.DB.find("plantings", cuke.id));
   return w.document.getElementById("sheet-body").innerHTML.includes("Marketmore 76"); });
 w.closeSheet();
+
+/* --- the smart variety lookup: it was Gemini-only and it showed raw errors --- */
+check("the answer parser takes the first whole object, not first-brace-to-last", () => {
+  /* the old /\{[\s\S]*\}/ swallowed everything up to a later brace and then
+     died in JSON.parse — search grounding makes trailing prose the norm */
+  const s = w.firstJsonObject('Here you go:\n{"name":"Sungold","dtm":57}\nSources: {see above}');
+  return s === '{"name":"Sungold","dtm":57}' && JSON.parse(s).dtm === 57; });
+check("it survives a fenced code block", () => {
+  const s = w.firstJsonObject('```json\n{"name":"Sungold"}\n```');
+  return !!s && JSON.parse(s).name === "Sungold"; });
+check("it keeps nested objects whole", () => {
+  const s = w.firstJsonObject('{"a":{"b":1},"c":2} trailing');
+  return !!s && JSON.parse(s).a.b === 1 && JSON.parse(s).c === 2; });
+check("a brace inside a string does not end the object", () => {
+  const s = w.firstJsonObject('{"notes":"a } brace and a \\" quote","dtm":60}');
+  return !!s && JSON.parse(s).dtm === 60; });
+check("an unterminated object is refused rather than half-parsed", () =>
+  w.firstJsonObject('{"name":"Sun') === null && w.firstJsonObject("no json here") === null);
+
+check("the lookup no longer calls a provider endpoint itself", () => {
+  /* the bug: this file POSTed to Gemini directly, read gemKey and gemModel,
+     and hid its own button from anyone using Claude */
+  const src = w.Varieties.lookup.toString();
+  return !/fetch\s*\(/.test(src) && !/gemKey|gemModel|GEM_URL|CLAUDE_URL/.test(src) &&
+         /Ask\.json/.test(src); });
+check("the look-it-up button follows the connected provider, not a Gemini key", () => {
+  const seen = {};
+  ["gemini", "claude"].forEach(p => {
+    w.DB.set("aiProvider", p);
+    w.DB.set(p === "gemini" ? "gemKey" : "aiKey", "test-key");
+    w.DB.set(p === "gemini" ? "aiKey" : "gemKey", "");
+    w.Varieties.pick("tomato", () => {});
+    seen[p] = !!w.document.getElementById("vp-ai");
+    w.closeSheet();
+  });
+  w.DB.set("aiProvider", "gemini"); w.DB.set("gemKey", ""); w.DB.set("aiKey", "");
+  return seen.gemini && seen.claude; });
+check("with no key at all it explains rather than showing a dead button", () => {
+  w.Varieties.pick("tomato", () => {});
+  const h = w.document.getElementById("sheet-body").innerHTML;
+  w.closeSheet();
+  return !w.document.getElementById("vp-ai") && h.includes("Connect the assistant"); });
+check("Ask reports readiness from whichever provider is connected", () => {
+  w.DB.set("aiProvider", "claude"); w.DB.set("aiKey", "k");
+  const onClaude = w.Ask.ready();
+  w.DB.set("aiKey", "");
+  const off = w.Ask.ready();
+  w.DB.set("aiProvider", "gemini");
+  return onClaude && !off; });
+check("a parse failure is explained in words, not as a syntax error", () => {
+  const m = w.Ask.explain(new Error("no-json"));
+  return /variety name/.test(m) && !/JSON|token|position/i.test(m); });
+check("Ask does not inherit Vision's advice about photographs", () =>
+  !/photo|shot|lit/i.test(w.Ask.explain(new Error("no-json"))) &&
+  /photo|shot|lit/i.test(w.Vision.explain(new Error("no-json"))));
+check("a rejected key still reads as a key problem through Ask", () =>
+  /key was rejected/i.test(w.Ask.explain(new Error("Gemini 401 nope"))));
 
 // --- assistant can size a planting ---
 const aiBed = w.DB.insert("beds", { name:"AI span", cols:6, rows:6, cell_in:12, sun_hours:8 });

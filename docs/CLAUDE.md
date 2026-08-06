@@ -335,12 +335,34 @@ git commit -m "..."
 git push origin main
 ```
 
-**Push needs credentials.** The Cowork sandbox has no GitHub auth, so `git push` from a session
-fails with `could not read Username`. Commits still work — a session should commit its changes
-and hand back a ready-to-push repo. Bruno runs the push from his own machine, where the Windows
-credential manager already has GitHub access. If a session ever needs to deploy end to end on
-its own, the fallback is the GitHub web UI (Add file → Upload files) via the Chrome extension,
-which is how earlier deploys were done.
+**A session can push now, but only when Bruno asks.** That is his standing rule, not a
+limitation — commit and hand back by default, and push on request. It keeps a human checkpoint
+between "the suites are green" and "the updater has fired on the phone", which is the checkpoint
+the 2026-08-04 fork went around.
+
+The credential is a **fine-grained GitHub PAT scoped to this one repo** (Contents: read/write),
+in `C:\Dev\.claude-secrets\gh-token.txt`. That folder is a **sibling of the repo, never inside
+it** — this repo is public, so a token under `C:\Dev\Pocket Fertilizer` would be one `git add -A`
+from being published, with `.gitignore` as the only thing in the way. Ask to connect
+`C:\Dev\.claude-secrets` alongside the project folder; it is one approval, each session.
+
+Feed it to git **per command**, so it never lands in `.git/config`:
+
+```bash
+HELPER='!f(){ echo username=bzeitel25; echo "password=$(tr -d " \t\r\n" < /path/to/gh-token.txt)"; };f'
+git -c credential.helper="$HELPER" push origin main
+```
+
+Redact `github_pat_[A-Za-z0-9_]*` from anything printed. Verify with `push --dry-run` first: it
+checks permissions for real, which is how the token's missing `Contents: read and write` was
+caught. A **403 "Permission … denied"** means the token is valid but under-scoped — on a
+fine-grained PAT the Repository permissions section only appears once **Repository access** is
+set to *Only select repositories*, so leaving it on *Public repositories* silently yields a
+read-only token. A **401** or `could not read Username` means it could not read the file at all.
+
+SSH is not an option: the sandbox cannot resolve `github.com` over SSH, only HTTPS is allowlisted.
+`gh` is not installed and there is no GitHub MCP connector. The old fallback — uploading through
+the GitHub web UI with the Chrome extension — still works if the token ever lapses.
 
 ## The store builds
 

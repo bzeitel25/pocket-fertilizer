@@ -375,4 +375,135 @@ const Vision = {
     return m || "Something went wrong.";
   }
 };
+
+/* ============================================================
+   ASK — the same idea as Vision, for a question with no picture.
+
+   The variety lookup used to POST to the Gemini endpoint itself,
+   read DB.get("gemKey") and DB.get("gemModel") directly, and hide
+   its own button unless a Gemini key was set. So a gardener on
+   Claude had a working assistant and no "Look it up" button at
+   all, and one on Gemini got a raw "HTTP 400" or a JSON.parse
+   syntax error in the sheet. That is the identical mistake the
+   packet reader made before Vision existed, which is why this is
+   a shared path and not another local fetch.
+
+   Web search is on by default, because a variety name is exactly
+   the kind of thing a model should look up rather than recall.
+   ============================================================ */
+
+/* Pull the FIRST COMPLETE object out of a model's answer.
+
+   The old code used /\{[\s\S]*\}/ — first brace to LAST brace. Greedy,
+   so any prose containing a closing brace after the object got swallowed
+   into the match, and JSON.parse then threw a syntax error that went
+   straight to the screen. Search grounding makes that likely rather than
+   rare: the model narrates around the JSON and cites as it goes. This
+   walks the braces instead, honouring strings and escapes. */
+function firstJsonObject(txt){
+  const s = String(txt || "").replace(/```(?:json)?/gi, "");
+  const start = s.indexOf("{");
+  if(start < 0) return null;
+  let depth = 0, inStr = false, escaped = false;
+  for(let i = start; i < s.length; i++){
+    const c = s[i];
+    if(inStr){
+      if(escaped) escaped = false;
+      else if(c === "\\") escaped = true;
+      else if(c === '"') inStr = false;
+      continue;
+    }
+    if(c === '"') inStr = true;
+    else if(c === "{") depth++;
+    else if(c === "}"){ if(!--depth) return s.slice(start, i + 1); }
+  }
+  return null;                      /* unterminated — usually a truncated answer */
+}
+
+const Ask = {
+  ready(){ return !!Assist.apiKey(); },
+  who(){ return Assist.prov().n; },
+
+  /* Vision's wording assumes a photo — "try a better-lit shot of the front"
+     is nonsense advice for a question that was only ever text. The two
+     answers that differ are answered here and the rest defers. */
+  explain(e){
+    const m = String(e && e.message || e || "");
+    if(m === "no-json") return "Could not make sense of the answer. Try the full variety name as it appears on the packet.";
+    if(m === "no-key")  return "No AI key connected yet. Settings → The assistant → Connect.";
+    return Vision.explain(e);
+  },
+
+  /* returns { text, sources:[title…] } */
+  async text(prompt, opts){
+    opts = opts || {};
+    if(!Assist.apiKey()) throw new Error("no-key");
+    const max = opts.maxTokens || 800;
+    let search = opts.search !== false;
+
+    if(DB.get("aiProvider") === "claude"){
+      /* two passes at most: the second only happens if the server-side
+         search tool is rejected, which older keys and models do */
+      for(let attempt = 0; attempt < 2; attempt++){
+        const body = { model: Assist.modelName(), max_tokens: max,
+                       messages:[{ role:"user", content: prompt }] };
+        if(search) body.tools = [{ type:"web_search_20250305", name:"web_search", max_uses: 3 }];
+        const r = await fetch(CLAUDE_URL, {
+          method:"POST",
+          headers:{ "content-type":"application/json", "x-api-key": Assist.apiKey(),
+                    "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+          body: JSON.stringify(body)
+        });
+        if(!r.ok){
+          const b = await r.text().catch(() => "");
+          if(search && r.status === 400 && /web_search|tool/.test(b)){ search = false; continue; }
+          throw new Error("Claude " + r.status + " " + b.slice(0, 160));
+        }
+        const j = await r.json();
+        const content = j.content || [];
+        const srcs = [];
+        content.forEach(c => {
+          if(c.type === "web_search_tool_result")
+            (c.content || []).forEach(w => { if(w.title) srcs.push(w.title); });
+        });
+        return { text: content.filter(c => c.type === "text").map(c => c.text || "").join("").trim(),
+                 sources: srcs.slice(0, 3) };
+      }
+    }
+
+    const body = { contents:[{ role:"user", parts:[{ text: prompt }] }],
+                   generationConfig:{ temperature: 0.1, maxOutputTokens: max } };
+    /* google_search and responseMimeType:"application/json" are mutually
+       exclusive on Gemini — asking for both is a 400. Search wins, and the
+       object gets dug out of the prose by firstJsonObject. */
+    if(search) body.tools = [{ google_search:{} }];
+    else if(opts.json) body.generationConfig.responseMimeType = "application/json";
+    const r = await fetch(GEM_URL + Assist.modelName() + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
+      method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify(body)
+    });
+    /* the body carries Google's actual complaint; throwing "HTTP 400" alone
+       is what made this feature impossible to diagnose from a phone */
+    if(!r.ok){ const b = await r.text().catch(() => ""); throw new Error("Gemini " + r.status + " " + b.slice(0, 160)); }
+    const j = await r.json();
+    const cand = (j.candidates || [])[0];
+    if(!cand){
+      const blocked = ((j.promptFeedback || {}).blockReason) || "";
+      throw new Error(blocked ? "The service refused that question (" + blocked + ")." : "The service returned nothing.");
+    }
+    const gm = cand.groundingMetadata || {};
+    return { text: (((cand.content || {}).parts) || []).map(p => p.text || "").join("").trim(),
+             sources: (gm.groundingChunks || []).map(g => (g.web || {}).title).filter(Boolean).slice(0, 3) };
+  },
+
+  /* same, but insists on an object and hands it back parsed */
+  async json(prompt, opts){
+    const a = await Ask.text(prompt, Object.assign({ json:true }, opts || {}));
+    const raw = firstJsonObject(a.text);
+    if(!raw) throw new Error("no-json");
+    let data;
+    try{ data = JSON.parse(raw); }
+    catch(err){ throw new Error("no-json"); }
+    return { data: data, sources: a.sources };
+  }
+};
 </script>

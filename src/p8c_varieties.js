@@ -144,8 +144,10 @@ const Varieties = {
     h += '<div id="vp-list" style="margin-top:10px"></div>';
     h += '<div class="row" style="gap:8px;margin-top:12px">' +
       '<button class="btn ghost grow" id="vp-add">＋ Add manually</button>' +
-      (DB.get("gemKey") ? '<button class="btn grow" id="vp-ai">✨ Look it up</button>' : '') + '</div>';
-    if(!DB.get("gemKey")) h += '<div class="tiny muted" style="margin-top:8px">Connect the assistant in Settings and this can search the web for any variety and fill in the details.</div>';
+      /* Assist.ready(), never DB.get("gemKey") — this button was invisible to
+         anyone using Claude, which is the same bug the packet reader had. */
+      (Assist.ready() ? '<button class="btn grow" id="vp-ai">✨ Look it up</button>' : '') + '</div>';
+    if(!Assist.ready()) h += '<div class="tiny muted" style="margin-top:8px">Connect the assistant in Settings and this can search the web for any variety and fill in the details.</div>';
     h += '<div id="vp-out" style="margin-top:12px"></div>';
     openSheet("Choose a variety", h);
 
@@ -196,36 +198,27 @@ const Varieties = {
     };
   },
 
-  /* ---------- assistant lookup ---------- */
+  /* ---------- assistant lookup ----------
+     Goes through Ask, which follows whichever provider is connected. Do not
+     put a provider endpoint back in this file: it is what made this feature
+     Gemini-only and invisible to everyone else, exactly as the packet reader
+     was Anthropic-only before Vision existed. */
   async lookup(cropId, name, onPick){
-    const key = DB.get("gemKey");
-    if(!key) return toast("Variety lookup uses Gemini — connect it in Settings");
+    if(!Ask.ready()) return toast("Connect the assistant in Settings first");
     if(!name) return toast("Type the variety name first");
     const out = $("#vp-out");
     out.innerHTML = '<div class="row"><span class="spinner"></span><span class="sm muted">Searching for ' + esc(name) + '…</span></div>';
     try{
-      const r = await fetch(GEM_URL + DB.get("gemModel", PROVIDERS.gemini.def) + ":generateContent?key=" + encodeURIComponent(key), {
-        method:"POST", headers:{ "content-type":"application/json" },
-        body: JSON.stringify({
-          contents:[{ role:"user", parts:[{ text:
-            "Look up the vegetable variety '" + name + "' of " + cropName(cropId) + ". " +
-            "Return ONLY a JSON object with keys: name, dtm (days to maturity as a number), habit (e.g. Indeterminate, Bush, Determinate paste), " +
-            "resistance (standard disease-resistance letter codes if the variety is known for them, else empty string), " +
-            "notes (two short sentences a home gardener would want: flavour, growth habit, any quirk). " +
-            "If you cannot find reliable information, return {\\\"error\\\":\\\"not found\\\"}. Do not invent numbers." }] }],
-          tools:[{ google_search:{} }]
-        })
-      });
-      if(!r.ok) throw new Error("HTTP " + r.status);
-      const j = await r.json();
-      const cand = (j.candidates || [])[0] || {};
-      const txt = ((cand.content || {}).parts || []).map(p => p.text || "").join("");
-      const m = txt.match(/\{[\s\S]*\}/);
-      if(!m) throw new Error("No result");
-      const d = JSON.parse(m[0]);
+      const res = await Ask.json(
+        "Look up the vegetable variety '" + name + "' of " + cropName(cropId) + ". " +
+        "Reply with a single JSON object and nothing after it, with keys: name, dtm (days to maturity as a number), " +
+        "habit (e.g. Indeterminate, Bush, Determinate paste), " +
+        "resistance (standard disease-resistance letter codes if the variety is known for them, else empty string), " +
+        "notes (two short sentences a home gardener would want: flavour, growth habit, any quirk). " +
+        "If you cannot find reliable information, return {\"error\":\"not found\"}. Do not invent numbers.");
+      const d = res.data;
       if(d.error) throw new Error("Nothing reliable found for that name");
-      const gm = cand.groundingMetadata || {};
-      const srcs = (gm.groundingChunks || []).map(g => (g.web || {}).title).filter(Boolean).slice(0, 3);
+      const srcs = res.sources || [];
       out.innerHTML = '<div class="note g"><b>' + esc(d.name || name) + '</b><br>' +
         (d.dtm ? d.dtm + ' days to maturity · ' : '') + esc(d.habit || "") +
         (d.resistance ? '<br>Resistance: ' + esc(d.resistance) : '') +
@@ -237,7 +230,10 @@ const Varieties = {
       $("#vp-use").onclick = () => Varieties.form(cropId, d.name || name, onPick,
         { name: d.name || name, dtm: d.dtm, habit: d.habit, resistance: d.resistance, notes: d.notes, source:"web search" });
     }catch(e){
-      out.innerHTML = '<div class="note d">' + esc(e.message || "Lookup failed") + '. You can still add it manually.</div>';
+      /* Ask.explain, not e.message — a gardener should never be shown
+         "Unexpected token < in JSON at position 0" and left to guess. */
+      out.innerHTML = '<div class="note d">' + esc(Ask.explain(e)) +
+        ' You can still add it manually.</div>';
     }
   }
 };
