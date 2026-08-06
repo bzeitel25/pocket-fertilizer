@@ -109,6 +109,15 @@ if (lost.length && process.argv.indexOf("--force") < 0) {
 
 fs.writeFileSync(path.join(dist, "index.html"), html);
 fs.copyFileSync(path.join(root, "README.md"), path.join(dist, "README.md"));
+
+/* GitHub Pages runs Jekyll over docs/ unless this file exists, and there is
+   nothing here for Jekyll to do — the app is one static HTML file. All it can
+   do is fail: docs/ also holds the whole Capacitor project, an .aab toolchain,
+   two .wasm blobs and a gradle wrapper .jar, none of which is a website. A
+   failed Pages build does not roll back, it simply keeps serving the last good
+   deploy, so the site silently pins to an old BUILD and the phone is told it
+   is up to date forever. Recreated on every build so it cannot go missing. */
+fs.writeFileSync(path.join(dist, ".nojekyll"), "");
 fs.copyFileSync(path.join(root, "CLAUDE.md"), path.join(dist, "CLAUDE.md"));
 
 const build = (html.match(/const BUILD = "([^"]+)"/) || [])[1];
