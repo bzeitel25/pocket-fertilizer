@@ -55,13 +55,40 @@ const Canvas = {
   /* the date the plan is being previewed at */
   date(){ return addDays(today(), num(Garden.tl, 0) * 7); },
 
-  /* How big to draw the icon. It sits INSIDE the canopy rather than filling
-     it — the circle is the leaf spread, the icon only says what the plant is —
-     but never so small it cannot be made out, or a bed of carrots becomes a
-     row of specks. */
-  iconR(bed, rc, grown){
+  /* How much of the inner circle's radius the icon may occupy. Short of the
+     line on purpose: an icon that touches the circle it sits in reads as one
+     blob, and the gap is what makes the ring legible as a measurement. */
+  ICON_FIT: 0.9,
+
+  /* How big to draw the icon. PlantArt draws in a unit circle, so this is a
+     scale factor, and `scale × PlantArt.R` is the radius the drawing actually
+     occupies in inches.
+
+     THE RULE IS CONTAINMENT. Two circles are drawn around every plant — the
+     root zone it needs to itself, at full size whatever the season, and the
+     canopy at the size it has reached on the date being previewed. The icon
+     has to fit inside whichever of those is currently the smaller, or it hides
+     the very measurement the circle was drawn to show. Both failures were real:
+     a radish's emoji came out wider than the radish's own root zone, because a
+     legibility floor measured off the *bed* took no notice of how small the
+     plant was; and any icon sized off the mature canopy spilled past the canopy
+     a seedling had actually grown.
+
+     Inside that cap the icon still wants to be as large as it usefully can — a
+     fraction of the current canopy, with a floor so a long row of carrots is
+     not a line of specks. But the cap always wins over the floor. Zoom is the
+     answer to a genuinely tiny plant; drawing over its own root zone is not. */
+  iconR(bed, rc, grown, rr){
+    const can = num(rc, 6) * num(grown, 1);
+    /* rr omitted (a preview with nothing but a canopy to go on) means the
+       canopy is the only circle there is to stay inside of */
+    const inner = (rr === undefined || rr === null) ? can : Math.min(num(rr, can), can);
+    const cap = inner * Canvas.ICON_FIT / PlantArt.R;
     const floor = Math.min(Geom.W(bed), Geom.H(bed)) * 0.055;
-    return Math.round(Math.max(rc * grown * 0.62, floor) * 10) / 10;
+    const want = Math.max(can * 0.62, floor);
+    /* two places, not one: at a radish's size a tenth of an inch of rounding
+       is the difference between fitting and spilling */
+    return Math.round(Math.min(want, cap) * 100) / 100;
   },
 
   /* How big a companion badge should be.
@@ -82,6 +109,47 @@ const Canvas = {
     const r = Math.min(clamp(p * 0.26, span * 0.009, span * 0.020), p * 0.6) * ts;
     return Math.round((bad ? r * 1.3 : r) * 100) / 100;
   },
+
+  /* How big the two buttons on a selected plant are — the resize handle and
+     the ⋯ menu — and how far out they sit.
+
+     This was `Math.max(2, rc * 0.2)`: a fifth of the canopy, in inches. So
+     dragging a pumpkin's spread out to four feet grew its own handle to nearly
+     ten inches across, and the control ended up larger than most of the plants
+     around it. A button is not a measurement. It should be the same size on
+     screen whatever the plant measures and whatever the magnification, the way
+     a map's controls are — which means a fraction of the bed (constant on
+     screen at 1×) times Zoom.textScale (constant on screen at every zoom, by
+     shrinking in inches exactly as fast as the view magnifies).
+
+     The fraction is of the bed's WIDTH plus the soil margin, not of its
+     shorter side, because that is the number the SVG actually scales by: the
+     element is `width:100%; height:auto`, so pixels-per-inch comes from the
+     viewBox width and nothing else. Measuring off `min(W,H)` the way the
+     badges do left a 96×48 bed's buttons at half the size of a 48×96 one's,
+     for no reason a gardener could see.
+
+     Nothing caps it against the plant, deliberately: the buttons sit outboard
+     of the canopy rather than on it, and a handle that shrank with the radish
+     it belonged to would be the same inconsistency in the other direction.
+     What a small plant gets instead is `gripAt` pushing the two apart far
+     enough that they clear each other. */
+  GRIP_SCREEN: 0.033,     /* of the view width — a ~7% wide button, at any zoom */
+  gripR(bed){
+    const view = Geom.W(bed) + Canvas.PAD * 2;
+    const ts = typeof Zoom !== "undefined" ? Zoom.textScale() : 1;
+    return Math.round(view * Canvas.GRIP_SCREEN * ts * 100) / 100;
+  },
+  /* on the diagonal, at the canopy edge — but never so close in that the two
+     buttons overlap each other on a plant smaller than they are */
+  gripAt(bed, rc){
+    const br = Canvas.gripR(bed);
+    return Math.round(Math.max(num(rc, 6) * 0.7071, br * 1.15) * 10) / 10;
+  },
+  /* the invisible touch target behind each one — a fat finger's worth wider
+     than the circle it sits under. It rides gripR, so it tracks zoom too;
+     a fixed-inch pad would cover the neighbours at 4×. */
+  gripTap(bed){ return Math.round(Canvas.gripR(bed) * 1.4 * 10) / 10; },
 
   wantLabels(bed){
     if(Canvas.labels !== null) return Canvas.labels;
@@ -199,7 +267,7 @@ const Canvas = {
         h += '<circle r="' + (Math.round(rr*10)/10) + '" fill="none" stroke="' +
              (f.crowded ? "#d98324" : "#f7f3ea") + '" stroke-opacity="0.7" stroke-width="0.32"/>';
 
-      h += '<g class="art" transform="scale(' + Canvas.iconR(bed, rc, grown) + ')">' +
+      h += '<g class="art" transform="scale(' + Canvas.iconR(bed, rc, grown, rr) + ')">' +
            PlantArt.svg(p, { growth: g }) + '</g>';
 
       if(num(p.qty, 1) > 1 && rc >= 4)
@@ -219,25 +287,26 @@ const Canvas = {
       }
 
       if(sel && inter){
-        /* Both buttons are drawn in garden inches, so on a forty-foot plot a
-           radish's handle would be two screen pixels. Each gets an invisible
-           hit circle with a bed-relative floor behind it — zoom is the real
-           cure, this is the belt. */
-        const gx = Math.round(rc * 0.7071 * 10) / 10;
-        const br = Math.max(2, rc * 0.2);
-        const tap = Math.max(br, Math.min(Geom.W(bed), Geom.H(bed)) * 0.035);
+        /* A constant size on screen, at every plant size and every zoom, with
+           an invisible hit circle behind each — zoom is the real cure for a
+           small target, this is the belt. */
+        const gx = Canvas.gripAt(bed, rc);
+        const br = Canvas.gripR(bed);
+        const tap = Canvas.gripTap(bed);
         h += '<circle class="hitpad" data-grip="' + p.id + '" cx="' + gx + '" cy="' + gx +
-             '" r="' + (Math.round(tap*10)/10) + '" fill="transparent"/>' +
+             '" r="' + tap + '" fill="transparent"/>' +
              '<circle class="grip" data-grip="' + p.id + '" cx="' + gx + '" cy="' + gx +
-             '" r="' + (Math.round(br*10)/10) + '" fill="#fff" stroke="#2a8c5e" stroke-width="0.5"/>';
+             '" r="' + br + '" fill="#fff" stroke="#2a8c5e" stroke-width="' +
+             (Math.round(br*0.22*100)/100) + '"/>';
         /* …and its twin bottom-left: everything about this plant — variety,
            how many, which packet, dates, notes. */
         h += '<circle class="hitpad" data-menu="' + p.id + '" cx="' + (-gx) + '" cy="' + gx +
-             '" r="' + (Math.round(tap*10)/10) + '" fill="transparent"/>' +
+             '" r="' + tap + '" fill="transparent"/>' +
              '<g class="pmenu" data-menu="' + p.id + '" transform="translate(' + (-gx) + ' ' + gx + ')">' +
-             '<circle r="' + (Math.round(br*10)/10) + '" fill="#fff" stroke="#2a8c5e" stroke-width="0.5"/>' +
-             '<text y="' + (Math.round(br*0.34*10)/10) + '" text-anchor="middle" font-size="' +
-             (Math.round(br*1.25*10)/10) + '" fill="#2a8c5e" font-weight="700">⋯</text></g>';
+             '<circle r="' + br + '" fill="#fff" stroke="#2a8c5e" stroke-width="' +
+             (Math.round(br*0.22*100)/100) + '"/>' +
+             '<text y="' + (Math.round(br*0.34*100)/100) + '" text-anchor="middle" font-size="' +
+             (Math.round(br*1.25*100)/100) + '" fill="#2a8c5e" font-weight="700">⋯</text></g>';
       }
       h += '</g>';
     });
@@ -246,11 +315,11 @@ const Canvas = {
     if(Canvas.wantLabels(bed)){
       h += '<g class="labels" pointer-events="none">';
       ps.forEach(p => {
-        const rc = Geom.RC(p);
+        const rc = Geom.RC(p), rr = Geom.RR(p);
         const fs = clamp(Math.min(W, H) * 0.045, 2.1, 4.2) *
           (inter && typeof Zoom !== "undefined" ? Zoom.textScale() : 1);
         const grown = Math.max(0.18, PlantArt.sizeAt(PlantArt.growth(p, when)));
-        const below = Math.max(rc * grown, Canvas.iconR(bed, rc, grown) * 1.15);
+        const below = Math.max(rc * grown, Canvas.iconR(bed, rc, grown, rr) * PlantArt.R * 1.15);
         h += '<text x="' + (Math.round(Geom.PX(p)*10)/10) + '" y="' +
           (Math.round((Geom.PY(p) + below + fs * 1.5) * 10) / 10) +
           '" text-anchor="middle" font-size="' + (Math.round(fs*10)/10) +

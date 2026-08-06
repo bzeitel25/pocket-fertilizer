@@ -527,19 +527,41 @@ check("something past its best is drawn faded", () => {
   return w.PlantArt.svg(p, { growth:1.15 }).includes("opacity") &&
          !/opacity="0.75"/.test(w.PlantArt.svg(p, { growth:0.9 })); });
 
-/* --- the icon has to be readable, and has to sit inside the canopy --- */
+/* --- the icon has to be readable, and has to sit inside BOTH circles --- */
 check("the icon sits inside the canopy rather than filling it", () => {
   const bed = w.Geom.bed(w.DB.find("beds", sb.id));
   const r = w.Canvas.iconR(bed, 15, 1);
   return r < 15 && r > 5; });
-check("a small crop in a big bed is still legible", () => {
+check("PlantArt says how much of its unit circle it fills", () =>
+  w.PlantArt.R > 0 && w.PlantArt.R <= 1);
+check("a small crop's icon never spills past its own root zone", () => {
+  /* a carrot on a long row: the bed-relative legibility floor used to win here
+     and drew an emoji wider than the root circle around it */
   const big = w.DB.insert("beds", { name:"Long row", shape:"rect", w_in:48, h_in:240,
     cell_in:12, sun_hours:8 });
-  const r = w.Canvas.iconR(w.Geom.bed(big), 1.5, 1);   /* a carrot */
-  return r >= 2.5; });
+  const drawn = w.Canvas.iconR(w.Geom.bed(big), 1.8, 1, 1.5) * w.PlantArt.R;
+  return drawn <= 1.5 && drawn > 0; });
+check("a seedling's icon never spills past the canopy it has grown so far", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", sb.id));
+  const drawn = w.Canvas.iconR(bed, 15, 0.2, 12) * w.PlantArt.R;
+  return drawn <= 15 * 0.2; });
+check("every plant on a real bed is drawn inside its own smaller circle", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", sb.id));
+  return w.Geom.live(bed.id).every(p => {
+    const rc = w.Geom.RC(p), rr = w.Geom.RR(p);
+    const grown = Math.max(0.18, w.PlantArt.sizeAt(w.PlantArt.growth(p, w.Canvas.date())));
+    const drawn = w.Canvas.iconR(bed, rc, grown, rr) * w.PlantArt.R;
+    return drawn <= Math.min(rr, rc * grown) + 0.01;
+  }); });
+check("the icon leaves a visible gap inside the circle it sits in", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", sb.id));
+  return w.Canvas.iconR(bed, 15, 1, 3) * w.PlantArt.R < 3 * 0.98; });
 check("a seedling icon is smaller than a mature one in the same bed", () => {
   const bed = w.Geom.bed(w.DB.find("beds", sb.id));
-  return w.Canvas.iconR(bed, 15, 0.2) < w.Canvas.iconR(bed, 15, 1); });
+  return w.Canvas.iconR(bed, 15, 0.2, 12) < w.Canvas.iconR(bed, 15, 1, 12); });
+check("a bigger root zone lets the same plant show a bigger icon", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", sb.id));
+  return w.Canvas.iconR(bed, 15, 1, 2) < w.Canvas.iconR(bed, 15, 1, 6); });
 check("the canvas draws the icon at the size the canvas decided", () => {
   const bed = w.Geom.bed(w.DB.find("beds", sb.id));
   const svg = w.Canvas.svg(bed, { interactive:true });
@@ -2395,6 +2417,57 @@ check("both buttons carry a hit target big enough to hit on a large plot", () =>
   const svg = w.Canvas.svg(w.Geom.bed(w.DB.find("beds", zb.id)), { interactive:true });
   const m = svg.match(/class="hitpad" data-menu="[^"]+" cx="[^"]*" cy="[^"]*" r="([\d.]+)"/);
   return !!m && parseFloat(m[1]) >= Math.min(480, 360) * 0.03; });
+
+/* --- the buttons are controls, not measurements --- */
+check("the handle is the same size whatever the plant measures", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", zb.id));
+  return w.Canvas.gripR(bed) === w.Canvas.gripR(bed); });
+check("growing the canopy no longer inflates the handle you grow it with", () => {
+  /* the old rule was rc*0.2 — dragging a spread out to 48" swelled its own
+     button to 9.6", so the control grew under the finger holding it */
+  const bed = w.Geom.bed(w.DB.find("beds", zb.id));
+  const was = w.Geom.RC(w.Geom.plant(w.DB.find("plantings", zt.id)));
+  const before = w.Canvas.gripR(bed);
+  w.Garden.setRadius(zt.id, 48);
+  const svg = w.Canvas.svg(bed, { interactive:true });
+  const after = w.Canvas.gripR(bed);
+  w.Garden.setRadius(zt.id, was);
+  const m = /class="grip" data-grip="[^"]+" cx="[^"]*" cy="[^"]*" r="([\d.]+)"/.exec(svg);
+  return before === after && !!m && parseFloat(m[1]) === after; });
+check("a handle is the same width on screen on a 4ft bed and a 40ft plot", () => {
+  /* what "consistent" has to mean here: the same share of the picture, since
+     that is the only thing the eye can compare */
+  const share = b => {
+    const bed = w.Geom.bed(b);
+    return w.Canvas.gripR(bed) * 2 / (w.Geom.W(bed) + w.Canvas.PAD * 2);
+  };
+  const small = w.DB.insert("beds", { name:"Small", shape:"rect", w_in:48, h_in:96,
+    cell_in:12, sun_hours:8 });
+  const huge = w.DB.insert("beds", { name:"Whole plot", shape:"rect", w_in:480, h_in:480,
+    cell_in:12, sun_hours:8 });
+  return Math.abs(share(small) - share(huge)) < 0.005 && share(huge) < 0.10; });
+check("a wide bed and a tall bed of the same width get the same handle", () => {
+  /* min(W,H) was halving it on one and not the other; the SVG scales by width */
+  const a = w.DB.insert("beds", { name:"Wide", shape:"rect", w_in:96, h_in:48, cell_in:12, sun_hours:8 });
+  const b = w.DB.insert("beds", { name:"Tall", shape:"rect", w_in:96, h_in:240, cell_in:12, sun_hours:8 });
+  return w.Canvas.gripR(w.Geom.bed(a)) === w.Canvas.gripR(w.Geom.bed(b)); });
+check("zooming in shrinks the buttons in inches so they hold their size on screen", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", zb.id));
+  const at1 = w.Canvas.gripR(bed);
+  w.APP.bedId = zb.id; w.Zoom.z = 4;
+  const at4 = w.Canvas.gripR(bed);
+  const tap4 = w.Canvas.gripTap(bed);
+  w.Zoom.reset();
+  return Math.abs(at4 - at1 / 4) < 0.02 && tap4 < w.Canvas.gripTap(bed); });
+check("the hit pad is never smaller than the button drawn on top of it", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", zb.id));
+  return w.Canvas.gripTap(bed) >= w.Canvas.gripR(bed); });
+check("on a plant smaller than the buttons they are pushed apart, not overlapped", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", zb.id));
+  return w.Canvas.gripAt(bed, 1) > w.Canvas.gripR(bed); });
+check("on a big plant the buttons still sit out at the canopy edge", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", zb.id));
+  return Math.abs(w.Canvas.gripAt(bed, 40) - 40 * 0.7071) < 0.11; });
 check("tapping a plant that is already selected opens it rather than closing it", () => {
   /* the bug that made the variety picker look as though it had been removed */
   w.Garden.sel = zt.id;

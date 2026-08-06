@@ -397,7 +397,20 @@ without owning a Mac. `dist/store/SUBMISSION.md` is the full runbook.
 - Top-level `const` in a classic script is **not** a property of `window`. The smoke test reaches
   app objects via `w.eval("({DB,CROPS,…})")`. Add new globals to that list or tests can't see them.
 - `Write` can't reach paths that don't exist yet — create directories with bash first.
-- The OneDrive-synced folder rejects `unlink` from the sandbox; git warns about `tmp_obj` files
-  and lock files but the commit still succeeds. Harmless.
+- **Ask for delete permission at the START of a session, before running any git command.**
+  The FUSE mount that bridges the project into a Cowork sandbox starts out permitting create,
+  write and rename but denying `unlink`. That single missing verb breaks git completely: git
+  writes `.git/index.lock`, renames it over `.git/index`, then unlinks the remains — the last
+  step fails, the lock survives, and **the next git command refuses to run at all**. So a
+  session gets one `git add` and then nothing, and the repo stays wedged until someone deletes
+  the lock from Windows. The `tmp_obj_*` warnings are the same cause and are harmless.
+
+  It is not a hard limit. The `allow_cowork_file_delete` tool asks Bruno to enable deletion for
+  the folder, and once he approves, `rm` works and git runs clean. **Request it before touching
+  git, not after** — asking afterwards means he has already had to delete a lock by hand. An
+  earlier version of this note said a session simply could not commit; that was wrong, and it
+  also blamed OneDrive, which was wrong twice over since the project left OneDrive and the
+  behaviour did not change. `*.tmp` is gitignored so a scratch file a session cannot clean up
+  can never ride along in a commit.
 - Model names move. The assistant supports Gemini and Claude, ships current defaults, migrates
   retired ones on load, and can list models live from the user's key. Don't hardcode a single one.

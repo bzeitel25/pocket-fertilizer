@@ -15,3 +15,9 @@ Thumbs.db
 
 # Build scratch
 *.log
+
+# Cowork sandbox leftovers. The FUSE mount that bridges this folder into a
+# session permits create, write and rename but denies unlink, so any scratch
+# file a session makes has to be deleted from Windows afterwards. Ignoring the
+# pattern means a stray one can never ride along in a commit.
+*.tmp

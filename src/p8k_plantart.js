@@ -158,7 +158,19 @@ const PlantArt = (() => {
   /* ============================================================
      THE DRAWING — one <g> in a unit circle of radius 1, which the
      canvas scales to the size the icon should actually appear at.
+
+     R is how much of that unit circle the art actually fills, and it
+     is exported because the canvas has to fit the icon inside a
+     measured circle: scale × R is the radius the drawing really
+     occupies. Nothing below may reach further than R from the origin.
+     The widest thing here is a seedling — the 🌱 badge sits at
+     (0.5, -0.45) at font-size 0.7, so it ends at 0.85 — with the soil
+     shadow (0.62 + 0.2) and the mature glyph (font-size 1.55, half an
+     em either side = 0.775) both just inside it. Change the drawing
+     and this number changes with it.
      ============================================================ */
+  const R = 0.85;
+
   function svg(p, opts){
     const o = opts || {};
     const g = o.growth === undefined ? growth(p, o.when) : o.growth;
@@ -188,7 +200,7 @@ const PlantArt = (() => {
       '</g>';
   }
 
-  return { svg: svg, growth: growth, stage: stage, sizeAt: sizeAt, icon: icon,
+  return { svg: svg, growth: growth, stage: stage, sizeAt: sizeAt, icon: icon, R: R,
            archetype: archetype, palette: palette, rng: rng, ARCH: ARCH, FRUIT: FRUIT };
 })();
 </script>

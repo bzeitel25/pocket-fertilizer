@@ -293,18 +293,30 @@ const CanvasDrag = {
     const paint = () => {
       const ring = el.querySelector(".canring");
       const art = el.querySelector("g.art");
-      const grip = el.querySelector("[data-grip]");
       const root = el.querySelector('circle[stroke-opacity="0.7"]');
       const g = PlantArt.growth(p, Canvas.date());
       const grown = Math.max(0.18, PlantArt.sizeAt(g));
       if(ring) ring.setAttribute("r", Math.round(rc * grown * 10) / 10);
-      if(art) art.setAttribute("transform", "scale(" + Canvas.iconR(bed, rc, grown) + ")");
+      /* the root ring below is drawn at rc*ratio, so the icon is capped against
+         the same figure — it shrinks with the plant as the handle comes in */
+      if(art) art.setAttribute("transform", "scale(" + Canvas.iconR(bed, rc, grown, rc * ratio) + ")");
       if(root) root.setAttribute("r", Math.round(rc * ratio * 10) / 10);
-      if(grip){
-        grip.setAttribute("cx", Math.round(rc * 0.7071 * 10) / 10);
-        grip.setAttribute("cy", Math.round(rc * 0.7071 * 10) / 10);
-        grip.setAttribute("r", Math.max(2, rc * 0.2));
-      }
+
+      /* Only the *positions* move. The buttons are a constant size on screen
+         now, so dragging the canopy out no longer inflates the handle you are
+         dragging it with — which is what made a big plant's controls swell
+         under your finger. `querySelector("[data-grip]")` also only ever found
+         the invisible hit pad, so the white circle stayed behind while its
+         target slid away; all four elements are moved by name. */
+      const gx = Canvas.gripAt(bed, rc);
+      el.querySelectorAll("[data-grip]").forEach(n => {
+        n.setAttribute("cx", gx); n.setAttribute("cy", gx);
+      });
+      el.querySelectorAll("circle.hitpad[data-menu]").forEach(n => {
+        n.setAttribute("cx", -gx); n.setAttribute("cy", gx);
+      });
+      const menu = el.querySelector("g.pmenu");
+      if(menu) menu.setAttribute("transform", "translate(" + (-gx) + " " + gx + ")");
     };
 
     const move = e => {
