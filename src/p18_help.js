@@ -88,7 +88,16 @@ const GUIDE = [
      "The records are scrambled before they're stored, so they can't be read off the device. You can add a passphrase in Settings if the phone is shared — but if you forget it, nothing can recover the notes, so save a backup first.",
      "Settings → Save a backup writes everything to a single file you can keep somewhere safe or move to a new phone.",
      "The only things that leave the phone are the weather and zone lookups, and the assistant if you connect one."],
-  steps:["Settings → Save a backup","Optionally set a passphrase","Keep the backup file somewhere safe"] }
+  steps:["Settings → Save a backup","Optionally set a passphrase","Keep the backup file somewhere safe"] },
+
+{ id:"twodevices", icon:"⇄", t:"Using two devices",
+  p:["A phone in the garden and a tablet on the kitchen table are two separate copies of this app, each with its own records. You can move a garden from one to the other.",
+     "On the device that has the garden, go to **Garden** and tap **Copy this garden to another device** — or Settings → Two devices → Send. Choose which plots to include, and whether to bring seed packets, your journal and harvests, and photos. Photos are what make the file large, so leave them off if you are emailing it.",
+     "That saves one file. Send it however suits — AirDrop, Nearby Share, email, a cloud drive.",
+     "On the other device, open Settings and tap **Bring a garden in from a file**. It shows you what is in the file before writing anything: how many beds and plants, and any varieties or crops that device has not seen before, which it will add for you.",
+     "It **adds**, it never replaces. Whatever is already on that device is untouched, and a plot arriving under a name that is taken comes in with (imported) after it. This is the difference between this and Restore from a backup, which wipes the device and puts the backup in its place.",
+     "Two things stay behind on purpose. Your own days-to-maturity averages are not carried, because a file can be imported twice and counting one garden twice in its own average would skew every harvest date afterwards. And sowing dates are recalculated from *that* device's frost dates, so if the two are set to different places the dates will differ — the beds and plants themselves come across exactly."],
+  steps:["Garden → Copy this garden to another device","Choose the plots and what to include","Save the file and send it over","On the other device: Settings → Bring a garden in from a file"] }
 ];
 
 const Help = {

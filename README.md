@@ -104,6 +104,13 @@ A tab in the bottom bar. Type, or hold the mic and talk. It's wired to the app's
 ### Journal and season recap
 Log watering, feeding, amendments, treatments, weeding, soil tests, purchases and harvests with weight, count, value, cost and time. The recap computes yield by crop, pounds per square foot by bed, cost per pound, spend breakdown, recurring problems, and written takeaways for next season. Exports to CSV.
 
+### Two devices
+A phone in the garden and a tablet indoors are two separate copies of this app. **Copy this garden to another device** saves one file — pick which plots go, and whether to bring seed packets, journal and harvests, and photos — and sends it however suits: AirDrop, Nearby Share, email, a cloud drive.
+
+Importing it **adds**, it never replaces. The other device shows you what is in the file before writing a row: how many beds and plants, and any varieties or hand-added crops it has not seen, which it creates for you. Whatever was already there is untouched, and a plot arriving under a name that is taken comes in with *(imported)* after it. That is the difference between this and Restore from a backup, which wipes the device and puts the backup in its place.
+
+Beds and plants come across exactly — outlines, positions, spacing, varieties, the seed packet each plant came from. Two things stay behind on purpose. Your own days-to-maturity averages are not carried, because a file can be imported twice and counting one garden twice in its own average would skew every harvest date afterwards. And sowing dates are recalculated from the receiving device's frost dates, so gardens in two different climates will show different dates for the same bed.
+
 ---
 
 ## Live data
@@ -191,7 +198,7 @@ One difference worth knowing: **voice input works in the browser and on Android,
 - Frost dates are ten-year medians. A south wall, a frost pocket or a hilltop can shift them by a week or more — override them in Settings.
 - Image analysis measures colour and pattern. It cannot identify a species or a pathogen; the symptom answers do the diagnostic work. For anything that spreads — late blight, bacterial wilt, a virus — a county extension office will confirm it free or nearly free.
 - Companion planting evidence ranges from well-documented (marigolds and root-knot nematodes, trap crops, the Three Sisters) to traditional. Conflicts flagged here lean on the well-supported cases: shared pests, shared disease, allelopathy and competition.
-- Storage is per-browser. Export a backup before clearing site data or switching devices.
+- Storage is per-browser. Export a backup before clearing site data. To run the same garden on a second device, use **Copy this garden to another device** rather than the backup — the backup replaces everything on the device it lands on.
 - Photos are downscaled to 900px to keep the vault small. Where IndexedDB is unavailable the app falls back to localStorage, which caps out around 5MB and will warn you.
 
 ---

@@ -42,7 +42,7 @@ const w = dom.window;
 const G = w.eval("({DB,CROPS,CONDITIONS,Season,Recommend,Garden,Seeds,Cal,Doctor,Journal,Recap,Library,Settings,SqlView,APP,go,iso,today,pairRating,companionsFor,closeSheet,Photos,Vault,Weather,Assist,AI_TOOLS,SOURCES,COND_SRC,VERIFIED,Sources,Updater,BUILD,cropSource,FIELD_CONFIDENCE,CLAIM_NOTES,Varieties,VARIETY_REF,PROVIDERS,Maturity,INFO,TIPS,Tips,Notify,Coach,GUIDE,Help,Onboard,Live,Gmap,FEATURES,Native,Solar,Micro,MicroUI,MicroLog,SECTORS,SECTOR_AZ," +
   "Geom,PlantArt,Canvas,CanvasDrag,Shape,Habit,HABIT_SRC,addDays,diffDays,crop,cropName,FAMILY," +
   "GARDEN_PLANTS,GARDEN_SRC,PLANT_ROLE,UserCrops,SCHEMA,companionsFor,CROP_ABSENT,CROP_ALIAS," +
-  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,EV,Ask,Vision,firstJsonObject})");
+  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,Share,EV,Ask,Vision,firstJsonObject})");
 for(const k of Object.keys(G)) w[k] = G[k];
 const origErr = console.error;
 const JSDOM_NOISE = /^Not implemented:/;
@@ -2772,6 +2772,181 @@ check("the sheet is honest that this is a file and not an account connection", (
   const h = w.document.getElementById("sheet-body").innerHTML || "";
   return /no server/i.test(h) && /import/i.test(h); });
 w.closeSheet();
+
+/* ============================================================
+   MOVING A GARDEN BETWEEN DEVICES
+
+   The round trip is the whole feature, so it is tested as one:
+   build a plot, export it, then import the file back into the SAME
+   app and prove the copy is the original in every respect that
+   matters — outline, position, variety, seed link — while nothing
+   that was already here has moved.
+   ============================================================ */
+const shPlot = w.DB.insert("plots", { name:"Share test plot", notes:"the one that travels" });
+const shBed = w.DB.insert("beds", { plot_id: shPlot.id, name:"Travelling bed", shape:"hex",
+  w_in: 96, h_in: 48, cell_in: 12, cols: 8, rows: 4, sun_hours: 7, soil:"raised mix",
+  irrigation:"drip", north_deg: 45, grid_on: 1, snap_in: 12 });
+/* a crop she typed in herself, so the file has to carry the crop as well as the plant */
+const shCrop = w.UserCrops.save({ name:"Lemongrass", slug: w.UserCrops.slug("Lemongrass"),
+  emoji:"🌿", fam:"aster", sun:6, water:1, sp:18, dtm:100, depth:0.25, from:"transplant",
+  feeder:"medium", via:3, ph:"6.0–7.0", comp:"", foes:"", tips:"", harvest:"", npk:"",
+  start_indoor:-8, start_tp:2, start_direct:null, start_fall:null, succ:0, yield:0,
+  germ_lo:14, germ_hi:21, soil_lo:65, soil_opt:75, soil_hi:90 });
+const shVar = w.Varieties.save({ crop_id:"tomato", name:"Bruno's Kitchen Door", dtm:71,
+  habit:"Indeterminate", resistance:"VF", notes:"saved from the plant by the back step", source:"manual" });
+const shSeed = w.DB.insert("seeds", { crop_id:"tomato", name:"Tomato", variety:"Bruno's Kitchen Door",
+  brand:"Saved", packed_year:"2025", germ_rate:"88", qty:"40", unit:"seeds" });
+const shP1 = w.DB.insert("plantings", { bed_id: shBed.id, crop_id:"tomato", variety:"Bruno's Kitchen Door",
+  variety_id: shVar.id, seed_id: shSeed.id, qty:1, span_mode:"single", status:"growing",
+  sown_on:"2026-05-02", px: 31.5, py: 17.25, rr: 12, rc: 18, x: 2, y: 1, w: 1, h: 1 });
+const shP2 = w.DB.insert("plantings", { bed_id: shBed.id, crop_id: shCrop.slug, qty:1,
+  span_mode:"fill", status:"planned", sown_on:"2026-05-10", px: 70, py: 30, rr: 9, rc: 12, x: 5, y: 2, w: 1, h: 1 });
+w.DB.insert("harvests", { date:"2026-07-30", planting_id: shP1.id, bed_id: shBed.id,
+  crop_id:"tomato", weight:"3.5", unit:"lb", count:"11" });
+w.Micro.save("plot", shPlot.id, { slope_pct: 4, slope_dir:"S", surface:"soil", drainage:"normal",
+  wind_exposure:"sheltered", canopy:"open", frost_pocket:"none", method:"survey",
+  horizon: [12,8,4,0,0,4,10,16], notes:"south facing, wall behind" });
+
+let shFile = null;
+check("a garden export names itself in the file, in words, before any data", () => {
+  shFile = w.Share.collect({ plots:[shPlot.id], seeds:true, history:true, photos:false });
+  return shFile.format === "pocket-fertilizer/garden" && shFile.v === 1 &&
+    /Pocket Fertilizer/.test(shFile._about) && shFile.summary.length > 0; });
+check("it carries the plot, the bed and the plants", () =>
+  shFile.plots.length === 1 && shFile.beds.length === 1 && shFile.plantings.length === 2);
+check("it carries the crop she added herself, not just the plant naming it", () =>
+  shFile.usercrops.some(c => c.slug === shCrop.slug));
+check("it carries the variety she saved", () =>
+  shFile.varieties.some(v => v.name === "Bruno's Kitchen Door"));
+check("it carries the micro-climate survey of that plot", () =>
+  shFile.sites.length === 1 && shFile.sites[0].scope === "plot");
+check("it is valid JSON and round-trips through a string", () =>
+  JSON.parse(w.Share.json(shFile)).plantings.length === 2);
+check("only schema columns travel — a working field on a cached row cannot leak", () => {
+  const cols = Object.keys(shFile.beds[0]);
+  return cols.every(c => w.SCHEMA.beds.indexOf(c) >= 0); });
+check("the maturity table is never carried — a file can be imported twice", () =>
+  shFile.maturity === undefined && w.Share.json(shFile).indexOf('"maturity"') < 0);
+check("photos are left out unless asked for, and the survey keeps its measurement anyway", () => {
+  return shFile.photos.length === 0 && JSON.parse(shFile.sites[0].horizon || "[]").length === 8; });
+
+/* --- what comes back --- */
+const shBefore = { plots: w.DB.count("plots"), beds: w.DB.count("beds"), plantings: w.DB.count("plantings") };
+let shRep = null;
+check("importing rejects a file that is not ours, and says which one it wanted", () => {
+  let msg = "";
+  try{ w.Share.read('{"v":1,"tables":{}}'); }catch(e){ msg = e.message; }
+  return msg === "whole-backup" && !!w.Share.EXPLAIN["whole-backup"]; });
+check("importing a garden adds it rather than replacing anything", () => {
+  shRep = w.Share.apply(JSON.parse(w.Share.json(shFile)));
+  return w.DB.count("plots") === shBefore.plots + 1 &&
+         w.DB.count("beds") === shBefore.beds + 1 &&
+         w.DB.count("plantings") === shBefore.plantings + 2 &&
+         !!w.DB.find("plots", shPlot.id) && !!w.DB.find("beds", shBed.id); });
+check("a plot arriving under a name already here is renamed, never merged", () =>
+  shRep.renamed.length === 1 && /imported/i.test(shRep.renamed[0]) &&
+  w.DB.all("plots").filter(p => p.name === "Share test plot").length === 1);
+const shNewPlot = w.DB.all("plots").find(p => /Share test plot \(imported\)/.test(p.name || ""));
+const shNewBed = w.DB.all("beds").find(b => b.plot_id === (shNewPlot || {}).id);
+check("the rebuilt bed is the same outline, not an approximation of it", () =>
+  !!shNewBed && shNewBed.shape === "hex" && num0(shNewBed.w_in) === 96 && num0(shNewBed.h_in) === 48 &&
+  num0(shNewBed.north_deg) === 45 && shNewBed.irrigation === "drip");
+check("plants land back on the exact inch they were on", () => {
+  const ps = w.DB.where("plantings", p => p.bed_id === shNewBed.id);
+  const t = ps.find(p => p.crop_id === "tomato");
+  return ps.length === 2 && num0(t.px) === 31.5 && num0(t.py) === 17.25 &&
+         num0(t.rr) === 12 && num0(t.rc) === 18 && t.span_mode === "single"; });
+check("every id is rewritten — the copy never points at the original's rows", () => {
+  const ps = w.DB.where("plantings", p => p.bed_id === shNewBed.id);
+  return shNewBed.id !== shBed.id && ps.every(p => p.id !== shP1.id && p.id !== shP2.id); });
+check("a planting still finds its own seed packet on the far side", () => {
+  const t = w.DB.where("plantings", p => p.bed_id === shNewBed.id && p.crop_id === "tomato")[0];
+  const s = w.DB.find("seeds", t.seed_id);
+  return !!s && s.id !== shSeed.id && s.variety === "Bruno's Kitchen Door"; });
+check("a variety already on the device is reused, not duplicated", () =>
+  w.DB.where("varieties", v => v.crop_id === "tomato" && v.name === "Bruno's Kitchen Door").length === 1);
+check("a crop already on the device is reused, not duplicated", () =>
+  w.DB.all("usercrops").filter(c => c.name === "Lemongrass").length === 1 &&
+  w.DB.where("plantings", p => p.bed_id === shNewBed.id).some(p => p.crop_id === shCrop.slug));
+check("the micro-climate survey comes with the plot and points at the new one", () => {
+  const s = w.Micro.decode(w.DB.all("sites").find(x => x.ref_id === (shNewPlot || {}).id));
+  return !!s && s.slope_pct == 4 && Array.isArray(s.horizon) && s.horizon.length === 8; });
+check("harvest records travel when asked for, but never as maturity records", () => {
+  const mBefore = w.DB.count("maturity");
+  return shRep.harvests === 1 && w.DB.all("harvests").filter(h => h.crop_id === "tomato" &&
+    h.date === "2026-07-30").length === 2 && w.DB.count("maturity") === mBefore; });
+
+/* --- a garden from a device that knows a crop this one does not --- */
+check("a plant whose crop this app has never heard of is skipped and counted, not faked", () => {
+  const alien = JSON.parse(w.Share.json(shFile));
+  alien.plots = [{ id:"px", name:"From a newer app" }];
+  alien.beds = [{ id:"bx", plot_id:"px", name:"Bed X", shape:"rect", w_in:48, h_in:48 }];
+  alien.plantings = [{ id:"p1", bed_id:"bx", crop_id:"sea-kale-2027", qty:1, px:24, py:24 }];
+  alien.usercrops = []; alien.varieties = []; alien.seeds = [];
+  alien.journal = []; alien.harvests = []; alien.diagnoses = []; alien.observations = []; alien.sites = [];
+  const unk = w.Share.unknownCrops(alien);
+  const rep = w.Share.apply(alien);
+  return unk["sea-kale-2027"] === 1 && rep.skipped === 1 && rep.plantings === 0 && rep.beds === 1; });
+
+/* --- the two things that must not dangle --- */
+check("with photos on, a packet photo travels and points at the new copy of itself", () => {
+  const pid = w.Photos.put("data:image/jpeg;base64,AAAA", 40, 40);
+  w.DB.update("seeds", shSeed.id, { photo_id: pid, lot:"PHOTO-LOT" });
+  const withPix = w.Share.collect({ plots:[shPlot.id], seeds:true, history:false, photos:true });
+  const rep = w.Share.apply(JSON.parse(w.Share.json(withPix)));
+  const copy = w.DB.all("seeds").filter(s => s.lot === "PHOTO-LOT" && s.id !== shSeed.id).pop();
+  return withPix.photos.length >= 1 && rep.photos === withPix.photos.length && !!copy &&
+         !!copy.photo_id && copy.photo_id !== pid && !!w.Photos.url(copy.photo_id); });
+check("with seeds off, a planting admits it has no packet rather than keeping a stranger's id", () => {
+  const noSeeds = w.Share.collect({ plots:[shPlot.id], seeds:false, history:false, photos:false });
+  w.Share.apply(JSON.parse(w.Share.json(noSeeds)));
+  const bedNow = w.DB.all("beds").filter(b => b.name === "Travelling bed").pop();
+  const t = w.DB.where("plantings", p => p.bed_id === bedNow.id && p.crop_id === "tomato")[0];
+  return noSeeds.seeds.length === 0 && t.seed_id === null; });
+check("a variety the far side has only as a bundled reference keeps that reference, not a copy", () => {
+  const refP = w.DB.insert("plantings", { bed_id: shBed.id, crop_id:"tomato", variety:"Sungold",
+    variety_id:"ref:tomato:Sungold", qty:1, status:"planned", px: 12, py: 12, rr: 12, rc: 18 });
+  const b2 = w.Share.collect({ plots:[shPlot.id], seeds:false, history:false, photos:false });
+  w.Share.apply(JSON.parse(w.Share.json(b2)));
+  const bedNow = w.DB.all("beds").filter(b => b.name === "Travelling bed").pop();
+  const s = w.DB.where("plantings", p => p.bed_id === bedNow.id && p.variety === "Sungold")[0];
+  w.DB.remove("plantings", refP.id);
+  return !!s && s.variety_id === "ref:tomato:Sungold" &&
+         w.DB.where("varieties", v => v.name === "Sungold").length === 0; });
+
+/* --- the two files are different things and the app says so --- */
+check("the export sheet is plain that this adds and the backup replaces", () => {
+  w.Share.exportSheet();
+  const h = w.document.getElementById("sheet-body").innerHTML || "";
+  return /added/i.test(h) && /never swapped in/i.test(h) && /Seed packets/.test(h) && /Photos/.test(h); });
+check("the export sheet shows a size before anything is written", () => {
+  const h = w.document.getElementById("sheet-body").innerHTML || "";
+  return /(bytes|KB|MB)/.test(h); });
+check("ticking photos off is the default, because file size is what breaks a transfer", () =>
+  w.Share.opts.photos === false);
+check("the import preview lists what will be added before it writes a row", () => {
+  const before = w.DB.count("beds");
+  w.Share.preview(w.Share.json(shFile));
+  const h = w.document.getElementById("sheet-body").innerHTML || "";
+  return w.DB.count("beds") === before && /beds/.test(h) && /plants/.test(h); });
+check("a garden from another zone warns that dates will be recalculated, not copied", () => {
+  const other = JSON.parse(w.Share.json(shFile));
+  other.from = { zone:"9b", place:"Somewhere warm", lastFrost:"02-10", firstFrost:"12-05" };
+  w.Share.preview(w.Share.json(other));
+  const h = w.document.getElementById("sheet-body").innerHTML || "";
+  return /9b/.test(h) && /frost dates/i.test(h); });
+check("the file is offered where the plots are, not only buried in settings", () => {
+  w.closeSheet(); w.APP.bedId = null; w.Garden.setView("beds"); w.Garden.render();
+  return (w.document.getElementById("s-garden").innerHTML || "").includes("Share.exportSheet"); });
+check("settings offers both directions and keeps them apart from the backup", () => {
+  w.go("settings"); w.Settings.render();
+  const h = w.document.getElementById("s-settings").innerHTML || "";
+  return h.includes("Share.exportSheet") && h.includes("Share.importPick") &&
+         h.includes("Settings.importJSON"); });
+check("the guide explains the difference between this and a backup", () =>
+  w.GUIDE.some(g => g.id === "twodevices" && g.p.join(" ").indexOf("never replaces") >= 0));
+w.closeSheet();
+w.Share.opts = { plots: [], seeds: true, history: false, photos: false };
 
 /* --- the toolbar carries what it claims to --- */
 check("the snap toggle is on the bed toolbar, not buried in the shape sheet", () => {

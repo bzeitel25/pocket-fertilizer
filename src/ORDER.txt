@@ -46,5 +46,6 @@ p17_tips.js
 p18_help.js
 p12b_settings.js
 p20_calsync.js
+p21_share.js
 p19_native.js
 p13_init.js

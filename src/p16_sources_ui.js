@@ -2,7 +2,7 @@
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-06.2";
+const BUILD = "2026-08-07.1";
 
 const Updater = {
   prompt: null, installed: false,

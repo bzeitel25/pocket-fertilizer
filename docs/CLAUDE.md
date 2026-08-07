@@ -64,7 +64,7 @@ p11_journal.js  p8d_maturity.js  p12_library.js  p5d_usercrops.js
 p14_weather.js  p8i_microlog.js  p15_assistant.js  p15b_providers.js
 p15c_assist_rules.js  p15e_microtools.js  p15d_coach.js  p16_sources_ui.js
 p17_tips.js  p18_help.js  p12b_settings.js  p20_calsync.js
-p19_native.js  p13_init.js
+p21_share.js  p19_native.js  p13_init.js
 ```
 
 Order matters. `p13_init.js` is last because it closes `</body></html>` and calls `boot()`.
@@ -227,6 +227,42 @@ OAuth, a registered Cloud client and a server holding a refresh token. This app 
 server, no account and an encrypted local vault; calling a download "sync" would be a lie
 about where the data goes. A *single* date can go straight into Google through their
 compose URL, which needs no credentials because the person is already signed in.
+
+## Moving a garden between devices
+
+`p21_share.js` exports one or more plots as a `.json` file that another copy of the app
+**adds** to itself. It is not the backup and must never become it: the backup carries
+everything and *replaces* everything, which is exactly what someone with a phone and a
+tablet cannot use.
+
+Four things there are load-bearing:
+
+- **JSON, not Markdown.** A bed is a polygon in inches and a plant is a point carrying two
+  radii. Prose can only describe that by rounding it and parsing the rounding back — a lossy
+  round trip pretending to be a lossless one. `_about` is the first key in the file so opening
+  it in a text editor explains itself, and `summary` is the same thing in sentences; there is
+  also a "copy a readable summary" button for pasting into a message.
+- **`pick()` whitelists against `SCHEMA`.** Nothing reaches the file that is not a real column.
+  This is the same hazard `Geom.polyMemo` warns about — a working field stashed on a cached row
+  ending up serialised into the gardener's data.
+- **Ids are rewritten and references are followed.** `apply()` carries one old→new map through
+  the whole pass: usercrops first (everything else names them), then photos, varieties, plots,
+  beds, seeds, plantings, map items, sites, history. **An unresolved reference becomes `null`,
+  never a surviving id** — a planting that silently kept a `seed_id` would point at an unrelated
+  packet on the destination, which is worse than one that admits it has no packet. Bundled
+  reference varieties (`ref:crop:Name`) are the one id that is kept, because both devices ship
+  `VARIETY_REF`.
+- **`maturity` is not carried, and the UI says why.** Those are the figures the app defers to
+  after three records. A file can be imported twice; carrying them would let one garden be
+  counted twice in its own average. Harvest *records* travel when history is ticked — they
+  arrive as records and do not feed the learning, because `Maturity` writes its rows in
+  `Journal.saveHarvest`, not by reading the harvests table.
+
+A plot whose name is taken comes in as "Back yard (imported)". A planting whose crop this
+build has never heard of is **skipped and counted**, and the report says to update and import
+again — better than a bed full of unknown-crop placeholders. If the two devices are set to
+different zones the preview says so up front: the beds and plants are exact, the dates are
+recomputed from the destination's own frost dates.
 
 ## Micro-climate
 
