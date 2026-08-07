@@ -952,6 +952,268 @@ function shrinkImage(file, maxPx, quality){
 
 <script>
 /* ============================================================
+   INCHES OR CENTIMETRES
+
+   Every measurement in this app is stored the way it always was:
+   lengths in inches, weights in pounds, temperatures in Fahrenheit,
+   water in inches per week. That is not a statement about which
+   system is better. It is the only arrangement in which the toggle
+   can be lossless.
+
+   The alternative — rewriting the rows when the switch is thrown —
+   would round a 48" bed to 122cm, and back to 48.03", and back to
+   122cm, and a gardener who flipped it a few times would find her
+   beds had quietly changed size. So NOTHING on disk ever moves.
+   Conversion happens at exactly two boundaries:
+
+     · on the way out, when a number is drawn on screen
+     · on the way in, when a number is typed into a field
+
+   which means the toggle is instant, reversible, and cannot corrupt
+   anything. It also means the canvas maths, the companion spacing,
+   Geom, Solar and the whole recommendation engine keep working in
+   inches and never need to know this file exists.
+
+   The setting is read live from DB rather than cached, so it is
+   already right after a vault load, a restore, or an imported
+   garden, with nothing to remember to re-initialise.
+   ============================================================ */
+
+const Units = (() => {
+
+  const IN_CM = 2.54;
+  const LB_KG = 0.45359237;
+
+  /* the app's written advice counts in words as often as in digits */
+  const WORDS = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8,
+    nine:9, ten:10, eleven:11, twelve:12, fifteen:15, eighteen:18, twenty:20,
+    "twenty-four":24, thirty:30, "thirty-six":36 };
+
+  /* round to a sensible number of places for the size of the figure —
+     "exact, then rounded", never snapped to a friendlier number that is
+     no longer the same measurement */
+  function r(n, dp){
+    const f = Math.pow(10, dp || 0);
+    return Math.round(n * f) / f;
+  }
+  /* trailing .0 reads like a machine, not a garden */
+  const trim = n => String(r(n, 2));
+
+  const api = {
+    /* ---------- the setting ---------- */
+    get metric(){ return DB.get("units", "imperial") === "metric"; },
+    set(metric){
+      DB.set("units", metric ? "metric" : "imperial");
+      return api.metric;
+    },
+    toggle(){ return api.set(!api.metric); },
+    name(){ return api.metric ? "Metric" : "Imperial"; },
+
+    /* the words that go next to an input box */
+    lenUnit(){ return api.metric ? "cm" : "in"; },
+    bigUnit(){ return api.metric ? "cm" : "ft"; },
+    areaUnit(){ return api.metric ? "m²" : "sq ft"; },
+    weightUnit(){ return api.metric ? "kg" : "lbs"; },
+    tempUnit(){ return api.metric ? "°C" : "°F"; },
+
+    /* ============================================================
+       LENGTHS — canonical inches
+
+       len()  small distances: spacing, sow depth, plant radii
+       big()  bed dimensions, which people say in feet
+       ============================================================ */
+    lenN(inches){
+      const v = num(inches, 0);
+      return api.metric ? r(v * IN_CM, v * IN_CM < 10 ? 1 : 0) : r(v, 2);
+    },
+    len(inches, opts){
+      const v = api.lenN(inches);
+      if(api.metric) return trim(v) + ((opts && opts.space === false) ? "cm" : " cm");
+      /* an inch mark is how this app has always written inches, and it is
+         what a seed packet says too */
+      return trim(v) + ((opts && opts.word) ? " in" : '"');
+    },
+    bigN(inches){
+      const v = num(inches, 0);
+      return api.metric ? r(v * IN_CM, 0) : r(v / 12, 1);
+    },
+    big(inches){
+      return trim(api.bigN(inches)) + (api.metric ? " cm" : " ft");
+    },
+    /* "4 × 8 ft" / "122 × 244 cm" — one unit label for the pair */
+    dims(wIn, hIn){
+      return trim(api.bigN(wIn)) + "×" + trim(api.bigN(hIn)) + (api.metric ? " cm" : " ft");
+    },
+
+    /* ============================================================
+       AREA — canonical square feet
+       ============================================================ */
+    areaN(sqFt){
+      const v = num(sqFt, 0);
+      if(!api.metric) return r(v, 1);
+      /* a raised bed is a few square metres, so one decimal place would
+         round 2.97 to 3 and quietly lose a third of a square metre */
+      const m2 = v * 0.09290304;
+      return r(m2, m2 < 10 ? 2 : 1);
+    },
+    area(sqFt){ return trim(api.areaN(sqFt)) + (api.metric ? " m²" : " sq ft"); },
+    /* the app measures bed area in square inches in places */
+    areaSqIn(sqIn){ return api.area(num(sqIn, 0) / 144); },
+
+    /* ============================================================
+       WEIGHT — canonical pounds
+       ============================================================ */
+    weightN(lbs){
+      const v = num(lbs, 0);
+      if(!api.metric) return r(v, 1);
+      const kg = v * LB_KG;
+      return r(kg, kg < 1 ? 2 : 1);
+    },
+    weight(lbs){ return trim(api.weightN(lbs)) + (api.metric ? " kg" : " lbs"); },
+    /* for "cost per pound" / "cost per kilo", which reads better spelled out */
+    perUnitWord(){ return api.metric ? "kilo" : "pound"; },
+    /* yield per unit of ground: lbs/sq ft -> kg/m² */
+    density(lbsPerSqFt){
+      const v = num(lbsPerSqFt, 0);
+      if(!api.metric) return r(v, 2) + " lbs/sq ft";
+      return r(v * LB_KG / 0.09290304, 2) + " kg/m²";
+    },
+
+    /* ============================================================
+       TEMPERATURE — canonical Fahrenheit
+
+       Whole degrees. A germination floor of 60°F is not a precise
+       number to begin with, and "15.6°C" pretends otherwise.
+       ============================================================ */
+    tempN(f){
+      const v = num(f, 0);
+      return api.metric ? Math.round((v - 32) * 5 / 9) : Math.round(v);
+    },
+    temp(f){ return api.tempN(f) + (api.metric ? "°C" : "°F"); },
+    /* a span of degrees, not a point on the scale — 10°F warmer is 5.6°C
+       warmer, and running it through tempN would make it -12°C */
+    tempDeltaN(f){
+      const v = num(f, 0);
+      return api.metric ? r(v * 5 / 9, 1) : r(v, 1);
+    },
+    tempDelta(f){ return trim(api.tempDeltaN(f)) + (api.metric ? "°C" : "°F"); },
+
+    /* ============================================================
+       WATER — canonical inches, of rain or of irrigation
+       ============================================================ */
+    waterN(inches){
+      const v = num(inches, 0);
+      return api.metric ? r(v * IN_CM, 1) : r(v, 2);
+    },
+    water(inches){ return trim(api.waterN(inches)) + api.waterMark(); },
+    waterMark(){ return api.metric ? " cm" : '"'; },
+    waterWeek(inches){ return api.water(inches) + "/wk"; },
+
+    /* how many plants fit in a unit of ground. psf is plants per square
+       foot — a square-foot-gardening figure, so in metric it is restated
+       per square metre rather than translated word for word. */
+    perArea(psf){
+      const v = num(psf, 0);
+      if(!api.metric) return r(v, 2) + " per sq ft";
+      return r(v / 0.09290304, 1) + " per m²";
+    },
+
+    /* ============================================================
+       TYPED INPUT
+
+       A field shows the number in whatever system is on and hands
+       back inches (or lbs, or °F) to be stored. Both directions go
+       through here so a value cannot drift by being written back in
+       the unit it was displayed in.
+       ============================================================ */
+    inLen(v){ return api.metric ? num(v, 0) / IN_CM : num(v, 0); },
+    outLen(inches){ return api.lenN(inches); },
+    inBig(v){ return api.metric ? num(v, 0) / IN_CM : num(v, 0) * 12; },
+    outBig(inches){ return api.bigN(inches); },
+    inWeight(v){ return api.metric ? num(v, 0) / LB_KG : num(v, 0); },
+    outWeight(lbs){ return api.weightN(lbs); },
+    inTemp(v){ return api.metric ? num(v, 0) * 9 / 5 + 32 : num(v, 0); },
+    outTemp(f){ return api.tempN(f); },
+    inWater(v){ return api.metric ? num(v, 0) / IN_CM : num(v, 0); },
+    outWater(inches){ return api.waterN(inches); },
+
+    /* a step size that makes sense for the unit on show */
+    lenStep(){ return api.metric ? "0.5" : "0.25"; },
+    bigStep(){ return api.metric ? "1" : "0.5"; },
+    waterStep(){ return api.metric ? "0.5" : "0.25"; },
+    weightStep(){ return api.metric ? "0.1" : "0.1"; },
+
+    /* ============================================================
+       PROSE
+
+       Growing notes, harvest instructions and diagnosis treatments
+       are written English, with measurements inside the sentences:
+       "peppers sulk below 55°F", "thin to 6–8 inches", "give it 6
+       feet of trellis". A metric reader should not have to do the
+       arithmetic there either, and leaving it while the headings
+       above it read in centimetres is worse than not offering the
+       switch at all.
+
+       Ranges are rewritten before single figures, so "6–8 inches"
+       becomes "15–20 cm" rather than "6–20 cm". Anything the
+       patterns do not recognise is left exactly as written — this
+       never guesses at a number it did not clearly identify.
+       ============================================================ */
+    prose(s){
+      if(!api.metric || !s) return s || "";
+      let t = String(s);
+      const cm = v => trim(r(v * IN_CM, v * IN_CM < 10 ? 1 : 0));
+      const ft = v => { const c = v * 30.48; return c >= 100 ? trim(r(c / 100, 1)) + " m" : trim(r(c, 0)) + " cm"; };
+      const N = "(\\d+(?:\\.\\d+)?)";
+      const D = "\\s*(?:–|—|-|\\s+to\\s+)\\s*";
+
+      /* ranges first */
+      t = t.replace(new RegExp(N + D + N + "\\s*°F", "g"), (m, a, b) =>
+        api.tempN(+a) + "–" + api.tempN(+b) + "°C");
+      t = t.replace(new RegExp(N + D + N + "\\s*(?:inches|inch|in\\.)\\b", "gi"), (m, a, b) =>
+        cm(+a) + "–" + cm(+b) + " cm");
+      t = t.replace(new RegExp(N + D + N + "\\s*(?:feet|foot|ft\\.?)\\b", "gi"), (m, a, b) =>
+        trim(r(+a * 30.48, 0)) + "–" + ft(+b));
+      t = t.replace(new RegExp(N + D + N + "\\s*(?:lbs?|pounds?)\\b", "gi"), (m, a, b) =>
+        trim(api.weightN(+a)) + "–" + trim(api.weightN(+b)) + " kg");
+
+      /* then single figures */
+      t = t.replace(new RegExp(N + "\\s*°F", "g"), (m, a) => api.tempN(+a) + "°C");
+      t = t.replace(new RegExp(N + "\\s*(?:inches|inch|in\\.)\\b", "gi"), (m, a) => cm(+a) + " cm");
+      t = t.replace(new RegExp(N + "\\s*(?:feet|foot|ft\\.?)\\b", "gi"), (m, a) => ft(+a));
+      t = t.replace(new RegExp(N + "\\s*(?:lbs?|pounds?)\\b", "gi"), (m, a) => trim(api.weightN(+a)) + " kg");
+      /* an inch mark, but only where it cannot be a closing quote */
+      t = t.replace(new RegExp(N + '"(?=\\s|$|[.,;)])', "g"), (m, a) => cm(+a) + " cm");
+
+      /* Written-out numbers, because that is how this app's own advice is
+         phrased: "push a finger two inches into the soil", "strip the bottom
+         twelve inches of leaves", "four to six inches away from stems". A
+         word is only touched when a unit follows it immediately, so ordinary
+         prose — "two of the three beds" — is never disturbed. */
+      const W = "(" + Object.keys(WORDS).join("|") + ")";
+      t = t.replace(new RegExp(W + "\\s+(?:to|–|—|-)\\s+" + W + "\\s+(inches|inch|feet|foot)\\b", "gi"),
+        (m, a, b, u) => {
+          const f = /f/i.test(u.charAt(0)) ? 30.48 : IN_CM;
+          return trim(r(WORDS[a.toLowerCase()] * f, 0)) + "–" + trim(r(WORDS[b.toLowerCase()] * f, 0)) + " cm";
+        });
+      t = t.replace(new RegExp(W + "\\s+(inches|inch|feet|foot)\\b", "gi"), (m, a, u) => {
+        const n = WORDS[a.toLowerCase()];
+        return /f/i.test(u.charAt(0)) ? ft(n) : cm(n) + " cm";
+      });
+      return t;
+    }
+  };
+  return api;
+})();
+
+/* Prose is escaped everywhere it is printed, so the two always travel
+   together. `esc(x)` becomes `escU(x)` at any site showing written
+   guidance that may carry a measurement inside it. */
+function escU(s){ return esc(Units.prose(s)); }
+</script>
+
+<script>
+/* ============================================================
    CROP KNOWLEDGE BASE
    sun: hours of direct sun needed (min)
    water: inches per week
@@ -2333,9 +2595,9 @@ const Home = {
         const w = Recommend.water(b.id, APP.weather);
         let wtxt = "", wcls = "muted";
         if(w){
-          if(w.verdict === "skip"){ wtxt = "💧 No water needed — " + w.rain + '" rain this week'; wcls = "muted"; }
-          else if(w.verdict === "light"){ wtxt = '💧 Top up ~' + w.deficit + '" this week'; }
-          else { wtxt = '💧 Needs ' + w.deficit + '" more this week'; }
+          if(w.verdict === "skip"){ wtxt = "💧 No water needed — " + Units.water(w.rain) + ' rain this week'; wcls = "muted"; }
+          else if(w.verdict === "light"){ wtxt = '💧 Top up ~' + Units.water(w.deficit) + ' this week'; }
+          else { wtxt = '💧 Needs ' + Units.water(w.deficit) + ' more this week'; }
         }
         h += '<button class="item" onclick="Garden.open(\'' + b.id + '\')">' +
           '<div class="av">🪴</div><div class="grow"><div class="b truncate">' + esc(b.name) + '</div>' +
@@ -2392,7 +2654,7 @@ const Home = {
       if(dd >= 0 && dd <= 6 && num(d.temperature_2m_min[i], 99) <= 36) frostSoon.push({ dt: dt, t: d.temperature_2m_min[i] }); });
     h += '<div class="card">';
     h += '<div class="row between"><div class="row" style="gap:8px"><div style="font-size:1.8rem">' + Live.wx(cur.weather_code)[1] + '</div>' +
-      '<div><div class="b">' + Math.round(num(cur.temperature_2m)) + '°F · ' + esc(Live.wx(cur.weather_code)[0]) + '</div>' +
+      '<div><div class="b">' + Units.temp(num(cur.temperature_2m)) + ' · ' + esc(Live.wx(cur.weather_code)[0]) + '</div>' +
       '<div class="tiny muted">' + Math.round(num(cur.relative_humidity_2m)) + '% humidity · wind ' + Math.round(num(cur.wind_speed_10m)) + ' mph</div></div></div>' +
       '<button class="iconbtn" onclick="go(\'weather\')">›</button></div>';
     h += '<div class="scroller" style="margin-top:10px;padding-bottom:0">';
@@ -2404,15 +2666,15 @@ const Home = {
         '<div class="tiny muted">' + (dd === 0 ? "Today" : DOW[parseISO(dt).getDay()]) + '</div>' +
         '<div style="font-size:1.3rem">' + Live.wx(d.weather_code[i])[1] + '</div>' +
         '<div class="tiny b">' + Math.round(num(d.temperature_2m_max[i])) + '°</div>' +
-        '<div class="tiny ' + (cold ? "" : "muted") + '" ' + (cold ? 'style="color:var(--info)"' : '') + '>' + Math.round(num(d.temperature_2m_min[i])) + '°</div>' +
-        (num(d.precipitation_sum[i]) > 0.01 ? '<div class="tiny" style="color:var(--info)">' + (Math.round(num(d.precipitation_sum[i])*100)/100) + '"</div>' : '<div class="tiny">&nbsp;</div>') +
+        '<div class="tiny ' + (cold ? "" : "muted") + '" ' + (cold ? 'style="color:var(--info)"' : '') + '>' + Units.tempN(num(d.temperature_2m_min[i])) + '°</div>' +
+        (num(d.precipitation_sum[i]) > 0.01 ? '<div class="tiny" style="color:var(--info)">' + Units.water(num(d.precipitation_sum[i])) + '</div>' : '<div class="tiny">&nbsp;</div>') +
         '</div>';
     });
     h += '</div>';
     if(frostSoon.length) h += '<div class="note w" style="margin-top:10px">🥶 Cold coming: ' +
-      Math.round(frostSoon[0].t) + '°F on ' + fmt(frostSoon[0].dt) + '. Cover tender crops (tomato, pepper, basil, squash) or bring pots in.</div>';
+      Units.temp(frostSoon[0].t) + ' on ' + fmt(frostSoon[0].dt) + '. Cover tender crops (tomato, pepper, basil, squash) or bring pots in.</div>';
     let rain7 = 0; d.time.forEach((dt, i) => { const dd = diffDays(today(), parseISO(dt)); if(dd >= 0 && dd < 7) rain7 += num(d.precipitation_sum[i]); });
-    if(rain7 > 0.4) h += '<div class="note i" style="margin-top:8px">🌧️ ' + (Math.round(rain7*100)/100) + '" of rain forecast this week — hold off on watering established beds.</div>';
+    if(rain7 > 0.4) h += '<div class="note i" style="margin-top:8px">🌧️ ' + Units.water(rain7) + ' of rain forecast this week — hold off on watering established beds.</div>';
     h += '</div>';
     strip.innerHTML = h;
   }
@@ -2470,7 +2732,7 @@ const Onboard = {
       '<div style="margin-top:6px">❄️ Last spring frost <b>' + fmt(yr + "-" + lastF) + '</b><br>' +
       '🍂 First fall frost <b>' + fmt(yr + "-" + firstF) + '</b><br>' +
       '🌱 Growing season <b>' + diffDays(parseISO(yr + "-" + lastF), parseISO(yr + "-" + firstF)) + ' days</b></div>' +
-      '<div class="tiny" style="margin-top:6px;opacity:.8">Source: ' + esc(src) + (fr && fr.avgAnnualLow !== null && fr.avgAnnualLow !== undefined ? ' · avg annual low ' + fr.avgAnnualLow + '°F' : '') + '</div></div>' +
+      '<div class="tiny" style="margin-top:6px;opacity:.8">Source: ' + esc(src) + (fr && fr.avgAnnualLow !== null && fr.avgAnnualLow !== undefined ? ' · avg annual low ' + Units.temp(fr.avgAnnualLow) : '') + '</div></div>' +
       '<button class="btn block" style="margin-top:12px" onclick="closeSheet();Cal.rebuild();refresh();toast(\'Location saved\')">Use these dates</button>' +
       '<button class="btn ghost block" style="margin-top:8px" onclick="closeSheet();go(\'settings\')">Adjust manually</button>';
     await getWeather(true);
@@ -2648,7 +2910,7 @@ const Garden = {
     const planted = shown.reduce((a, b) => a + DB.where("plantings", p => p.bed_id === b.id && p.status !== "removed").length, 0);
     h += '<div class="card"><div class="grid3">' +
       '<div class="stat"><span class="n">' + shown.length + '</span><span class="l">beds</span></div>' +
-      '<div class="stat"><span class="n">' + Math.round(totalSq) + '</span><span class="l">sq ft</span></div>' +
+      '<div class="stat"><span class="n">' + Units.areaN(totalSq) + '</span><span class="l">' + Units.areaUnit() + '</span></div>' +
       '<div class="stat"><span class="n">' + planted + '</span><span class="l">planted</span></div>' +
       '</div></div>';
 
@@ -2657,7 +2919,7 @@ const Garden = {
       const conf = Recommend.conflicts(b.id);
       const crops = {}; ps.forEach(p => crops[p.crop_id] = (crops[p.crop_id] || 0) + 1);
       h += '<div class="card"><div class="bedtitle"><div class="grow"><div class="b">' + esc(b.name) + '</div>' +
-        '<div class="tiny muted">' + b.cols + '×' + b.rows + ' squares · ' + esc(b.cell_in || 12) + '" each · ' + esc(b.sun_hours || "?") + 'h sun' +
+        '<div class="tiny muted">' + b.cols + '×' + b.rows + ' squares · ' + Units.len(num(b.cell_in, 12)) + ' each · ' + esc(b.sun_hours || "?") + 'h sun' +
         (b.plot_id && DB.find("plots", b.plot_id) ? ' · ' + esc(DB.find("plots", b.plot_id).name) : '') + '</div></div>' +
         '<button class="btn sm" onclick="Garden.open(\'' + b.id + '\')">Open</button></div>';
       h += Garden.miniGrid(b);
@@ -2699,7 +2961,7 @@ const Garden = {
 
     let h = '';
     h += '<div class="row" style="margin-bottom:10px"><button class="iconbtn" onclick="Garden.back()">‹</button>' +
-      '<div class="grow"><div class="b">' + esc(b.name) + '</div><div class="tiny muted">' + cols + '×' + rows + ' · ' + esc(b.cell_in || 12) + '" squares · ' + esc(b.sun_hours || "?") + 'h sun</div></div>' +
+      '<div class="grow"><div class="b">' + esc(b.name) + '</div><div class="tiny muted">' + cols + '×' + rows + ' · ' + Units.len(num(b.cell_in, 12)) + ' squares · ' + esc(b.sun_hours || "?") + 'h sun</div></div>' +
       '<button class="iconbtn" onclick="Garden.bedMenu()">⋯</button></div>';
 
     /* size controls */
@@ -2709,7 +2971,7 @@ const Garden = {
       '<div><div class="l tiny b muted" style="text-transform:uppercase">Rows</div><div class="stepper">' +
         '<button onclick="Garden.resize(0,-1)">−</button><span class="v">' + rows + '</span><button onclick="Garden.resize(0,1)">＋</button></div></div>' +
       '<div class="grow" style="text-align:right"><div class="tiny muted">' +
-        Math.round(cols * rows * Math.pow(num(b.cell_in,12)/12, 2)) + ' sq ft</div>' +
+        Units.area(cols * rows * Math.pow(num(b.cell_in,12)/12, 2)) + '</div>' +
         '<div class="tiny muted">' + ps.length + '/' + (cols*rows) + ' filled</div></div>' +
       '</div></div>';
 
@@ -2790,7 +3052,7 @@ const Garden = {
       h += '<div class="sec"><h2>Care</h2></div><div class="card">';
       h += '<div class="row between"><div><div class="b">' +
         (w.verdict === "skip" ? "💧 Skip watering" : w.verdict === "light" ? '💧 Light top-up' : '💧 Water this week') + '</div>' +
-        '<div class="tiny muted">Needs ' + w.need + '"/wk · ' + w.rain + '" rain · ' + w.logged + '" logged</div></div>' +
+        '<div class="tiny muted">Needs ' + Units.waterWeek(w.need) + ' · ' + Units.water(w.rain) + ' rain · ' + Units.water(w.logged) + ' logged</div></div>' +
         '<button class="btn sm" onclick="Journal.quick(\'water\',\'' + b.id + '\')">Log</button></div>';
       const heavy = ps.map(p => crop(p.crop_id)).filter(c => c && c.feeder === "heavy");
       if(heavy.length) h += '<div class="note w" style="margin-top:10px">🌿 Heavy feeders here (' +
@@ -3346,7 +3608,7 @@ Object.assign(Garden, {
     let h = '<div class="row" style="gap:12px;margin-bottom:12px"><div style="font-size:2.4rem">' + cropEmoji(p.crop_id) + '</div>' +
       '<div class="grow"><div class="b" style="font-size:1.1rem">' + esc(cropName(p.crop_id)) + '</div>' +
       '<div class="tiny muted">Row ' + (num(p.y)+1) + ', column ' + (num(p.x)+1) + ' of ' + esc(bed.name) +
-      ' · ' + w + '×' + hh + ' (' + (Math.round(area*10)/10) + ' sq ft)</div></div></div>';
+      ' · ' + w + '×' + hh + ' (' + Units.area(area) + ')</div></div></div>';
 
     /* size */
     h += '<div class="card"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Area it covers</div>' +
@@ -3368,9 +3630,9 @@ Object.assign(Garden, {
       '</div>';
     h += single
       ? '<div class="note i" style="margin-top:10px">One ' + esc(cropName(p.crop_id)) + ' claiming ' + (Math.round(area*10)/10) +
-        ' sq ft. This is how you record a plant that grew far bigger than the book says — and the app remembers it for next season.</div>'
-      : '<div class="note g" style="margin-top:10px">At ' + esc(c ? c.sp + '" spacing' : 'normal spacing') + ', ' +
-        (Math.round(area*10)/10) + ' sq ft holds about <b>' + fit + ' plant' + (fit === 1 ? "" : "s") + '</b>.</div>';
+        '. This is how you record a plant that grew far bigger than the book says — and the app remembers it for next season.</div>'
+      : '<div class="note g" style="margin-top:10px">At ' + (c ? Units.len(c.sp) + ' spacing' : 'normal spacing') + ', ' +
+        Units.area(area) + ' holds about <b>' + fit + ' plant' + (fit === 1 ? "" : "s") + '</b>.</div>';
     h += '<div class="field" style="margin-top:12px"><label class="f">Plants here</label>' +
       '<input type="number" id="pl-qty" min="1" value="' + esc(p.qty || 1) + '"></div>';
     const vv = p.variety ? Varieties.find(p.crop_id, p.variety) : null;
@@ -3401,7 +3663,7 @@ Object.assign(Garden, {
 
     /* what she has seen before */
     if(obs) h += '<div class="note w" style="margin-top:12px">📐 <b>From your own garden.</b> You recorded ' + esc(cropName(p.crop_id)) +
-      ' covering ' + obs.w + '×' + obs.h + (obs.sqft ? ' (' + obs.sqft + ' sq ft)' : '') + ' as a single plant' +
+      ' covering ' + obs.w + '×' + obs.h + (obs.sqft ? ' (' + Units.area(obs.sqft) + ')' : '') + ' as a single plant' +
       (obs.when ? ', ' + fmtY(obs.when) : '') + '. Worth allowing that much room again.</div>';
 
     /* status & dates */
@@ -3903,7 +4165,7 @@ const Gmap = {
 
     h += Gmap.arrange
       ? '<div class="note i">Drag anything to move it. Tap once to select, then use the buttons below to rotate or remove it. Positions snap to the foot.</div>'
-      : '<div class="tiny muted center" style="margin-bottom:8px">' + ext.w + ' × ' + ext.h + ' ft · tap a bed to open it</div>';
+      : '<div class="tiny muted center" style="margin-bottom:8px">' + Units.dims(ext.w * 12, ext.h * 12) + ' · tap a bed to open it</div>';
 
     h += '<div class="mapwrap"><div class="mapplot" id="mapplot" style="height:' + H + 'px">';
     /* one-foot grid so the scale reads clearly */
@@ -3960,7 +4222,7 @@ const Gmap = {
         const names = ps.map(p => cropName(p.crop_id)).filter((v, ix, a) => a.indexOf(v) === ix);
         h += '<button class="item" onclick="Garden.open(\'' + b.id + '\')"><div class="av">🪴</div>' +
           '<div class="grow"><div class="b">' + esc(b.name) + '</div>' +
-          '<div class="tiny muted">' + Math.round(i.size.w*10)/10 + '×' + Math.round(i.size.h*10)/10 + ' ft · ' +
+          '<div class="tiny muted">' + Units.dims(i.size.w * 12, i.size.h * 12) + ' · ' +
           (names.length ? esc(names.slice(0, 5).join(", ")) + (names.length > 5 ? " +" + (names.length - 5) : "") : "empty") +
           '</div></div><span class="go">›</span></button>';
       });
@@ -4037,7 +4299,7 @@ const Gmap = {
       const f = FEATURES[k];
       h += '<button class="card" style="text-align:left" onclick="Gmap.saveFeature(\'' + k + '\')">' +
         '<div style="font-size:1.6rem">' + f.e + '</div><div class="b">' + esc(f.n) + '</div>' +
-        '<div class="tiny muted">' + f.w + '×' + f.h + ' ft to start</div></button>';
+        '<div class="tiny muted">' + Units.dims(f.w * 12, f.h * 12) + ' to start</div></button>';
     });
     h += '</div>';
     openSheet("Add a landmark", h);
@@ -5501,8 +5763,8 @@ Object.assign(Garden, {
     h += '<div class="row" style="margin-bottom:10px"><button class="iconbtn" onclick="Garden.back()">‹</button>' +
       '<div class="grow"><div class="b">' + esc(bed.name) + '</div>' +
       '<div class="tiny muted">' + sh.e + ' ' + esc(sh.n.toLowerCase()) + ' · ' +
-      Math.round(Geom.W(bed)/12*10)/10 + '×' + Math.round(Geom.H(bed)/12*10)/10 + ' ft · ' +
-      sqft + ' sq ft · ' + esc(bed.sun_hours || "?") + 'h sun</div></div>' +
+      Units.dims(Geom.W(bed), Geom.H(bed)) + ' · ' +
+      Units.area(sqft) + ' · ' + esc(bed.sun_hours || "?") + 'h sun</div></div>' +
       '<button class="iconbtn" onclick="Garden.bedMenu()">⋯</button></div>';
 
     /* ---- toolbar ---- */
@@ -5561,7 +5823,7 @@ Object.assign(Garden, {
       crowd.slice(0, 4).forEach(c => h += '<div class="note w" style="margin-bottom:8px">⊙ ' +
         cropEmoji(c.a.crop_id) + ' <b>' + esc(cropName(c.a.crop_id)) + '</b> and ' +
         cropEmoji(c.b.crop_id) + ' <b>' + esc(cropName(c.b.crop_id)) + '</b> overlap at the root by ' +
-        c.overlap + '". Leaves may weave together happily; roots competing for the same water is a smaller crop from both.</div>');
+        Units.len(c.overlap) + '. Leaves may weave together happily; roots competing for the same water is a smaller crop from both.</div>');
       h += '</div>';
     }
     if(shade.length){
@@ -5569,7 +5831,7 @@ Object.assign(Garden, {
       h += '<div class="sec"><h2>Light and shade</h2></div><div class="card">';
       bad.slice(0, 3).forEach(s => h += '<div class="note d" style="margin-bottom:8px">🌑 ' +
         cropEmoji(s.tall.crop_id) + ' <b>' + esc(cropName(s.tall.crop_id)) + '</b> reaches about ' +
-        Geom.height(s.tall.crop_id) + '" and will stand over ' + cropEmoji(s.low.crop_id) + ' <b>' +
+        Units.len(Geom.height(s.tall.crop_id)) + ' and will stand over ' + cropEmoji(s.low.crop_id) + ' <b>' +
         esc(cropName(s.low.crop_id)) + '</b>, which wants ' + crop(s.low.crop_id).sun +
         'h of sun' + (s.side ? ' and sits to the ' + esc(s.side) + ' of it' : '') +
         '. Move it to the sunny side, or swap in something that tolerates shade.</div>');
@@ -5593,15 +5855,15 @@ Object.assign(Garden, {
         const key = [f.a.crop_id, f.b.crop_id].sort().join("|");
         if(seen[key]) return; seen[key] = 1;
         h += '<div class="note g" style="margin-bottom:8px">💚 ' + cropEmoji(f.a.crop_id) + ' <b>' + esc(cropName(f.a.crop_id)) +
-          '</b> beside ' + cropEmoji(f.b.crop_id) + ' <b>' + esc(cropName(f.b.crop_id)) + '</b> · ' + f.dist +
-          '" apart<br>' + esc(f.why) + '</div>';
+          '</b> beside ' + cropEmoji(f.b.crop_id) + ' <b>' + esc(cropName(f.b.crop_id)) + '</b> · ' + Units.len(f.dist) +
+          ' apart<br>' + esc(f.why) + '</div>';
       });
       h += '</div>';
     }
     if(conflicts.length){
       h += '<div class="sec"><h2>Companion warnings</h2></div><div class="card">';
       conflicts.slice(0, 5).forEach(c => h += '<div class="note d" style="margin-bottom:8px">⚠️ ' +
-        cropEmoji(c.a.crop_id) + ' <b>' + esc(cropName(c.a.crop_id)) + '</b> ' + c.dist + '" from ' +
+        cropEmoji(c.a.crop_id) + ' <b>' + esc(cropName(c.a.crop_id)) + '</b> ' + Units.len(c.dist) + ' from ' +
         cropEmoji(c.b.crop_id) + ' <b>' + esc(cropName(c.b.crop_id)) + '</b><br>' + esc(c.why) + '</div>');
       h += '</div>';
     }
@@ -5624,7 +5886,7 @@ Object.assign(Garden, {
           '<div class="grow"><div class="b">' + esc(cropName(id)) + ' <span class="muted tiny">×' + qty + '</span></div>' +
           '<div class="tiny muted">' + esc({ unsown:"not sown by this date", seedling:"just up", young:"young",
             growing:"filling out", mature:"cropping", over:"past its best" }[st] || st) +
-          ' · ' + Math.round(Geom.RC(arr[0]) * 2) + '" across when mature</div>' +
+          ' · ' + Units.len(Math.round(Geom.RC(arr[0]) * 2)) + ' across when mature</div>' +
           (!sunOk ? '<div class="tiny" style="color:var(--warn)">Wants ' + c.sun + 'h sun, this bed gets ' +
             Micro.sunHours(bed.id) + 'h</div>' : '') +
           '</div><span class="go">›</span></button>';
@@ -5638,7 +5900,7 @@ Object.assign(Garden, {
       h += '<div class="sec"><h2>Care</h2></div><div class="card">';
       h += '<div class="row between"><div><div class="b">' +
         (wtr.verdict === "skip" ? "💧 Skip watering" : wtr.verdict === "light" ? '💧 Light top-up' : '💧 Water this week') + '</div>' +
-        '<div class="tiny muted">Needs ' + wtr.need + '"/wk · ' + wtr.rain + '" rain · ' + wtr.logged + '" logged</div></div>' +
+        '<div class="tiny muted">Needs ' + Units.waterWeek(wtr.need) + ' · ' + Units.water(wtr.rain) + ' rain · ' + Units.water(wtr.logged) + ' logged</div></div>' +
         '<button class="btn sm" onclick="Journal.quick(\'water\',\'' + bed.id + '\')">Log</button></div>';
       const heavy = ps.map(p => crop(p.crop_id)).filter(c => c && c.feeder === "heavy");
       if(heavy.length) h += '<div class="note w" style="margin-top:10px">🌿 Heavy feeders here (' +
@@ -5728,25 +5990,25 @@ Garden.plantingSheet = function(p){
 
   let h = '<div class="row" style="gap:12px;margin-bottom:12px"><div style="font-size:2.4rem">' + cropEmoji(p.crop_id) + '</div>' +
     '<div class="grow"><div class="b" style="font-size:1.1rem">' + esc(cropName(p.crop_id)) + '</div>' +
-    '<div class="tiny muted">' + Math.round(Geom.PX(p)) + '", ' + Math.round(Geom.PY(p)) + '" into ' + esc(bed.name) +
+    '<div class="tiny muted">' + Units.len(Math.round(Geom.PX(p))) + ', ' + Units.len(Math.round(Geom.PY(p))) + ' into ' + esc(bed.name) +
     ' · ' + esc(PlantArt.stage(g)) + ' on ' + fmt(when) + '</div></div></div>';
 
   /* ---- footprint ---- */
   h += '<div class="card"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Footprint</div>';
-  h += '<div class="field"><label class="f">Root zone — keep this clear · <b id="rr-v">' + rr + '"</b> radius</label>' +
+  h += '<div class="field"><label class="f">Root zone — keep this clear · <b id="rr-v">' + Units.len(rr) + '</b> radius</label>' +
     '<input type="range" id="pl-rr" min="1" max="' + Math.max(24, Math.ceil(rc)) + '" step="0.5" value="' + rr +
     '" oninput="Garden.liveRadius(\'' + p.id + '\',null,this.value)"></div>';
-  h += '<div class="field" style="margin-top:8px"><label class="f">Mature canopy · <b id="rc-v">' + rc + '"</b> radius, ' +
-    Math.round(rc*2) + '" across</label>' +
+  h += '<div class="field" style="margin-top:8px"><label class="f">Mature canopy · <b id="rc-v">' + Units.len(rc) + '</b> radius, ' +
+    Units.len(Math.round(rc*2)) + ' across</label>' +
     '<input type="range" id="pl-rc" min="1.5" max="' + Math.max(36, Math.ceil(rc * 1.6)) + '" step="0.5" value="' + rc +
     '" oninput="Garden.liveRadius(\'' + p.id + '\',this.value,null)"></div>';
   h += '<div class="row between" style="margin-top:10px;gap:14px">' +
     '<div><div class="tiny muted">Nudge</div><div class="stepper">' +
-      '<button onclick="Garden.resizeBy(\'' + p.id + '\',-1,0)">−</button><span class="v">' + Math.round(rc*2) + '"</span>' +
+      '<button onclick="Garden.resizeBy(\'' + p.id + '\',-1,0)">−</button><span class="v">' + Units.len(Math.round(rc*2)) + '</span>' +
       '<button onclick="Garden.resizeBy(\'' + p.id + '\',1,0)">＋</button></div></div>' +
     '<div class="grow" style="text-align:right"><div class="tiny muted">' +
-      (Math.round(Math.PI * rc * rc / 144 * 10) / 10) + ' sq ft of canopy</div>' +
-      '<div class="tiny muted">' + (c ? c.sp + '" recommended spacing' : '') + '</div></div></div>';
+      Units.area(Math.PI * rc * rc / 144) + ' of canopy</div>' +
+      '<div class="tiny muted">' + (c ? Units.len(c.sp) + ' recommended spacing' : '') + '</div></div></div>';
   h += '<div class="tiny muted" style="margin-top:8px">You can also drag the white handle on the selected plant to resize it right on the bed.</div></div>';
 
   /* ---- one plant or a clump ---- */
@@ -5757,9 +6019,9 @@ Garden.plantingSheet = function(p){
     '</div>';
   h += single
     ? '<div class="note i" style="margin-top:10px">A single ' + esc(cropName(p.crop_id)) + ' spreading ' +
-      Math.round(rc*2) + '" across. Record what it really did and the app offers that much room next season.</div>'
-    : '<div class="note g" style="margin-top:10px">At ' + esc(c ? c.sp + '"' : 'normal') + ' spacing, a ' +
-      Math.round(rr*2) + '" patch holds about <b>' + holds + ' plant' + (holds === 1 ? "" : "s") + '</b>.</div>';
+      Units.len(Math.round(rc*2)) + ' across. Record what it really did and the app offers that much room next season.</div>'
+    : '<div class="note g" style="margin-top:10px">At ' + (c ? Units.len(c.sp) : 'normal') + ' spacing, a ' +
+      Units.len(Math.round(rr*2)) + ' patch holds about <b>' + holds + ' plant' + (holds === 1 ? "" : "s") + '</b>.</div>';
   h += '<div class="field" style="margin-top:12px"><label class="f">Plants here</label>' +
     '<input type="number" id="pl-qty" min="1" value="' + esc(p.qty || 1) + '"></div>';
 
@@ -5786,7 +6048,7 @@ Garden.plantingSheet = function(p){
   h += '</div>';
 
   if(obs && obs.n) h += '<div class="note w" style="margin-top:12px">📐 <b>From your own garden.</b> You recorded ' +
-    esc(cropName(p.crop_id)) + ' spreading about ' + obs.across + '" across (' + obs.sqft + ' sq ft)' +
+    esc(cropName(p.crop_id)) + ' spreading about ' + Units.len(obs.across) + ' across (' + Units.area(obs.sqft) + ')' +
     (obs.when ? ', ' + fmtY(obs.when) : '') + '. Worth allowing that much room again.</div>';
 
   /* ---- neighbours, by distance ---- */
@@ -5800,7 +6062,7 @@ Garden.plantingSheet = function(p){
       const k = x.r.score >= 1 ? "g" : x.r.score <= -2 ? "d" : "i";
       const icon = x.r.score >= 1 ? "💚" : x.r.score <= -2 ? "⚠️" : "·";
       h += '<div class="note ' + k + '" style="margin-bottom:6px">' + icon + ' ' + cropEmoji(x.o.crop_id) +
-        ' <b>' + esc(cropName(x.o.crop_id)) + '</b> — ' + x.rel.d + '" away' +
+        ' <b>' + esc(cropName(x.o.crop_id)) + '</b> — ' + Units.len(x.rel.d) + ' away' +
         (x.rel.rootsClash ? ', roots overlapping' : x.rel.canopyTouch ? ', leaves will meet' : '') +
         (x.r.score !== 0 ? '<br>' + esc(x.r.why) : '') + '</div>';
     });
@@ -5845,8 +6107,8 @@ Garden.liveRadius = function(id, rc, rr){
   Garden.setRadius(id, rc === null || rc === undefined ? Geom.RC(p) : num(rc),
                        rr === null || rr === undefined ? Geom.RR(p) : num(rr));
   const q = DB.find("plantings", id);
-  const a = $("#rr-v"); if(a) a.textContent = Geom.RR(q) + '"';
-  const b = $("#rc-v"); if(b) b.textContent = Geom.RC(q) + '"';
+  const a = $("#rr-v"); if(a) a.textContent = Units.len(Geom.RR(q));
+  const b = $("#rc-v"); if(b) b.textContent = Units.len(Geom.RC(q));
   const rrEl = $("#pl-rr"); if(rrEl) rrEl.value = Geom.RR(q);
   Garden.repaint();
 };
@@ -5877,14 +6139,14 @@ Garden.suggest = function(){
   const bed = Geom.bed(DB.find("beds", APP.bedId));
   const recs = Recommend.now({ bedId: bed.id }).slice(0, 12);
   let h = '<p class="muted sm" style="margin-top:0">Ranked for <b>' + esc(bed.name) + '</b> — ' +
-    Micro.sunHours(bed.id) + 'h of sun, ' + Geom.areaSqFt(bed) + ' sq ft, what is already growing there, ' +
+    Micro.sunHours(bed.id) + 'h of sun, ' + Units.area(Geom.areaSqFt(bed)) + ', what is already growing there, ' +
     'what grew there before, and what is in your seed bank.</p>';
   if(!recs.length) h += '<div class="note i">No sowing windows are open right now.</div>';
   recs.forEach(r => {
     h += '<div class="card" style="margin-bottom:10px"><div class="row" style="gap:10px">' +
       '<div style="font-size:1.8rem">' + r.crop.e + '</div><div class="grow">' +
       '<div class="b">' + esc(r.crop.n) + '</div><div class="tiny muted">' + esc(FAMILY[r.crop.fam].n) +
-      ' · ' + r.crop.dtm + ' days · needs ' + r.crop.sp + '" of room</div></div>' +
+      ' · ' + r.crop.dtm + ' days · needs ' + Units.len(r.crop.sp) + ' of room</div></div>' +
       '<button class="btn sm" onclick="Garden.paint=\'' + r.crop.id + '\';closeSheet();Garden.render();toast(\'Tap the bed to plant\')">Plant</button></div>';
     r.why.slice(0, 3).forEach(x => h += '<div class="tiny" style="margin-top:5px">' + esc(x) + '</div>');
     r.warn.slice(0, 2).forEach(x => h += '<div class="tiny" style="margin-top:5px;color:var(--warn)">' + esc(x) + '</div>');
@@ -6304,13 +6566,14 @@ const Shape = {
       '<div><label class="f">Depth · <b id="sh-hv">' + Shape.ft(Geom.H(bed)) + '</b></label>' +
         '<input type="range" id="sh-h" min="12" max="480" step="3" value="' + Geom.H(bed) +
         '" oninput="Shape.size(\'' + bed.id + '\')"></div></div>';
-    h += '<div class="tiny muted" id="sh-area" style="margin-top:6px">' + Geom.areaSqFt(bed) + ' sq ft of growing space</div>';
+    h += '<div class="tiny muted" id="sh-area" style="margin-top:6px">' + Units.area(Geom.areaSqFt(bed)) + ' of growing space</div>';
 
     h += '<div class="row between" style="margin-top:14px"><div><div class="b sm">Square-foot grid</div>' +
       '<div class="tiny muted">Shows the squares and snaps new plants to them.</div></div>' +
       '<button class="switch ' + (num(bed.grid_on) ? "on" : "") + '" id="sh-grid"></button></div>';
-    h += '<div class="field" style="margin-top:10px"><label class="f">Square size (inches)</label>' +
-      '<input type="number" id="sh-cell" min="3" max="48" value="' + esc(num(bed.cell_in, 12)) + '"></div>';
+    h += '<div class="field" style="margin-top:10px"><label class="f">Square size (' + Units.lenUnit() + ')</label>' +
+      '<input type="number" id="sh-cell" step="' + Units.lenStep() + '" min="' + Units.outLen(3) + '" max="' + Units.outLen(48) +
+      '" value="' + esc(Units.outLen(num(bed.cell_in, 12))) + '"></div>';
 
     /* Companion magnetism used to be buried here. It is a thing you change
        while you are dragging plants about, not while you are choosing how big
@@ -6323,9 +6586,13 @@ const Shape = {
     const g = $("#sh-grid"); if(g) g.onclick = () => g.classList.toggle("on");
   },
 
+  /* feet-and-inches reads naturally in one system and is meaningless in the
+     other, so metric gets a plain centimetre figure rather than a translation
+     of a convention that does not exist there */
   ft(inches){
+    if(Units.metric) return Units.big(inches);
     const f = Math.floor(inches / 12), i = Math.round(inches - f * 12);
-    return (f ? f + "′" : "") + (i ? " " + i + "″" : (f ? "" : "0″"));
+    return (f ? f + "\u2032" : "") + (i ? " " + i + "\u2033" : (f ? "" : "0\u2033"));
   },
 
   pick(bedId, shape){
@@ -6343,11 +6610,11 @@ const Shape = {
     const wv = $("#sh-wv"); if(wv) wv.textContent = Shape.ft(w);
     const hv = $("#sh-hv"); if(hv) hv.textContent = Shape.ft(h);
     const pv = $("#sh-prev"); if(pv) pv.innerHTML = Canvas.svg(Geom.bed(bed), { interactive:false, pad:3 });
-    const ar = $("#sh-area"); if(ar) ar.textContent = Geom.areaSqFt(Geom.bed(bed)) + " sq ft of growing space";
+    const ar = $("#sh-area"); if(ar) ar.textContent = Units.area(Geom.areaSqFt(Geom.bed(bed))) + " of growing space";
   },
 
   save(bedId){
-    const cell = clamp(num(($("#sh-cell") || {}).value, 12), 3, 48);
+    const cell = clamp(Units.inLen(num(($("#sh-cell") || {}).value, Units.outLen(12))), 3, 48);
     const gridOn = $("#sh-grid") && $("#sh-grid").classList.contains("on") ? 1 : 0;
     const bed = Geom.bed(DB.find("beds", bedId));
     /* cols and rows are only the grid overlay now, but the map, the recap
@@ -6388,11 +6655,11 @@ const Shape = {
   drawSheet(){
     const d = Shape.draft; if(!d) return;
     const n = d.pts.length;
-    let h = '<p class="muted sm" style="margin-top:0">Tap to drop a corner. Corners snap to the ' + Shape.GRID +
-      '″ grid and to each other — tap the first corner again to close the shape.</p>';
+    let h = '<p class="muted sm" style="margin-top:0">Tap to drop a corner. Corners snap to the ' + Units.len(Shape.GRID) +
+      ' grid and to each other — tap the first corner again to close the shape.</p>';
     h += '<div class="canvaswrap" id="sh-draw" style="padding:6px">' + Shape.drawSVG() + '</div>';
     h += '<div class="row between tiny muted" style="margin-top:8px">' +
-      '<span>' + n + ' corner' + (n === 1 ? "" : "s") + (n >= 3 ? ' · ' + Shape.draftArea() + ' sq ft' : '') + '</span>' +
+      '<span>' + n + ' corner' + (n === 1 ? "" : "s") + (n >= 3 ? ' · ' + Units.area(Shape.draftArea()) : '') + '</span>' +
       '<span>' + Shape.ft(d.w) + ' × ' + Shape.ft(d.h) + ' canvas</span></div>';
     h += '<div class="row" style="gap:8px;margin-top:12px">' +
       '<button class="btn ghost" onclick="Shape.undo()">↶ Undo</button>' +
@@ -6498,7 +6765,7 @@ const Shape = {
     Geom.savePoly(d.bedId, norm);
     Shape.draft = null;
     closeSheet(); Garden.render();
-    toast("Outline saved · " + Geom.areaSqFt(Geom.bed(DB.find("beds", d.bedId))) + " sq ft");
+    toast("Outline saved · " + Units.area(Geom.areaSqFt(Geom.bed(DB.find("beds", d.bedId)))));
   }
 };
 
@@ -6599,11 +6866,14 @@ Garden.newBed = function(){
   });
   h += '</div>';
   h += '<div class="grid2" style="margin-top:14px">' +
-    '<div><label class="f">Width (feet)</label><input type="number" id="nb-w" value="4" min="1" max="40" step="0.5"></div>' +
-    '<div><label class="f">Depth (feet)</label><input type="number" id="nb-h" value="8" min="1" max="40" step="0.5"></div></div>';
+    '<div><label class="f">Width (' + Units.bigUnit() + ')</label><input type="number" id="nb-w" value="' + Units.outBig(48) +
+      '" min="' + Units.outBig(12) + '" max="' + Units.outBig(480) + '" step="' + Units.bigStep() + '"></div>' +
+    '<div><label class="f">Depth (' + Units.bigUnit() + ')</label><input type="number" id="nb-h" value="' + Units.outBig(96) +
+      '" min="' + Units.outBig(12) + '" max="' + Units.outBig(480) + '" step="' + Units.bigStep() + '"></div></div>';
   h += '<div class="grid2" style="margin-top:12px">' +
     '<div><label class="f">Direct sun (hrs)</label><input type="number" id="nb-sun" value="8" min="0" max="16"></div>' +
-    '<div><label class="f">Square size (in)</label><input type="number" id="nb-cell" value="12" min="3" max="48"></div></div>';
+    '<div><label class="f">Square size (' + Units.lenUnit() + ')</label><input type="number" id="nb-cell" value="' + Units.outLen(12) +
+      '" min="' + Units.outLen(3) + '" max="' + Units.outLen(48) + '" step="' + Units.lenStep() + '"></div></div>';
   if(plots.length) h += '<div class="field"><label class="f">Plot</label><select id="nb-plot"><option value="">— none —</option>' +
     plots.map(p => '<option value="' + p.id + '"' + (APP.plotId === p.id ? " selected" : "") + '>' + esc(p.name) + '</option>').join("") + '</select></div>';
   h += '<div class="note i" style="margin-top:12px">Plants go anywhere inside the outline — no grid unless you ask for one. The square size only sets the optional overlay, and how far plants jump when you snap them to it.</div>';
@@ -6617,9 +6887,10 @@ Garden.newBed = function(){
 Garden.saveNewBed = function(){
   const sel = $("#sheet-body .shapegrid button.on");
   const shape = sel ? sel.dataset.shape : "rect";
-  const cell = clamp(num(($("#nb-cell") || {}).value, 12), 3, 48);
-  const wIn = Math.round(clamp(num(($("#nb-w") || {}).value, 4), 1, 40) * 12);
-  const hIn = Math.round(clamp(num(($("#nb-h") || {}).value, 8), 1, 40) * 12);
+  /* typed in whatever system is on, stored in inches either way */
+  const cell = clamp(Units.inLen(num(($("#nb-cell") || {}).value, Units.outLen(12))), 3, 48);
+  const wIn = Math.round(clamp(Units.inBig(num(($("#nb-w") || {}).value, Units.outBig(48))), 12, 480));
+  const hIn = Math.round(clamp(Units.inBig(num(($("#nb-h") || {}).value, Units.outBig(96))), 12, 480));
   const b = DB.insert("beds", {
     name: (($("#nb-name") || {}).value || "").trim() || ("Bed " + (DB.count("beds") + 1)),
     shape: shape, w_in: wIn, h_in: hIn, cell_in: cell, grid_on: 0, snap_in: 0,
@@ -6926,11 +7197,11 @@ Geom.fitsIn = function(cropId, r){
     const body = $("#sheet-body"); if(!body) return;
     const pr = Habit.provenance(p.crop_id);
     let h = '<div class="card" style="margin-top:12px"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Where these sizes come from</div>';
-    h += '<div class="tiny"><b>Spread ' + pr.spread.value + '″</b>' +
-      (pr.spread.derived ? ' <span class="chip warn tiny">estimate</span>' : '') + '<br>' + esc(pr.spread.how) + '</div>';
-    h += '<div class="tiny" style="margin-top:8px"><b>Height ' + pr.height.value + '″</b>' +
-      (pr.height.derived ? ' <span class="chip warn tiny">estimate</span>' : '') + '<br>' + esc(pr.height.how) + '</div>';
-    if(pr.note) h += '<div class="note i" style="margin-top:10px">' + esc(pr.note) + '</div>';
+    h += '<div class="tiny"><b>Spread ' + Units.len(pr.spread.value) + '</b>' +
+      (pr.spread.derived ? ' <span class="chip warn tiny">estimate</span>' : '') + '<br>' + escU(pr.spread.how) + '</div>';
+    h += '<div class="tiny" style="margin-top:8px"><b>Height ' + Units.len(pr.height.value) + '</b>' +
+      (pr.height.derived ? ' <span class="chip warn tiny">estimate</span>' : '') + '<br>' + escU(pr.height.how) + '</div>';
+    if(pr.note) h += '<div class="note i" style="margin-top:10px">' + escU(pr.note) + '</div>';
     if(pr.src) h += '<div class="tiny muted" style="margin-top:8px">' + esc(pr.src.org) + ' — <a href="' +
       esc(pr.src.url) + '" target="_blank" rel="noopener noreferrer">' + esc(pr.src.n) + ' ↗</a></div>';
     h += '<div class="tiny muted" style="margin-top:8px">Whatever the book says, your own garden outranks it — resize the plant and the app remembers.</div></div>';
@@ -7635,7 +7906,7 @@ const BedRecs = {
     if(!recs.length) return "";
     const free = BedRecs.freeSqFt(bed);
     let h = '<div class="sec"><h2>Would go well here</h2>' +
-      '<span class="tiny muted">' + free + ' sq ft free</span></div><div class="card">';
+      '<span class="tiny muted">' + Units.area(free) + ' free</span></div><div class="card">';
     h += '<div class="tiny muted" style="margin-bottom:10px">Chosen for what is already planted in this bed, not just what is in season. ' +
       'Anything that would fight one of these plants has been left out.</div>';
     recs.forEach(r => {
@@ -8033,7 +8304,7 @@ const Templates = {
         const icons = (t.plants || []).slice(0, 6).map(p => cropEmoji(p.crop_id)).join("");
         h += '<div class="item"><div class="av">' + ((Geom.SHAPES[t.shape] || {}).e || "▭") + '</div>' +
           '<div class="grow"><div class="b">' + esc(t.name) + '</div>' +
-          '<div class="tiny muted">' + Math.round(t.w_in/12*10)/10 + '×' + Math.round(t.h_in/12*10)/10 + ' ft · ' +
+          '<div class="tiny muted">' + Units.dims(t.w_in, t.h_in) + ' · ' +
           n + ' plant' + (n === 1 ? "" : "s") + ' · saved ' + esc(t.saved || "") + '</div>' +
           '<div class="tiny" style="margin-top:2px">' + icons + '</div></div></div>' +
           '<div class="row wrap" style="gap:6px;padding:0 12px 12px">' +
@@ -8351,8 +8622,8 @@ const Micro = (() => {
     out.rainCal = rainCal(site);
     out.rainCatch = out.rainCal.ratio;
     if(out.rainCal.measured !== null) out.why.push({ k:"g", t:"Measured against " + out.rainCal.n + " real rain days",
-      m:"The forecast promised " + out.rainCal.forecastIn + '" over those days and you recorded ' + out.rainCal.observedIn +
-        '" here — about ' + Math.round(out.rainCal.measured * 100) + "%. That is what the watering call now assumes, instead of trusting the forecast at face value." });
+      m:"The forecast promised " + Units.water(out.rainCal.forecastIn) + ' over those days and you recorded ' + Units.water(out.rainCal.observedIn) +
+        ' here — about ' + Math.round(out.rainCal.measured * 100) + "%. That is what the watering call now assumes, instead of trusting the forecast at face value." });
     out.frostEvidence = frostEvidence(site);
 
     if(out.waterFactor >= 1.12) out.why.push({ k:"w", t:"Dries out faster than the rest of the garden",
@@ -9553,7 +9824,7 @@ const Seeds = {
           ws.map(w => w.icon + ' ' + esc(w.label) + ': <b>' + fmt(w.date) + '</b>').join("<br>") + '</div>';
       }
       if(c) h += '<div class="note g" style="margin-top:8px"><b>Germination.</b> ' + c.depth + '" deep · ' +
-        c.germ[0] + '–' + c.germ[1] + ' days · soil ' + c.soilF[0] + '–' + c.soilF[2] + '°F (best at ' + c.soilF[1] + '°F).</div>';
+        c.germ[0] + '–' + c.germ[1] + ' days · soil ' + Units.tempN(c.soilF[0]) + '–' + Units.temp(c.soilF[2]) + ' (best at ' + Units.temp(c.soilF[1]) + ').</div>';
     }
 
     h += '<div class="row" style="gap:8px;margin-top:16px">' +
@@ -10592,12 +10863,12 @@ const Doctor = {
         '<div class="stat" style="text-align:right"><span class="n">' + r.conf + '%</span><span class="l">match</span></div></div>';
       h += '<div class="bar-track" style="margin:8px 0"><div class="bar-fill" style="width:' + r.conf + '%;background:' +
         (c.sev >= 3 ? "var(--danger)" : c.sev === 2 ? "var(--warn)" : "var(--green-600)") + '"></div></div>';
-      h += '<p class="sm" style="margin:8px 0">' + esc(c.quick) + '</p>';
+      h += '<p class="sm" style="margin:8px 0">' + escU(c.quick) + '</p>';
       h += '<div class="note ' + cls + '"><b>What to do now</b><ul style="margin:6px 0 0;padding-left:18px">' +
-        c.treat.map(t => '<li style="margin-bottom:4px">' + esc(t) + '</li>').join("") + '</ul></div>';
+        c.treat.map(t => '<li style="margin-bottom:4px">' + escU(t) + '</li>').join("") + '</ul></div>';
       h += '<details style="margin-top:8px"><summary class="sm b" style="cursor:pointer">Stop it happening again</summary>' +
-        '<ul class="sm" style="margin:8px 0 0;padding-left:18px">' + c.prev.map(t => '<li style="margin-bottom:4px">' + esc(t) + '</li>').join("") + '</ul></details>';
-      if(CLAIM_NOTES[c.id]) h += '<div class="note i" style="margin-top:8px"><b>Worth knowing.</b> ' + esc(CLAIM_NOTES[c.id]) + '</div>';
+        '<ul class="sm" style="margin:8px 0 0;padding-left:18px">' + c.prev.map(t => '<li style="margin-bottom:4px">' + escU(t) + '</li>').join("") + '</ul></details>';
+      if(CLAIM_NOTES[c.id]) h += '<div class="note i" style="margin-top:8px"><b>Worth knowing.</b> ' + escU(CLAIM_NOTES[c.id]) + '</div>';
       if(c.src && c.src.length) h += '<div style="margin-top:10px">' + c.src.map(s =>
         '<a class="chip info" style="margin:0 6px 6px 0" href="' + esc(s[1]) + '" target="_blank" rel="noopener noreferrer">🔗 ' + esc(s[0]) + ' ↗</a>').join("") + '</div>';
       h += '</div>';
@@ -10639,10 +10910,10 @@ const Doctor = {
       '<div class="tiny muted">' + fmtY(d.date) + (d.crop_id ? ' · ' + esc(cropName(d.crop_id)) : '') +
       (d.confidence ? ' · ' + esc(d.confidence) + '% match' : '') + ' · ' + esc(d.source === "ai" ? "AI vision" : "symptom rules") + '</div>';
     if(d.treatment) h += '<div class="note g" style="margin-top:12px"><b>Treatment given</b><ul style="margin:6px 0 0;padding-left:18px">' +
-      d.treatment.split(" | ").map(t => '<li style="margin-bottom:4px">' + esc(t) + '</li>').join("") + '</ul></div>';
+      d.treatment.split(" | ").map(t => '<li style="margin-bottom:4px">' + escU(t) + '</li>').join("") + '</ul></div>';
     if(d.notes) h += '<div class="note i" style="margin-top:8px">' + esc(d.notes) + '</div>';
     if(c) h += '<details style="margin-top:10px"><summary class="sm b">Prevention</summary><ul class="sm" style="padding-left:18px">' +
-      c.prev.map(t => '<li>' + esc(t) + '</li>').join("") + '</ul></details>';
+      c.prev.map(t => '<li>' + escU(t) + '</li>').join("") + '</ul></details>';
     h += '<button class="btn ghost block danger" style="margin-top:14px" onclick="Photos.drop(\'' + (d.photo_id||"") + '\');DB.remove(\'diagnoses\',\'' + d.id + '\');closeSheet();Doctor.render()">Delete this record</button>';
     openSheet("Scan record", h);
   },
@@ -10795,13 +11066,13 @@ const Journal = {
 
     const jy = DB.all("journal").filter(j => (j.date||"").slice(0,4) === yr);
     const hy = DB.all("harvests").filter(x => (x.date||"").slice(0,4) === yr);
-    const water = jy.filter(j => j.type === "water").reduce((a,j) => a + num(j.amount), 0);
+    const water = jy.filter(j => j.type === "water").reduce((a,j) => a + Journal.waterIn(j), 0);
     const spend = jy.reduce((a,j) => a + num(j.cost), 0);
     const lbs = hy.reduce((a,x) => a + Journal.lbs(x), 0);
 
     let h = '<div class="card"><div class="grid3">' +
-      '<div class="stat"><span class="n">' + (Math.round(lbs*10)/10) + '</span><span class="l">lbs picked</span></div>' +
-      '<div class="stat"><span class="n">' + (Math.round(water*10)/10) + '"</span><span class="l">water logged</span></div>' +
+      '<div class="stat"><span class="n">' + Units.weightN(lbs) + '</span><span class="l">' + Units.weightUnit() + ' picked</span></div>' +
+      '<div class="stat"><span class="n">' + Units.waterN(water) + Units.waterMark() + '</span><span class="l">water logged</span></div>' +
       '<div class="stat"><span class="n">$' + Math.round(spend) + '</span><span class="l">spent</span></div>' +
       '</div></div>';
 
@@ -10843,6 +11114,17 @@ const Journal = {
   },
 
   lbs(x){ const w = num(x.weight); return x.unit === "oz" ? w/16 : x.unit === "kg" ? w*2.205 : x.unit === "g" ? w/453.6 : w; },
+  /* the same idea for watering. A row records the unit it was entered in, so
+     a garden logged half in inches and half in centimetres still totals
+     correctly — which it did not before the switch existed. */
+  waterIn(j){ const a = num(j.amount); const u = String(j.unit || "").toLowerCase();
+    return u === "cm" ? a / 2.54 : u === "mm" ? a / 25.4 : a; },
+  /* what a new entry of this kind should be measured in */
+  unitFor(type){
+    if(type === "water") return Units.metric ? "cm" : "inches";
+    if(type === "amend") return Units.metric ? "kg" : "lbs";
+    return (JTYPE[type] || JTYPE.note).unit;
+  },
   bedName(id){ const b = id ? DB.find("beds", id) : null; return b ? b.name : "Garden"; },
 
   quick(type, bedId, plantingId){
@@ -10868,13 +11150,15 @@ const Journal = {
     let h = '';
     if(t.amount) h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Amount</label><input type="number" step="0.01" id="jl-amt" placeholder="1"></div>' +
-      '<div><label class="f">Unit</label><input type="text" id="jl-unit" value="' + esc(t.unit) + '"></div></div>';
-    if($("#jl-type").value === "water") h += '<div class="note i" style="margin-top:8px">Log in inches to match crop requirements. Rough guide: 0.6 gallons per square foot ≈ 1 inch of water.</div>';
+      '<div><label class="f">Unit</label><input type="text" id="jl-unit" value="' + esc(Journal.unitFor($("#jl-type").value)) + '"></div></div>';
+    if($("#jl-type").value === "water") h += '<div class="note i" style="margin-top:8px">' + (Units.metric
+      ? 'Log in centimetres to match what the crops ask for. Rough guide: 10 litres per square metre ≈ 1 cm of water.'
+      : 'Log in inches to match crop requirements. Rough guide: 0.6 gallons per square foot ≈ 1 inch of water.') + '</div>';
     if($("#jl-type").value === "feed" || $("#jl-type").value === "treat" || $("#jl-type").value === "amend")
       h += '<div class="field"><label class="f">Product</label><input type="text" id="jl-prod" placeholder="Fish emulsion 5-1-1"></div>';
     if($("#jl-type").value === "soil") h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">pH</label><input type="number" step="0.1" id="jl-ph" placeholder="6.5"></div>' +
-      '<div><label class="f">Soil temp °F</label><input type="number" id="jl-temp" placeholder="62"></div></div>';
+      '<div><label class="f">Soil temp ' + Units.tempUnit() + '</label><input type="number" id="jl-temp" placeholder="' + Units.tempN(62) + '"></div></div>';
     if(t.cost) h += '<div class="field"><label class="f">Cost ($)</label><input type="number" step="0.01" id="jl-cost" placeholder="0.00"></div>';
     h += '<div class="field"><label class="f">Time spent (minutes)</label><input type="number" id="jl-min" placeholder="15"></div>';
     $("#jl-dyn").innerHTML = h;
@@ -10893,7 +11177,8 @@ const Journal = {
     };
     DB.insert("journal", rec);
     if(type === "soil" && $("#jl-ph"))
-      DB.insert("observations", { date: rec.date, bed_id: rec.bed_id, ph: num($("#jl-ph").value), soil_temp: num($("#jl-temp").value), notes: rec.notes });
+      DB.insert("observations", { date: rec.date, bed_id: rec.bed_id, ph: num($("#jl-ph").value),
+        soil_temp: $("#jl-temp").value === "" ? null : Units.inTemp(num($("#jl-temp").value)), notes: rec.notes });
     closeSheet(); Journal.render(); refresh(); toast("Logged");
   },
 
@@ -10930,12 +11215,14 @@ const Journal = {
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Weight</label><input type="number" step="0.01" id="hv-w" value="' + esc(h0 ? h0.weight : "") + '" placeholder="1.5"></div>' +
       '<div><label class="f">Unit</label><select id="hv-unit">' + ["lbs","oz","kg","g","count"].map(u =>
-        '<option' + (h0 && h0.unit === u ? " selected" : "") + '>' + u + '</option>').join("") + '</select></div></div>';
+        '<option' + ((h0 ? h0.unit === u : u === (Units.metric ? "kg" : "lbs")) ? " selected" : "") + '>' + u + '</option>').join("") + '</select></div></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Count (optional)</label><input type="number" id="hv-count" value="' + esc(h0 ? h0.count : "") + '" placeholder="12"></div>' +
       '<div><label class="f">Value ($)</label><input type="number" step="0.01" id="hv-val" value="' + esc(h0 ? h0.value : "") + '" placeholder="market price"></div></div>';
     h += '<div class="field"><label class="f">Notes</label><textarea id="hv-notes" placeholder="Flavour, size, what you would change">' + esc(h0 ? h0.notes || "" : "") + '</textarea></div>';
-    h += '<div class="note i" style="margin-top:12px">Filling in value turns the recap into a real cost-per-pound picture. Use whatever your local shop charges.</div>';
+    h += '<div class="note i" style="margin-top:12px">What you pick is recorded in the unit you choose here, exactly as you entered it. ' +
+      'Totals and the recap are shown in ' + (Units.metric ? "kilograms" : "pounds") + ', whatever mix of units you have used. ' +
+      'Filling in value turns the recap into a real cost-per-' + (Units.metric ? "kilo" : "pound") + ' picture.</div>';
     h += '<button class="btn block" style="margin-top:14px" onclick="Journal.saveHarvest(' + (h0 ? "'" + h0.id + "'" : "null") + ')">Save harvest</button>';
     openSheet(h0 ? "Edit harvest" : "Log a harvest", h);
     setTimeout(Journal.hvSync, 50);
@@ -11002,7 +11289,7 @@ const Recap = {
     const spendJ = jl.reduce((a,x) => a + num(x.cost), 0);
     const spendS = sd.reduce((a,s) => a + num(s.cost), 0);
     const spend = spendJ + spendS;
-    const water = jl.filter(j => j.type === "water").reduce((a,j) => a + num(j.amount), 0);
+    const water = jl.filter(j => j.type === "water").reduce((a,j) => a + Journal.waterIn(j), 0);
     const mins = jl.reduce((a,j) => a + num(j.minutes), 0);
     const feeds = jl.filter(j => j.type === "feed").length;
 
@@ -11010,7 +11297,7 @@ const Recap = {
     h += '<div class="scroller">' + ys.map(y => '<button class="chip ' + (y === Y ? "on" : "") + '" onclick="Recap.year=\'' + y + '\';Recap.render()">' + y + '</button>').join("") + '</div>';
 
     h += '<div class="hero" style="margin-top:12px"><div class="lbl">' + Y + ' season</div>' +
-      '<div style="font-size:2.4rem;font-weight:800;line-height:1.1">' + (Math.round(lbs*10)/10) + ' lbs</div>' +
+      '<div style="font-size:2.4rem;font-weight:800;line-height:1.1">' + Units.weight(lbs) + '</div>' +
       '<div class="sm" style="opacity:.92">' + hv.length + ' harvests across ' +
       Object.keys(hv.reduce((a,x) => (a[x.crop_id]=1, a), {})).length + ' crops</div>' +
       '<div class="row" style="gap:16px;margin-top:12px;font-size:.82rem;opacity:.95">' +
@@ -11034,7 +11321,7 @@ const Recap = {
     h += '<div class="sec"><h2>What produced</h2></div><div class="card">';
     cropRows.forEach(r => {
       h += '<div style="margin-bottom:10px"><div class="row between"><div class="sm b">' + cropEmoji(r.id) + ' ' + esc(cropName(r.id)) + '</div>' +
-        '<div class="tiny muted">' + (Math.round(r.lbs*10)/10) + ' lbs' + (r.val ? ' · $' + Math.round(r.val) : '') + '</div></div>' +
+        '<div class="tiny muted">' + Units.weight(r.lbs) + (r.val ? ' · $' + Math.round(r.val) : '') + '</div></div>' +
         '<div class="bar-track" style="margin-top:4px"><div class="bar-fill" style="width:' + Math.round(r.lbs/maxL*100) + '%"></div></div></div>';
     });
     h += '</div>';
@@ -11050,24 +11337,25 @@ const Recap = {
     }).sort((a,b) => b.per - a.per);
     if(bedRows.length){
       h += '<div class="sec"><h2>Bed productivity</h2></div><div class="card"><table class="mini">' +
-        '<tr><th>Bed</th><th>Yield</th><th>Sq ft</th><th>lbs/sq ft</th></tr>' +
-        bedRows.map(r => '<tr><td class="b">' + esc(r.name) + '</td><td>' + (Math.round(r.lbs*10)/10) + '</td><td>' +
-          Math.round(r.sq) + '</td><td class="b">' + (Math.round(r.per*100)/100) + '</td></tr>').join("") +
-        '</table><div class="tiny muted" style="margin-top:8px">A well-run intensive bed runs about 0.5–1.5 lbs per square foot per season. Use this to decide what to expand.</div></div>';
+        '<tr><th>Bed</th><th>Yield</th><th>' + Units.areaUnit() + '</th><th>Density</th></tr>' +
+        bedRows.map(r => '<tr><td class="b">' + esc(r.name) + '</td><td>' + Units.weightN(r.lbs) + '</td><td>' +
+          Units.areaN(r.sq) + '</td><td class="b">' + Units.density(r.per) + '</td></tr>').join("") +
+        '</table><div class="tiny muted" style="margin-top:8px">A well-run intensive bed runs about ' +
+        Units.density(0.5) + '–' + Units.density(1.5) + ' a season. Use this to decide what to expand.</div></div>';
     }
 
     /* resources */
     h += '<div class="sec"><h2>Resources used</h2></div><div class="card"><div class="grid2">' +
-      '<div class="stat"><span class="n">' + (Math.round(water*10)/10) + '"</span><span class="l">water logged</span></div>' +
+      '<div class="stat"><span class="n">' + Units.waterN(water) + Units.waterMark() + '</span><span class="l">water logged</span></div>' +
       '<div class="stat"><span class="n">' + feeds + '</span><span class="l">feedings</span></div>' +
       '<div class="stat"><span class="n">' + Math.round(mins/60*10)/10 + 'h</span><span class="l">time logged</span></div>' +
       '<div class="stat"><span class="n">' + dx.length + '</span><span class="l">problems diagnosed</span></div>' +
       '</div>';
     if(lbs > 0){
       h += '<table class="mini" style="margin-top:12px">' +
-        '<tr><th>Cost per pound</th><td class="b">$' + (Math.round(spend/lbs*100)/100) + '</td></tr>' +
-        '<tr><th>Value per pound</th><td>$' + (value ? Math.round(value/lbs*100)/100 : "—") + '</td></tr>' +
-        (mins ? '<tr><th>Pounds per hour</th><td>' + (Math.round(lbs/(mins/60)*10)/10) + '</td></tr>' : '') +
+        '<tr><th>Cost per ' + Units.perUnitWord() + '</th><td class="b">$' + (Math.round(spend/Units.weightN(lbs)*100)/100) + '</td></tr>' +
+        '<tr><th>Value per ' + Units.perUnitWord() + '</th><td>$' + (value ? Math.round(value/Units.weightN(lbs)*100)/100 : "—") + '</td></tr>' +
+        (mins ? '<tr><th>' + Units.weightUnit() + ' per hour</th><td>' + (Math.round(Units.weightN(lbs)/(mins/60)*10)/10) + '</td></tr>' : '') +
         '</table>';
     }
     h += '</div>';
@@ -11367,7 +11655,7 @@ const Library = {
         const st = Season.status(c.id);
         h += '<button class="item" onclick="Library.open(\'' + c.id + '\')"><div class="av">' + c.e + '</div>' +
           '<div class="grow"><div class="b">' + esc(c.n) + '</div>' +
-          '<div class="tiny muted">' + c.sun + 'h sun · ' + c.water + '"/wk · ' + c.sp + '" apart · ' + c.dtm + ' days</div>' +
+          '<div class="tiny muted">' + c.sun + 'h sun · ' + Units.waterWeek(c.water) + ' · ' + Units.len(c.sp) + ' apart · ' + c.dtm + ' days</div>' +
           (st && st.inWindow ? '<div class="tiny" style="color:var(--green-600)">' + esc(st.w.label) + ' now</div>' : '') +
           '</div><span class="go">›</span></button>';
       });
@@ -11393,7 +11681,7 @@ const Library = {
 
     h += '<div class="grid3">' +
       '<div class="stat"><span class="n">' + c.sun + 'h</span><span class="l">sun</span></div>' +
-      '<div class="stat"><span class="n">' + c.water + '"</span><span class="l">water/wk</span></div>' +
+      '<div class="stat"><span class="n">' + Units.waterN(c.water) + Units.waterMark() + '</span><span class="l">water/wk</span></div>' +
       '<div class="stat"><span class="n">' + (function(){ const r = Maturity.cropRange(id); return r ? r.lo + '–' + r.hi : c.dtm; })() +
       '</span><span class="l">days</span></div></div>';
     const myMat = Maturity.mine(id, null);
@@ -11404,13 +11692,14 @@ const Library = {
       : '<div class="tiny muted" style="margin-top:6px">Days to maturity is a range, not a number — it swings with variety, heat and light. Record a first harvest on any planting and the app starts learning your garden\'s real timing.</div>';
 
     h += '<table class="mini" style="margin-top:14px">' +
-      '<tr><th>Spacing</th><td>' + c.sp + '" apart · ' + (Math.round(c.psf*100)/100) + ' per sq ft</td></tr>' +
-      '<tr><th>Sow depth</th><td>' + c.depth + '"</td></tr>' +
-      '<tr><th>Germination</th><td>' + c.germ[0] + '–' + c.germ[1] + ' days at ' + c.soilF[1] + '°F (range ' + c.soilF[0] + '–' + c.soilF[2] + '°F)</td></tr>' +
+      '<tr><th>Spacing</th><td>' + Units.len(c.sp) + ' apart · ' + Units.perArea(c.psf) + '</td></tr>' +
+      '<tr><th>Sow depth</th><td>' + Units.len(c.depth) + '</td></tr>' +
+      '<tr><th>Germination</th><td>' + c.germ[0] + '–' + c.germ[1] + ' days at ' + Units.temp(c.soilF[1]) +
+        ' (range ' + Units.tempN(c.soilF[0]) + '–' + Units.temp(c.soilF[2]) + ')</td></tr>' +
       '<tr><th>Soil pH</th><td>' + esc(c.ph) + '</td></tr>' +
       '<tr><th>Feeding</th><td>' + esc(c.feeder) + ' feeder</td></tr>' +
       '<tr><th>Seed viability</th><td>~' + c.via + ' years' + (c.verified ? ' <span class="tiny" style="color:var(--green-600)">✓ checked</span>' : '') + '</td></tr>' +
-      '<tr><th>Typical yield</th><td>' + (c.yield ? c.yield + ' lbs per plant' : "—") + '</td></tr>' +
+      '<tr><th>Typical yield</th><td>' + (c.yield ? Units.weight(c.yield) + ' per plant' : "—") + '</td></tr>' +
       (c.succ ? '<tr><th>Succession</th><td>Re-sow every ' + c.succ + ' days</td></tr>' : '') +
       '</table>';
 
@@ -11426,9 +11715,13 @@ const Library = {
     }
 
     h += '<div class="sec"><h2>Growing it well</h2></div>';
-    h += '<div class="note g"><b>Tips.</b> ' + esc(c.tips) + '</div>';
-    h += '<div class="note w" style="margin-top:8px"><b>Feeding.</b> ' + esc(c.npk) + '</div>';
-    h += '<div class="note i" style="margin-top:8px"><b>Harvest.</b> ' + esc(c.harvest) + '</div>';
+    /* escU, not esc — these sentences carry measurements inside them
+       ("thin to 6–8 inches", "peppers sulk below 55°F") and a page whose
+       table reads in centimetres while its advice reads in inches is worse
+       than not offering the switch */
+    h += '<div class="note g"><b>Tips.</b> ' + escU(c.tips) + '</div>';
+    h += '<div class="note w" style="margin-top:8px"><b>Feeding.</b> ' + escU(c.npk) + '</div>';
+    h += '<div class="note i" style="margin-top:8px"><b>Harvest.</b> ' + escU(c.harvest) + '</div>';
 
     h += '<div class="sec"><h2>Companions</h2></div><div class="card">';
     h += '<div class="tiny b muted" style="margin-bottom:6px">PLANT WITH</div><div class="row wrap" style="gap:6px">' +
@@ -11512,7 +11805,7 @@ const Settings = {
     h += '<div class="sec"><h2>Location & season</h2></div><div class="card">';
     h += '<div class="row between"><div><div class="b">' + esc(DB.get("locLabel") || "Not set") + '</div>' +
       '<div class="tiny muted">Zone ' + esc(DB.get("zone") || "—") +
-      (DB.get("avgLow") !== undefined ? ' · avg low ' + esc(DB.get("avgLow")) + '°F' : '') + '</div></div>' +
+      (DB.get("avgLow") !== undefined ? ' · avg low ' + Units.temp(DB.get("avgLow")) : '') + '</div></div>' +
       '<button class="btn sm" onclick="Onboard.open()">Change</button></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Last spring frost</label><input type="date" id="st-lf" value="' + esc(Season.lastFrostISO || "") + '"></div>' +
@@ -11881,13 +12174,16 @@ const UserCrops = {
     h += '<div class="sec"><h2>How it grows</h2></div>';
     h += '<div class="grid2">' +
       '<div><label class="f">Sun (hours)</label><input type="number" id="uc-sun" min="0" max="16" value="' + esc(v("sun",6)) + '"></div>' +
-      '<div><label class="f">Water (in/week)</label><input type="number" id="uc-water" step="0.25" min="0" max="4" value="' + esc(v("water",1)) + '"></div></div>';
+      '<div><label class="f">Water (' + Units.lenUnit() + '/week)</label><input type="number" id="uc-water" step="' + Units.waterStep() +
+      '" min="0" max="' + Units.outWater(4) + '" value="' + esc(Units.outWater(num(v("water",1), 1))) + '"></div></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
-      '<div><label class="f">Spacing (inches)</label><input type="number" id="uc-sp" min="1" max="96" value="' + esc(v("sp",12)) + '">' +
+      '<div><label class="f">Spacing (' + Units.lenUnit() + ')</label><input type="number" id="uc-sp" step="' + Units.lenStep() +
+      '" min="' + Units.outLen(1) + '" max="' + Units.outLen(96) + '" value="' + esc(Units.outLen(num(v("sp",12), 12))) + '">' +
       '<div class="tiny muted">Also sets how wide it is drawn.</div></div>' +
       '<div><label class="f">Days to maturity</label><input type="number" id="uc-dtm" min="1" max="400" value="' + esc(v("dtm",60)) + '"></div></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
-      '<div><label class="f">Sow depth (in)</label><input type="number" id="uc-depth" step="0.125" min="0" max="6" value="' + esc(v("depth",0.25)) + '"></div>' +
+      '<div><label class="f">Sow depth (' + Units.lenUnit() + ')</label><input type="number" id="uc-depth" step="' + (Units.metric ? "0.5" : "0.125") +
+      '" min="0" max="' + Units.outLen(6) + '" value="' + esc(Units.outLen(num(v("depth",0.25), 0.25))) + '"></div>' +
       '<div><label class="f">Started as</label><select id="uc-from">' +
         ["seed","transplant"].map(x => '<option value="' + x + '"' + (v("from","seed") === x ? " selected" : "") + '>' + x + '</option>').join("") +
       '</select></div></div>';
@@ -11939,9 +12235,11 @@ const UserCrops = {
       name: name,
       emoji: $("#uc-emoji-v").value || "🌱",
       fam: $("#uc-fam").value,
-      sun: num($("#uc-sun").value, 6), water: num($("#uc-water").value, 1),
-      sp: num($("#uc-sp").value, 12), dtm: num($("#uc-dtm").value, 60),
-      depth: num($("#uc-depth").value, 0.25), from: $("#uc-from").value,
+      /* typed in whatever system is on; stored in inches like every other crop */
+      sun: num($("#uc-sun").value, 6),
+      water: Units.inWater(num($("#uc-water").value, Units.outWater(1))),
+      sp: Units.inLen(num($("#uc-sp").value, Units.outLen(12))), dtm: num($("#uc-dtm").value, 60),
+      depth: Units.inLen(num($("#uc-depth").value, Units.outLen(0.25))), from: $("#uc-from").value,
       feeder: $("#uc-feeder").value, via: num($("#uc-via").value, 3),
       start_indoor: opt("#uc-si"), start_tp: opt("#uc-st"),
       start_direct: opt("#uc-sd"), start_fall: opt("#uc-sf"),
@@ -12047,15 +12345,15 @@ const Weather = {
       }
       if(dd < 0 && dd >= -7) rainPast += pr;
     });
-    if(frost) out.push({ k:"d", i:"🥶", t: Math.round(frost.t) + "°F on " + fmt(frost.d),
+    if(frost) out.push({ k:"d", i:"🥶", t: Units.temp(frost.t) + " on " + fmt(frost.d),
       m:"Cover tender crops — tomato, pepper, basil, squash, beans — or bring containers in. Water the soil beforehand; moist soil holds heat overnight." });
-    if(hot) out.push({ k:"w", i:"🥵", t: Math.round(hot.t) + "°F on " + fmt(hot.d),
-      m:"Tomato and pepper pollen goes sterile above about 90°F, so expect blossom drop. Shade cloth over the hottest hours, water deeply in the morning, and do not let anything wilt." });
-    if(rain7 >= 0.5) out.push({ k:"i", i:"🌧️", t: (Math.round(rain7*100)/100) + '" of rain coming',
+    if(hot) out.push({ k:"w", i:"🥵", t: Units.temp(hot.t) + " on " + fmt(hot.d),
+      m:"Tomato and pepper pollen goes sterile above about " + Units.temp(90) + ", so expect blossom drop. Shade cloth over the hottest hours, water deeply in the morning, and do not let anything wilt." });
+    if(rain7 >= 0.5) out.push({ k:"i", i:"🌧️", t: Units.water(rain7) + ' of rain coming',
       m:"Hold off watering established beds. Wet foliage spreads blight and mildew — stay out of the beds while leaves are wet." });
     if(rain7 < 0.1 && dry >= 6) out.push({ k:"w", i:"🏜️", t:"Dry week ahead",
       m:"No meaningful rain forecast. Water deeply and less often rather than a little every day, and mulch to cut losses roughly in half." });
-    if(rainPast > 0.25) out.push({ k:"g", i:"💧", t: (Math.round(rainPast*100)/100) + '" fell in the last week',
+    if(rainPast > 0.25) out.push({ k:"g", i:"💧", t: Units.water(rainPast) + ' fell in the last week',
       m:"Already banked — subtract this from what your beds need." });
     return out;
   },
@@ -12093,7 +12391,7 @@ const Weather = {
 
     h += '<div class="hero"><div class="row between">' +
       '<div><div class="lbl">' + esc(DB.get("locLabel") || "") + '</div>' +
-      '<div style="font-size:2.6rem;font-weight:800;line-height:1">' + Math.round(num(c.temperature_2m)) + '°F</div>' +
+      '<div style="font-size:2.6rem;font-weight:800;line-height:1">' + Units.temp(num(c.temperature_2m)) + '</div>' +
       '<div class="sm" style="opacity:.94">' + esc(Live.wx(c.weather_code)[0]) + '</div></div>' +
       '<div style="font-size:3.2rem">' + Live.wx(c.weather_code)[1] + '</div></div>';
     if(todayIdx >= 0) h += '<div class="row" style="gap:14px;margin-top:10px;font-size:.8rem;opacity:.95">' +
@@ -12123,7 +12421,7 @@ const Weather = {
         '<td>' + Live.wx(d.weather_code[i])[1] + '</td>' +
         '<td>' + Math.round(hi) + '°' + (hi >= 90 ? ' 🥵' : '') + '</td>' +
         '<td' + (lo <= 36 ? ' style="color:var(--info);font-weight:700"' : '') + '>' + Math.round(lo) + '°' + (lo <= 32 ? ' ❄️' : lo <= 36 ? ' 🥶' : '') + '</td>' +
-        '<td>' + (pr > 0.01 ? (Math.round(pr*100)/100) + '"' : '—') + '</td></tr>';
+        '<td>' + (pr > 0.01 ? Units.water(pr) : '—') + '</td></tr>';
     });
     h += '</table></div>';
 
@@ -12134,7 +12432,7 @@ const Weather = {
       h += '<tr><td class="b">' + DOW[parseISO(t).getDay()] + " " + parseISO(t).getDate() + '</td>' +
         '<td>' + Live.wx(d.weather_code[i])[1] + '</td><td>' + Math.round(num(d.temperature_2m_max[i])) + '°</td>' +
         '<td>' + Math.round(num(d.temperature_2m_min[i])) + '°</td>' +
-        '<td>' + (num(d.precipitation_sum[i]) > 0.01 ? (Math.round(num(d.precipitation_sum[i])*100)/100) + '"' : '—') + '</td></tr>';
+        '<td>' + (num(d.precipitation_sum[i]) > 0.01 ? Units.water(num(d.precipitation_sum[i])) : '—') + '</td></tr>';
     });
     h += '</table></div>';
 
@@ -12145,10 +12443,10 @@ const Weather = {
         const r = Recommend.water(b.id, w);
         if(!r){ h += '<div class="item"><div class="av">🪴</div><div class="grow"><div class="b">' + esc(b.name) + '</div>' +
           '<div class="tiny muted">Nothing planted</div></div></div>'; return; }
-        const label = r.verdict === "skip" ? "Skip — rain covers it" : r.verdict === "light" ? 'Light top-up, ~' + r.deficit + '"' : 'Water ' + r.deficit + '" this week';
+        const label = r.verdict === "skip" ? "Skip — rain covers it" : r.verdict === "light" ? 'Light top-up, ~' + Units.water(r.deficit) : 'Water ' + Units.water(r.deficit) + ' this week';
         h += '<button class="item" onclick="Journal.quick(\'water\',\'' + b.id + '\')"><div class="av">' +
           (r.verdict === "skip" ? "✅" : "💧") + '</div><div class="grow"><div class="b">' + esc(b.name) + '</div>' +
-          '<div class="tiny muted">' + esc(label) + ' · needs ' + r.need + '"/wk · ' + r.rain + '" rain</div></div><span class="go">›</span></button>';
+          '<div class="tiny muted">' + esc(label) + ' · needs ' + Units.waterWeek(r.need) + ' · ' + Units.water(r.rain) + ' rain</div></div><span class="go">›</span></button>';
       });
       h += '</div></div>';
     }
@@ -12218,7 +12516,7 @@ const Weather = {
         x.fillStyle = "#fff"; x.font = F(32, "800"); x.fillText(Math.round(hi) + "°", cx, y + 208);
         x.fillStyle = lo <= 36 ? "#bfe4ff" : "rgba(255,255,255,.72)"; x.font = F(28, "600");
         x.fillText(Math.round(lo) + "°", cx, y + 248);
-        if(pr > 0.01){ x.fillStyle = "#cfe8ff"; x.font = F(22, "600"); x.fillText(Math.round(pr*100)/100 + '"', cx, y + 286); }
+        if(pr > 0.01){ x.fillStyle = "#cfe8ff"; x.font = F(22, "600"); x.fillText(Units.water(pr), cx, y + 286); }
         x.textAlign = "left";
       });
       y += 348;
@@ -12344,8 +12642,8 @@ const MicroLog = {
     if(bias){
       const pct = Math.round(bias.ratio * 100);
       h += '<div class="note ' + (bias.ratio < 0.8 ? "w" : bias.ratio > 1.2 ? "i" : "g") + '" style="margin-top:' + (p.length ? "10px" : "0") + '">' +
-        '🌧️ <b>The forecast at your address.</b> Over ' + bias.n + ' rain days it promised ' + bias.forecastIn +
-        '" and you recorded ' + bias.observedIn + '" — about <b>' + pct + '%</b>. ' +
+        '🌧️ <b>The forecast at your address.</b> Over ' + bias.n + ' rain days it promised ' + Units.water(bias.forecastIn) +
+        ' and you recorded ' + Units.water(bias.observedIn) + ' — about <b>' + pct + '%</b>. ' +
         (bias.ratio < 0.8 ? "The watering call already discounts it by that much."
          : bias.ratio > 1.2 ? "It has been running low here, and the watering call allows for that."
          : "Close enough to trust as it stands.") +
@@ -12377,19 +12675,19 @@ const MicroLog = {
       '<div style="font-size:2rem">' + (it.kind === "rain" ? "🌧️" : "🥶") + '</div></div>';
 
     if(it.kind === "rain"){
-      h += '<div class="note i">The forecast recorded <b>' + it.forecast + '"</b> of rain for the garden that day. How much actually landed here?</div>';
+      h += '<div class="note i">The forecast recorded <b>' + Units.water(it.forecast) + '</b> of rain for the garden that day. How much actually landed here?</div>';
       h += '<div class="row wrap" style="gap:6px;margin-top:12px">' +
         MicroLog.chips(it.forecast).map(c =>
           '<button class="chip" onclick="MicroLog.setAmount(' + c[1] + ')">' + esc(c[0]) + '</button>').join("") +
         '</div>';
       h += '<div class="field" style="margin-top:12px"><label class="f">Inches</label>' +
-        '<input type="number" id="ml-amt" step="0.01" min="0" max="20" value="' + it.forecast + '"></div>';
+        '<input type="number" id="ml-amt" step="' + Units.waterStep() + '" min="0" max="' + Units.outWater(20) + '" value="' + Units.outWater(it.forecast) + '"></div>';
       h += '<div class="tiny muted" style="margin-top:6px">A rain gauge is ideal, but an honest guess beats trusting a forecast cell several miles wide. Answer for this spot — a bed under the eaves gets less than the one beside it.</div>';
       h += '<div class="row" style="gap:8px;margin-top:16px">' +
         '<button class="btn ghost" onclick="MicroLog.skip()">Not sure</button>' +
         '<button class="btn grow" onclick="MicroLog.saveRain()">Save</button></div>';
     } else {
-      h += '<div class="note i">The forecast low for the garden that night was <b>' + it.low + '°F</b>. Did this spot actually take a frost?</div>';
+      h += '<div class="note i">The forecast low for the garden that night was <b>' + Units.temp(it.low) + '</b>. Did this spot actually take a frost?</div>';
       h += '<div class="row" style="gap:8px;margin-top:14px">' +
         '<button class="btn grow" onclick="MicroLog.saveFrost(true)">❄️ Yes, it frosted</button>' +
         '<button class="btn ghost grow" onclick="MicroLog.saveFrost(false)">No frost here</button></div>';
@@ -12400,17 +12698,20 @@ const MicroLog = {
     openSheet("Confirm what happened", h);
   },
 
+  /* the quick answers are offered in whatever unit the box is showing,
+     so tapping one and typing by hand cannot mean two different things */
   chips(f){
-    return [["None at all", 0], ["A trace", 0.02],
-            ["About a quarter", Math.round(f * 0.25 * 100) / 100],
-            ["About half", Math.round(f * 0.5 * 100) / 100],
-            ["All of it", f]];
+    const u = v => Units.outWater(v);
+    return [["None at all", 0], ["A trace", u(0.02)],
+            ["About a quarter", u(f * 0.25)],
+            ["About half", u(f * 0.5)],
+            ["All of it", u(f)]];
   },
   setAmount(v){ const el = $("#ml-amt"); if(el) el.value = v; },
 
   saveRain(){
     const it = MicroLog.queue[MicroLog.i];
-    const v = num(($("#ml-amt") || {}).value, 0);
+    const v = Units.inWater(num(($("#ml-amt") || {}).value, 0));
     Micro.logRain(it.site.scope, it.site.ref_id, it.date, it.forecast, v);
     MicroLog.i++; MicroLog.step();
   },
@@ -13784,6 +14085,16 @@ Assist.system = function(){
         Assist.done.map(d => "· " + d.what).join("\n") + "\n\n"
       : "") +
 
+    /* Tool arguments and results stay canonical — inches and Fahrenheit —
+       because that contract is with the model, not the gardener. What the model
+       WRITES is prose this app cannot convert after the fact, so it is told
+       which system to answer in. */
+    "UNITS — the gardener reads in " + (Units.metric ? "METRIC" : "IMPERIAL") + ":\n" +
+    (Units.metric
+      ? "· Answer in centimetres, metres, kilograms and °C. Convert before you speak.\n" +
+        "· The tools report inches, square feet, pounds and °F. Those are the app's internal units — never quote them back raw.\n"
+      : "· Answer in inches, feet, square feet, pounds and °F, which is what the tools already report.\n") + "\n" +
+
     "GENERAL:\n" +
     "· Use the tools rather than guessing. For anything about what they own, grew, spent or harvested, query their database.\n" +
     "· When asked to plant something in a bed, call plant_crop — it opens the bed with the crop ready to place.\n" +
@@ -14167,7 +14478,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-07.1";
+const BUILD = "2026-08-07.2";
 
 const Updater = {
   prompt: null, installed: false,
@@ -14424,7 +14735,7 @@ const Tips = {
       '<div class="row between"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em">' +
         '🌿 Tip · ' + esc(t[0]) + '</div>' +
       '<button class="chip tiny" onclick="Tips.shown=Tips.random();Home.render()">Another</button></div>' +
-      '<div class="sm" style="margin-top:6px">' + esc(t[1]) + '</div></div>';
+      '<div class="sm" style="margin-top:6px">' + escU(t[1]) + '</div></div>';
   }
 };
 
@@ -14892,6 +15203,116 @@ Settings.render = function(){
   }
 
   box.innerHTML = h;
+};
+</script>
+
+<script>
+/* ============================================================
+   THE SWITCH ITSELF
+
+   It sits in the plot strip at the top of the Garden tab, beside
+   the plot chips, because that is where the measurements are and
+   because the question "how wide is that bed, really?" arrives
+   while you are looking at the bed — not while you are three
+   screens away in Settings. Settings carries it too, for the
+   person who sets it once and never thinks about it again.
+
+   Tapping it re-renders whatever screen you are on. Nothing is
+   written to any row; the toggle is a single setting and every
+   number on screen is computed from the stored inches each time
+   it is drawn.
+   ============================================================ */
+
+Units.chip = function(){
+  return '<button class="chip" onclick="Units.flip()" ' +
+    'title="Switch between inches and centimetres" aria-label="Measurement units">' +
+    '⇄ ' + (Units.metric ? "cm" : "in") + '</button>';
+};
+
+Units.flip = function(){
+  Units.toggle();
+  haptic();
+  /* redraw wherever we are — the numbers are all derived, so this is
+     the whole of "swap the app over" */
+  try{
+    if(APP.tab === "garden") Garden.render();
+    else if(APP.tab === "seeds") Seeds.render();
+    else if(APP.tab === "weather") Weather.render();
+    else if(APP.tab === "library") Library.render();
+    else if(APP.tab === "journal") Journal.render();
+    else if(APP.tab === "recap") Recap.render();
+    else if(APP.tab === "settings") Settings.render();
+    else if(APP.tab === "home") Home.render();
+  }catch(e){ console.warn("units redraw", e); }
+  toast(Units.metric ? "Metric — centimetres, kilos, °C" : "Imperial — inches, pounds, °F");
+};
+
+(function wireUnits(){
+
+  /* ---- the plot strip, both views of the Garden tab ---- */
+  function intoScroller(){
+    const sc = $("#s-garden .scroller");
+    if(!sc || sc.querySelector('[onclick*="Units.flip"]')) return;
+    sc.insertAdjacentHTML("beforeend", Units.chip());
+  }
+
+  const origList = Garden.listView;
+  Garden.listView = function(){ origList.call(Garden); intoScroller(); };
+
+  const origBed = Garden.bedView;
+  Garden.bedView = function(){
+    origBed.call(Garden);
+    /* the bed screen has no plot strip, so it goes beside the bed's own
+       size line, which is the number most likely to be questioned */
+    const box = $("#s-garden");
+    const row = box ? box.querySelector(".row") : null;
+    if(!row || row.querySelector('[onclick*="Units.flip"]')) return;
+    const menu = row.querySelector('button[onclick*="bedMenu"]');
+    const el = document.createElement("button");
+    el.className = "chip";
+    el.setAttribute("onclick", "Units.flip()");
+    el.setAttribute("aria-label", "Measurement units");
+    el.textContent = "⇄ " + (Units.metric ? "cm" : "in");
+    if(menu) row.insertBefore(el, menu); else row.appendChild(el);
+  };
+
+  if(window.Gmap && Gmap.render){
+    const origMap = Gmap.render;
+    Gmap.render = function(){ origMap.apply(Gmap, arguments); intoScroller(); };
+  }
+
+  /* ---- and in settings, under Look and feel ---- */
+  const origSettings = Settings.render;
+  Settings.render = function(){
+    origSettings.call(Settings);
+    const box = $("#s-settings"); if(!box) return;
+    const dark = box.querySelector('button[onclick*="toggleTheme"]');
+    if(!dark || !dark.parentNode || !dark.parentNode.parentNode) return;
+    const card = dark.parentNode.parentNode;
+    card.insertAdjacentHTML("beforeend",
+      '<div class="row between" style="margin-top:14px"><div class="grow">' +
+      '<div class="row" style="gap:6px"><div class="b">Measurements</div>' + infoBtn("units") + '</div>' +
+      '<div class="tiny muted">' + (Units.metric
+        ? "Centimetres, metres, kilograms, °C"
+        : "Inches, feet, pounds, °F") + '</div></div>' +
+      '<div class="seg" style="flex:0 0 auto"><button class="' + (!Units.metric ? "on" : "") +
+        '" onclick="Units.pick(false)">in</button><button class="' + (Units.metric ? "on" : "") +
+        '" onclick="Units.pick(true)">cm</button></div></div>' +
+      '<div class="tiny muted" style="margin-top:8px">There is a ⇄ button on the Garden tab too, for switching while you are looking at a bed. ' +
+      'Nothing is rewritten either way — your records are kept in one system and simply shown in the other.</div>');
+  };
+})();
+
+Units.pick = function(metric){
+  if(Units.metric === !!metric) return;
+  Units.flip();
+};
+
+/* the explanation behind the ⓘ, in the same shape as every other one */
+INFO.units = {
+  t: "Measurements",
+  b: "Switch the whole app between inches, feet and pounds, and centimetres, metres and kilograms. Temperatures switch with it.\n\nIt changes how things are shown, not what is recorded, so you can flip back and forth as often as you like without your beds or harvests changing.",
+  tech: "Everything is stored canonically — lengths in inches, weights in pounds, temperatures in Fahrenheit, rainfall in inches — and converted only where a number is drawn on screen or read out of an input. Nothing on disk is rewritten when the setting changes, so the conversion is lossless in both directions and the geometry, spacing and solar maths continue to run in inches throughout. Conversions are exact and then rounded for display; figures inside written growing notes are converted by pattern, and anything not clearly recognised as a measurement is left as written."
 };
 </script>
 

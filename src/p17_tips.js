@@ -123,7 +123,7 @@ const Tips = {
       '<div class="row between"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em">' +
         '🌿 Tip · ' + esc(t[0]) + '</div>' +
       '<button class="chip tiny" onclick="Tips.shown=Tips.random();Home.render()">Another</button></div>' +
-      '<div class="sm" style="margin-top:6px">' + esc(t[1]) + '</div></div>';
+      '<div class="sm" style="margin-top:6px">' + escU(t[1]) + '</div></div>';
   }
 };
 

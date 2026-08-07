@@ -111,7 +111,7 @@ const Gmap = {
 
     h += Gmap.arrange
       ? '<div class="note i">Drag anything to move it. Tap once to select, then use the buttons below to rotate or remove it. Positions snap to the foot.</div>'
-      : '<div class="tiny muted center" style="margin-bottom:8px">' + ext.w + ' × ' + ext.h + ' ft · tap a bed to open it</div>';
+      : '<div class="tiny muted center" style="margin-bottom:8px">' + Units.dims(ext.w * 12, ext.h * 12) + ' · tap a bed to open it</div>';
 
     h += '<div class="mapwrap"><div class="mapplot" id="mapplot" style="height:' + H + 'px">';
     /* one-foot grid so the scale reads clearly */
@@ -168,7 +168,7 @@ const Gmap = {
         const names = ps.map(p => cropName(p.crop_id)).filter((v, ix, a) => a.indexOf(v) === ix);
         h += '<button class="item" onclick="Garden.open(\'' + b.id + '\')"><div class="av">🪴</div>' +
           '<div class="grow"><div class="b">' + esc(b.name) + '</div>' +
-          '<div class="tiny muted">' + Math.round(i.size.w*10)/10 + '×' + Math.round(i.size.h*10)/10 + ' ft · ' +
+          '<div class="tiny muted">' + Units.dims(i.size.w * 12, i.size.h * 12) + ' · ' +
           (names.length ? esc(names.slice(0, 5).join(", ")) + (names.length > 5 ? " +" + (names.length - 5) : "") : "empty") +
           '</div></div><span class="go">›</span></button>';
       });
@@ -245,7 +245,7 @@ const Gmap = {
       const f = FEATURES[k];
       h += '<button class="card" style="text-align:left" onclick="Gmap.saveFeature(\'' + k + '\')">' +
         '<div style="font-size:1.6rem">' + f.e + '</div><div class="b">' + esc(f.n) + '</div>' +
-        '<div class="tiny muted">' + f.w + '×' + f.h + ' ft to start</div></button>';
+        '<div class="tiny muted">' + Units.dims(f.w * 12, f.h * 12) + ' to start</div></button>';
     });
     h += '</div>';
     openSheet("Add a landmark", h);

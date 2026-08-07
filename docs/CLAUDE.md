@@ -63,9 +63,11 @@ p8h_microui.js  p9_seeds.js  p10_doctor.js  p10b_condsrc.js
 p11_journal.js  p8d_maturity.js  p12_library.js  p5d_usercrops.js
 p14_weather.js  p8i_microlog.js  p15_assistant.js  p15b_providers.js
 p15c_assist_rules.js  p15e_microtools.js  p15d_coach.js  p16_sources_ui.js
-p17_tips.js  p18_help.js  p12b_settings.js  p20_calsync.js
-p21_share.js  p19_native.js  p13_init.js
+p17_tips.js  p18_help.js  p12b_settings.js  p22b_unitsui.js
+p20_calsync.js  p21_share.js  p19_native.js  p13_init.js
 ```
+(`p22_units.js` sits between `p4_db.js` and `p5_plants.js` — it has to load before
+anything that draws a measurement.)
 
 Order matters. `p13_init.js` is last because it closes `</body></html>` and calls `boot()`.
 The `p*b`/`p*c`/`p*d` parts patch or extend objects defined in the base part, so they must
@@ -227,6 +229,44 @@ OAuth, a registered Cloud client and a server holding a refresh token. This app 
 server, no account and an encrypted local vault; calling a download "sync" would be a lie
 about where the data goes. A *single* date can go straight into Google through their
 compose URL, which needs no credentials because the person is already signed in.
+
+## Inches or centimetres
+
+`p22_units.js` (core, loaded right after `p4_db.js` so every later part can use it) and
+`p22b_unitsui.js` (the switch itself, after `p12b_settings.js`).
+
+**Everything stays stored the way it always was** — lengths in inches, weights in pounds,
+temperatures in Fahrenheit, water in inches. That is not a preference, it is the only
+arrangement in which the toggle is lossless. Rewriting rows on the switch would round a 48″
+bed to 122cm and back to 48.03″, and a gardener who flipped it a few times would find her
+beds had changed size. Conversion happens at exactly two boundaries: where a number is drawn,
+and where one is typed. `Geom`, `Canvas`, `Solar`, `Recommend` and the spacing maths keep
+working in inches and never need to know the file exists.
+
+- `Units.metric` reads `DB.get("units")` **live**, never cached — so it is already right
+  after a vault load, a restore or an imported garden, with no init step to forget.
+- Display: `len` `big` `dims` `area` `weight` `density` `temp` `water` `waterWeek` `perArea`.
+  Input: `inLen/outLen`, `inBig/outBig`, `inWeight/outWeight`, `inTemp/outTemp`,
+  `inWater/outWater`, plus `lenStep/bigStep/waterStep` for the `step` attribute.
+- **`tempDelta` is not `temp`.** A difference of 10°F is 5.6°C, not −12°C. Anything that is
+  a span of degrees rather than a point on the scale goes through `tempDelta`.
+- **`escU(s)` is `esc(Units.prose(s))`.** Growing notes, harvest instructions and diagnosis
+  treatments carry measurements inside the sentences — "thin to 6–8 inches", "peppers sulk
+  below 55°F", "push a finger two inches into the soil". `Units.prose` rewrites ranges before
+  single figures, handles digits and the written-out numbers the tips actually use, and
+  leaves anything it does not clearly recognise as a measurement exactly as written. Use
+  `escU` at any site printing written guidance; plain `esc` everywhere else.
+- **Harvests keep the unit they were recorded in.** The `harvests` table already had a
+  per-row unit and `Journal.lbs()` to normalise; watering entries now have `Journal.waterIn()`
+  for the same reason. What the gardener typed is a fact and is shown back verbatim — only
+  the totals and the recap restate.
+- **Assistant tool arguments stay canonical.** That contract is with the model, not the
+  gardener. What the model *writes* cannot be converted after the fact, so `Assist.system()`
+  tells it which system to answer in and not to quote raw tool units back.
+
+The switch is a chip in the plot strip on the Garden tab and beside the size line on the bed
+screen, plus a segmented control in Settings. `Units.flip()` re-renders the current tab; that
+is the whole of "swap the app over", because every number on screen is derived.
 
 ## Moving a garden between devices
 

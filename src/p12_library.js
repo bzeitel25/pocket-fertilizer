@@ -32,7 +32,7 @@ const Library = {
         const st = Season.status(c.id);
         h += '<button class="item" onclick="Library.open(\'' + c.id + '\')"><div class="av">' + c.e + '</div>' +
           '<div class="grow"><div class="b">' + esc(c.n) + '</div>' +
-          '<div class="tiny muted">' + c.sun + 'h sun · ' + c.water + '"/wk · ' + c.sp + '" apart · ' + c.dtm + ' days</div>' +
+          '<div class="tiny muted">' + c.sun + 'h sun · ' + Units.waterWeek(c.water) + ' · ' + Units.len(c.sp) + ' apart · ' + c.dtm + ' days</div>' +
           (st && st.inWindow ? '<div class="tiny" style="color:var(--green-600)">' + esc(st.w.label) + ' now</div>' : '') +
           '</div><span class="go">›</span></button>';
       });
@@ -58,7 +58,7 @@ const Library = {
 
     h += '<div class="grid3">' +
       '<div class="stat"><span class="n">' + c.sun + 'h</span><span class="l">sun</span></div>' +
-      '<div class="stat"><span class="n">' + c.water + '"</span><span class="l">water/wk</span></div>' +
+      '<div class="stat"><span class="n">' + Units.waterN(c.water) + Units.waterMark() + '</span><span class="l">water/wk</span></div>' +
       '<div class="stat"><span class="n">' + (function(){ const r = Maturity.cropRange(id); return r ? r.lo + '–' + r.hi : c.dtm; })() +
       '</span><span class="l">days</span></div></div>';
     const myMat = Maturity.mine(id, null);
@@ -69,13 +69,14 @@ const Library = {
       : '<div class="tiny muted" style="margin-top:6px">Days to maturity is a range, not a number — it swings with variety, heat and light. Record a first harvest on any planting and the app starts learning your garden\'s real timing.</div>';
 
     h += '<table class="mini" style="margin-top:14px">' +
-      '<tr><th>Spacing</th><td>' + c.sp + '" apart · ' + (Math.round(c.psf*100)/100) + ' per sq ft</td></tr>' +
-      '<tr><th>Sow depth</th><td>' + c.depth + '"</td></tr>' +
-      '<tr><th>Germination</th><td>' + c.germ[0] + '–' + c.germ[1] + ' days at ' + c.soilF[1] + '°F (range ' + c.soilF[0] + '–' + c.soilF[2] + '°F)</td></tr>' +
+      '<tr><th>Spacing</th><td>' + Units.len(c.sp) + ' apart · ' + Units.perArea(c.psf) + '</td></tr>' +
+      '<tr><th>Sow depth</th><td>' + Units.len(c.depth) + '</td></tr>' +
+      '<tr><th>Germination</th><td>' + c.germ[0] + '–' + c.germ[1] + ' days at ' + Units.temp(c.soilF[1]) +
+        ' (range ' + Units.tempN(c.soilF[0]) + '–' + Units.temp(c.soilF[2]) + ')</td></tr>' +
       '<tr><th>Soil pH</th><td>' + esc(c.ph) + '</td></tr>' +
       '<tr><th>Feeding</th><td>' + esc(c.feeder) + ' feeder</td></tr>' +
       '<tr><th>Seed viability</th><td>~' + c.via + ' years' + (c.verified ? ' <span class="tiny" style="color:var(--green-600)">✓ checked</span>' : '') + '</td></tr>' +
-      '<tr><th>Typical yield</th><td>' + (c.yield ? c.yield + ' lbs per plant' : "—") + '</td></tr>' +
+      '<tr><th>Typical yield</th><td>' + (c.yield ? Units.weight(c.yield) + ' per plant' : "—") + '</td></tr>' +
       (c.succ ? '<tr><th>Succession</th><td>Re-sow every ' + c.succ + ' days</td></tr>' : '') +
       '</table>';
 
@@ -91,9 +92,13 @@ const Library = {
     }
 
     h += '<div class="sec"><h2>Growing it well</h2></div>';
-    h += '<div class="note g"><b>Tips.</b> ' + esc(c.tips) + '</div>';
-    h += '<div class="note w" style="margin-top:8px"><b>Feeding.</b> ' + esc(c.npk) + '</div>';
-    h += '<div class="note i" style="margin-top:8px"><b>Harvest.</b> ' + esc(c.harvest) + '</div>';
+    /* escU, not esc — these sentences carry measurements inside them
+       ("thin to 6–8 inches", "peppers sulk below 55°F") and a page whose
+       table reads in centimetres while its advice reads in inches is worse
+       than not offering the switch */
+    h += '<div class="note g"><b>Tips.</b> ' + escU(c.tips) + '</div>';
+    h += '<div class="note w" style="margin-top:8px"><b>Feeding.</b> ' + escU(c.npk) + '</div>';
+    h += '<div class="note i" style="margin-top:8px"><b>Harvest.</b> ' + escU(c.harvest) + '</div>';
 
     h += '<div class="sec"><h2>Companions</h2></div><div class="card">';
     h += '<div class="tiny b muted" style="margin-bottom:6px">PLANT WITH</div><div class="row wrap" style="gap:6px">' +
@@ -177,7 +182,7 @@ const Settings = {
     h += '<div class="sec"><h2>Location & season</h2></div><div class="card">';
     h += '<div class="row between"><div><div class="b">' + esc(DB.get("locLabel") || "Not set") + '</div>' +
       '<div class="tiny muted">Zone ' + esc(DB.get("zone") || "—") +
-      (DB.get("avgLow") !== undefined ? ' · avg low ' + esc(DB.get("avgLow")) + '°F' : '') + '</div></div>' +
+      (DB.get("avgLow") !== undefined ? ' · avg low ' + Units.temp(DB.get("avgLow")) : '') + '</div></div>' +
       '<button class="btn sm" onclick="Onboard.open()">Change</button></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Last spring frost</label><input type="date" id="st-lf" value="' + esc(Season.lastFrostISO || "") + '"></div>' +

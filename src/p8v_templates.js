@@ -145,7 +145,7 @@ const Templates = {
         const icons = (t.plants || []).slice(0, 6).map(p => cropEmoji(p.crop_id)).join("");
         h += '<div class="item"><div class="av">' + ((Geom.SHAPES[t.shape] || {}).e || "▭") + '</div>' +
           '<div class="grow"><div class="b">' + esc(t.name) + '</div>' +
-          '<div class="tiny muted">' + Math.round(t.w_in/12*10)/10 + '×' + Math.round(t.h_in/12*10)/10 + ' ft · ' +
+          '<div class="tiny muted">' + Units.dims(t.w_in, t.h_in) + ' · ' +
           n + ' plant' + (n === 1 ? "" : "s") + ' · saved ' + esc(t.saved || "") + '</div>' +
           '<div class="tiny" style="margin-top:2px">' + icons + '</div></div></div>' +
           '<div class="row wrap" style="gap:6px;padding:0 12px 12px">' +

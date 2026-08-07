@@ -158,9 +158,9 @@ const Home = {
         const w = Recommend.water(b.id, APP.weather);
         let wtxt = "", wcls = "muted";
         if(w){
-          if(w.verdict === "skip"){ wtxt = "💧 No water needed — " + w.rain + '" rain this week'; wcls = "muted"; }
-          else if(w.verdict === "light"){ wtxt = '💧 Top up ~' + w.deficit + '" this week'; }
-          else { wtxt = '💧 Needs ' + w.deficit + '" more this week'; }
+          if(w.verdict === "skip"){ wtxt = "💧 No water needed — " + Units.water(w.rain) + ' rain this week'; wcls = "muted"; }
+          else if(w.verdict === "light"){ wtxt = '💧 Top up ~' + Units.water(w.deficit) + ' this week'; }
+          else { wtxt = '💧 Needs ' + Units.water(w.deficit) + ' more this week'; }
         }
         h += '<button class="item" onclick="Garden.open(\'' + b.id + '\')">' +
           '<div class="av">🪴</div><div class="grow"><div class="b truncate">' + esc(b.name) + '</div>' +
@@ -217,7 +217,7 @@ const Home = {
       if(dd >= 0 && dd <= 6 && num(d.temperature_2m_min[i], 99) <= 36) frostSoon.push({ dt: dt, t: d.temperature_2m_min[i] }); });
     h += '<div class="card">';
     h += '<div class="row between"><div class="row" style="gap:8px"><div style="font-size:1.8rem">' + Live.wx(cur.weather_code)[1] + '</div>' +
-      '<div><div class="b">' + Math.round(num(cur.temperature_2m)) + '°F · ' + esc(Live.wx(cur.weather_code)[0]) + '</div>' +
+      '<div><div class="b">' + Units.temp(num(cur.temperature_2m)) + ' · ' + esc(Live.wx(cur.weather_code)[0]) + '</div>' +
       '<div class="tiny muted">' + Math.round(num(cur.relative_humidity_2m)) + '% humidity · wind ' + Math.round(num(cur.wind_speed_10m)) + ' mph</div></div></div>' +
       '<button class="iconbtn" onclick="go(\'weather\')">›</button></div>';
     h += '<div class="scroller" style="margin-top:10px;padding-bottom:0">';
@@ -229,15 +229,15 @@ const Home = {
         '<div class="tiny muted">' + (dd === 0 ? "Today" : DOW[parseISO(dt).getDay()]) + '</div>' +
         '<div style="font-size:1.3rem">' + Live.wx(d.weather_code[i])[1] + '</div>' +
         '<div class="tiny b">' + Math.round(num(d.temperature_2m_max[i])) + '°</div>' +
-        '<div class="tiny ' + (cold ? "" : "muted") + '" ' + (cold ? 'style="color:var(--info)"' : '') + '>' + Math.round(num(d.temperature_2m_min[i])) + '°</div>' +
-        (num(d.precipitation_sum[i]) > 0.01 ? '<div class="tiny" style="color:var(--info)">' + (Math.round(num(d.precipitation_sum[i])*100)/100) + '"</div>' : '<div class="tiny">&nbsp;</div>') +
+        '<div class="tiny ' + (cold ? "" : "muted") + '" ' + (cold ? 'style="color:var(--info)"' : '') + '>' + Units.tempN(num(d.temperature_2m_min[i])) + '°</div>' +
+        (num(d.precipitation_sum[i]) > 0.01 ? '<div class="tiny" style="color:var(--info)">' + Units.water(num(d.precipitation_sum[i])) + '</div>' : '<div class="tiny">&nbsp;</div>') +
         '</div>';
     });
     h += '</div>';
     if(frostSoon.length) h += '<div class="note w" style="margin-top:10px">🥶 Cold coming: ' +
-      Math.round(frostSoon[0].t) + '°F on ' + fmt(frostSoon[0].dt) + '. Cover tender crops (tomato, pepper, basil, squash) or bring pots in.</div>';
+      Units.temp(frostSoon[0].t) + ' on ' + fmt(frostSoon[0].dt) + '. Cover tender crops (tomato, pepper, basil, squash) or bring pots in.</div>';
     let rain7 = 0; d.time.forEach((dt, i) => { const dd = diffDays(today(), parseISO(dt)); if(dd >= 0 && dd < 7) rain7 += num(d.precipitation_sum[i]); });
-    if(rain7 > 0.4) h += '<div class="note i" style="margin-top:8px">🌧️ ' + (Math.round(rain7*100)/100) + '" of rain forecast this week — hold off on watering established beds.</div>';
+    if(rain7 > 0.4) h += '<div class="note i" style="margin-top:8px">🌧️ ' + Units.water(rain7) + ' of rain forecast this week — hold off on watering established beds.</div>';
     h += '</div>';
     strip.innerHTML = h;
   }
@@ -295,7 +295,7 @@ const Onboard = {
       '<div style="margin-top:6px">❄️ Last spring frost <b>' + fmt(yr + "-" + lastF) + '</b><br>' +
       '🍂 First fall frost <b>' + fmt(yr + "-" + firstF) + '</b><br>' +
       '🌱 Growing season <b>' + diffDays(parseISO(yr + "-" + lastF), parseISO(yr + "-" + firstF)) + ' days</b></div>' +
-      '<div class="tiny" style="margin-top:6px;opacity:.8">Source: ' + esc(src) + (fr && fr.avgAnnualLow !== null && fr.avgAnnualLow !== undefined ? ' · avg annual low ' + fr.avgAnnualLow + '°F' : '') + '</div></div>' +
+      '<div class="tiny" style="margin-top:6px;opacity:.8">Source: ' + esc(src) + (fr && fr.avgAnnualLow !== null && fr.avgAnnualLow !== undefined ? ' · avg annual low ' + Units.temp(fr.avgAnnualLow) : '') + '</div></div>' +
       '<button class="btn block" style="margin-top:12px" onclick="closeSheet();Cal.rebuild();refresh();toast(\'Location saved\')">Use these dates</button>' +
       '<button class="btn ghost block" style="margin-top:8px" onclick="closeSheet();go(\'settings\')">Adjust manually</button>';
     await getWeather(true);

@@ -33,8 +33,8 @@ Object.assign(Garden, {
     h += '<div class="row" style="margin-bottom:10px"><button class="iconbtn" onclick="Garden.back()">‹</button>' +
       '<div class="grow"><div class="b">' + esc(bed.name) + '</div>' +
       '<div class="tiny muted">' + sh.e + ' ' + esc(sh.n.toLowerCase()) + ' · ' +
-      Math.round(Geom.W(bed)/12*10)/10 + '×' + Math.round(Geom.H(bed)/12*10)/10 + ' ft · ' +
-      sqft + ' sq ft · ' + esc(bed.sun_hours || "?") + 'h sun</div></div>' +
+      Units.dims(Geom.W(bed), Geom.H(bed)) + ' · ' +
+      Units.area(sqft) + ' · ' + esc(bed.sun_hours || "?") + 'h sun</div></div>' +
       '<button class="iconbtn" onclick="Garden.bedMenu()">⋯</button></div>';
 
     /* ---- toolbar ---- */
@@ -93,7 +93,7 @@ Object.assign(Garden, {
       crowd.slice(0, 4).forEach(c => h += '<div class="note w" style="margin-bottom:8px">⊙ ' +
         cropEmoji(c.a.crop_id) + ' <b>' + esc(cropName(c.a.crop_id)) + '</b> and ' +
         cropEmoji(c.b.crop_id) + ' <b>' + esc(cropName(c.b.crop_id)) + '</b> overlap at the root by ' +
-        c.overlap + '". Leaves may weave together happily; roots competing for the same water is a smaller crop from both.</div>');
+        Units.len(c.overlap) + '. Leaves may weave together happily; roots competing for the same water is a smaller crop from both.</div>');
       h += '</div>';
     }
     if(shade.length){
@@ -101,7 +101,7 @@ Object.assign(Garden, {
       h += '<div class="sec"><h2>Light and shade</h2></div><div class="card">';
       bad.slice(0, 3).forEach(s => h += '<div class="note d" style="margin-bottom:8px">🌑 ' +
         cropEmoji(s.tall.crop_id) + ' <b>' + esc(cropName(s.tall.crop_id)) + '</b> reaches about ' +
-        Geom.height(s.tall.crop_id) + '" and will stand over ' + cropEmoji(s.low.crop_id) + ' <b>' +
+        Units.len(Geom.height(s.tall.crop_id)) + ' and will stand over ' + cropEmoji(s.low.crop_id) + ' <b>' +
         esc(cropName(s.low.crop_id)) + '</b>, which wants ' + crop(s.low.crop_id).sun +
         'h of sun' + (s.side ? ' and sits to the ' + esc(s.side) + ' of it' : '') +
         '. Move it to the sunny side, or swap in something that tolerates shade.</div>');
@@ -125,15 +125,15 @@ Object.assign(Garden, {
         const key = [f.a.crop_id, f.b.crop_id].sort().join("|");
         if(seen[key]) return; seen[key] = 1;
         h += '<div class="note g" style="margin-bottom:8px">💚 ' + cropEmoji(f.a.crop_id) + ' <b>' + esc(cropName(f.a.crop_id)) +
-          '</b> beside ' + cropEmoji(f.b.crop_id) + ' <b>' + esc(cropName(f.b.crop_id)) + '</b> · ' + f.dist +
-          '" apart<br>' + esc(f.why) + '</div>';
+          '</b> beside ' + cropEmoji(f.b.crop_id) + ' <b>' + esc(cropName(f.b.crop_id)) + '</b> · ' + Units.len(f.dist) +
+          ' apart<br>' + esc(f.why) + '</div>';
       });
       h += '</div>';
     }
     if(conflicts.length){
       h += '<div class="sec"><h2>Companion warnings</h2></div><div class="card">';
       conflicts.slice(0, 5).forEach(c => h += '<div class="note d" style="margin-bottom:8px">⚠️ ' +
-        cropEmoji(c.a.crop_id) + ' <b>' + esc(cropName(c.a.crop_id)) + '</b> ' + c.dist + '" from ' +
+        cropEmoji(c.a.crop_id) + ' <b>' + esc(cropName(c.a.crop_id)) + '</b> ' + Units.len(c.dist) + ' from ' +
         cropEmoji(c.b.crop_id) + ' <b>' + esc(cropName(c.b.crop_id)) + '</b><br>' + esc(c.why) + '</div>');
       h += '</div>';
     }
@@ -156,7 +156,7 @@ Object.assign(Garden, {
           '<div class="grow"><div class="b">' + esc(cropName(id)) + ' <span class="muted tiny">×' + qty + '</span></div>' +
           '<div class="tiny muted">' + esc({ unsown:"not sown by this date", seedling:"just up", young:"young",
             growing:"filling out", mature:"cropping", over:"past its best" }[st] || st) +
-          ' · ' + Math.round(Geom.RC(arr[0]) * 2) + '" across when mature</div>' +
+          ' · ' + Units.len(Math.round(Geom.RC(arr[0]) * 2)) + ' across when mature</div>' +
           (!sunOk ? '<div class="tiny" style="color:var(--warn)">Wants ' + c.sun + 'h sun, this bed gets ' +
             Micro.sunHours(bed.id) + 'h</div>' : '') +
           '</div><span class="go">›</span></button>';
@@ -170,7 +170,7 @@ Object.assign(Garden, {
       h += '<div class="sec"><h2>Care</h2></div><div class="card">';
       h += '<div class="row between"><div><div class="b">' +
         (wtr.verdict === "skip" ? "💧 Skip watering" : wtr.verdict === "light" ? '💧 Light top-up' : '💧 Water this week') + '</div>' +
-        '<div class="tiny muted">Needs ' + wtr.need + '"/wk · ' + wtr.rain + '" rain · ' + wtr.logged + '" logged</div></div>' +
+        '<div class="tiny muted">Needs ' + Units.waterWeek(wtr.need) + ' · ' + Units.water(wtr.rain) + ' rain · ' + Units.water(wtr.logged) + ' logged</div></div>' +
         '<button class="btn sm" onclick="Journal.quick(\'water\',\'' + bed.id + '\')">Log</button></div>';
       const heavy = ps.map(p => crop(p.crop_id)).filter(c => c && c.feeder === "heavy");
       if(heavy.length) h += '<div class="note w" style="margin-top:10px">🌿 Heavy feeders here (' +
@@ -260,25 +260,25 @@ Garden.plantingSheet = function(p){
 
   let h = '<div class="row" style="gap:12px;margin-bottom:12px"><div style="font-size:2.4rem">' + cropEmoji(p.crop_id) + '</div>' +
     '<div class="grow"><div class="b" style="font-size:1.1rem">' + esc(cropName(p.crop_id)) + '</div>' +
-    '<div class="tiny muted">' + Math.round(Geom.PX(p)) + '", ' + Math.round(Geom.PY(p)) + '" into ' + esc(bed.name) +
+    '<div class="tiny muted">' + Units.len(Math.round(Geom.PX(p))) + ', ' + Units.len(Math.round(Geom.PY(p))) + ' into ' + esc(bed.name) +
     ' · ' + esc(PlantArt.stage(g)) + ' on ' + fmt(when) + '</div></div></div>';
 
   /* ---- footprint ---- */
   h += '<div class="card"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Footprint</div>';
-  h += '<div class="field"><label class="f">Root zone — keep this clear · <b id="rr-v">' + rr + '"</b> radius</label>' +
+  h += '<div class="field"><label class="f">Root zone — keep this clear · <b id="rr-v">' + Units.len(rr) + '</b> radius</label>' +
     '<input type="range" id="pl-rr" min="1" max="' + Math.max(24, Math.ceil(rc)) + '" step="0.5" value="' + rr +
     '" oninput="Garden.liveRadius(\'' + p.id + '\',null,this.value)"></div>';
-  h += '<div class="field" style="margin-top:8px"><label class="f">Mature canopy · <b id="rc-v">' + rc + '"</b> radius, ' +
-    Math.round(rc*2) + '" across</label>' +
+  h += '<div class="field" style="margin-top:8px"><label class="f">Mature canopy · <b id="rc-v">' + Units.len(rc) + '</b> radius, ' +
+    Units.len(Math.round(rc*2)) + ' across</label>' +
     '<input type="range" id="pl-rc" min="1.5" max="' + Math.max(36, Math.ceil(rc * 1.6)) + '" step="0.5" value="' + rc +
     '" oninput="Garden.liveRadius(\'' + p.id + '\',this.value,null)"></div>';
   h += '<div class="row between" style="margin-top:10px;gap:14px">' +
     '<div><div class="tiny muted">Nudge</div><div class="stepper">' +
-      '<button onclick="Garden.resizeBy(\'' + p.id + '\',-1,0)">−</button><span class="v">' + Math.round(rc*2) + '"</span>' +
+      '<button onclick="Garden.resizeBy(\'' + p.id + '\',-1,0)">−</button><span class="v">' + Units.len(Math.round(rc*2)) + '</span>' +
       '<button onclick="Garden.resizeBy(\'' + p.id + '\',1,0)">＋</button></div></div>' +
     '<div class="grow" style="text-align:right"><div class="tiny muted">' +
-      (Math.round(Math.PI * rc * rc / 144 * 10) / 10) + ' sq ft of canopy</div>' +
-      '<div class="tiny muted">' + (c ? c.sp + '" recommended spacing' : '') + '</div></div></div>';
+      Units.area(Math.PI * rc * rc / 144) + ' of canopy</div>' +
+      '<div class="tiny muted">' + (c ? Units.len(c.sp) + ' recommended spacing' : '') + '</div></div></div>';
   h += '<div class="tiny muted" style="margin-top:8px">You can also drag the white handle on the selected plant to resize it right on the bed.</div></div>';
 
   /* ---- one plant or a clump ---- */
@@ -289,9 +289,9 @@ Garden.plantingSheet = function(p){
     '</div>';
   h += single
     ? '<div class="note i" style="margin-top:10px">A single ' + esc(cropName(p.crop_id)) + ' spreading ' +
-      Math.round(rc*2) + '" across. Record what it really did and the app offers that much room next season.</div>'
-    : '<div class="note g" style="margin-top:10px">At ' + esc(c ? c.sp + '"' : 'normal') + ' spacing, a ' +
-      Math.round(rr*2) + '" patch holds about <b>' + holds + ' plant' + (holds === 1 ? "" : "s") + '</b>.</div>';
+      Units.len(Math.round(rc*2)) + ' across. Record what it really did and the app offers that much room next season.</div>'
+    : '<div class="note g" style="margin-top:10px">At ' + (c ? Units.len(c.sp) : 'normal') + ' spacing, a ' +
+      Units.len(Math.round(rr*2)) + ' patch holds about <b>' + holds + ' plant' + (holds === 1 ? "" : "s") + '</b>.</div>';
   h += '<div class="field" style="margin-top:12px"><label class="f">Plants here</label>' +
     '<input type="number" id="pl-qty" min="1" value="' + esc(p.qty || 1) + '"></div>';
 
@@ -318,7 +318,7 @@ Garden.plantingSheet = function(p){
   h += '</div>';
 
   if(obs && obs.n) h += '<div class="note w" style="margin-top:12px">📐 <b>From your own garden.</b> You recorded ' +
-    esc(cropName(p.crop_id)) + ' spreading about ' + obs.across + '" across (' + obs.sqft + ' sq ft)' +
+    esc(cropName(p.crop_id)) + ' spreading about ' + Units.len(obs.across) + ' across (' + Units.area(obs.sqft) + ')' +
     (obs.when ? ', ' + fmtY(obs.when) : '') + '. Worth allowing that much room again.</div>';
 
   /* ---- neighbours, by distance ---- */
@@ -332,7 +332,7 @@ Garden.plantingSheet = function(p){
       const k = x.r.score >= 1 ? "g" : x.r.score <= -2 ? "d" : "i";
       const icon = x.r.score >= 1 ? "💚" : x.r.score <= -2 ? "⚠️" : "·";
       h += '<div class="note ' + k + '" style="margin-bottom:6px">' + icon + ' ' + cropEmoji(x.o.crop_id) +
-        ' <b>' + esc(cropName(x.o.crop_id)) + '</b> — ' + x.rel.d + '" away' +
+        ' <b>' + esc(cropName(x.o.crop_id)) + '</b> — ' + Units.len(x.rel.d) + ' away' +
         (x.rel.rootsClash ? ', roots overlapping' : x.rel.canopyTouch ? ', leaves will meet' : '') +
         (x.r.score !== 0 ? '<br>' + esc(x.r.why) : '') + '</div>';
     });
@@ -377,8 +377,8 @@ Garden.liveRadius = function(id, rc, rr){
   Garden.setRadius(id, rc === null || rc === undefined ? Geom.RC(p) : num(rc),
                        rr === null || rr === undefined ? Geom.RR(p) : num(rr));
   const q = DB.find("plantings", id);
-  const a = $("#rr-v"); if(a) a.textContent = Geom.RR(q) + '"';
-  const b = $("#rc-v"); if(b) b.textContent = Geom.RC(q) + '"';
+  const a = $("#rr-v"); if(a) a.textContent = Units.len(Geom.RR(q));
+  const b = $("#rc-v"); if(b) b.textContent = Units.len(Geom.RC(q));
   const rrEl = $("#pl-rr"); if(rrEl) rrEl.value = Geom.RR(q);
   Garden.repaint();
 };
@@ -409,14 +409,14 @@ Garden.suggest = function(){
   const bed = Geom.bed(DB.find("beds", APP.bedId));
   const recs = Recommend.now({ bedId: bed.id }).slice(0, 12);
   let h = '<p class="muted sm" style="margin-top:0">Ranked for <b>' + esc(bed.name) + '</b> — ' +
-    Micro.sunHours(bed.id) + 'h of sun, ' + Geom.areaSqFt(bed) + ' sq ft, what is already growing there, ' +
+    Micro.sunHours(bed.id) + 'h of sun, ' + Units.area(Geom.areaSqFt(bed)) + ', what is already growing there, ' +
     'what grew there before, and what is in your seed bank.</p>';
   if(!recs.length) h += '<div class="note i">No sowing windows are open right now.</div>';
   recs.forEach(r => {
     h += '<div class="card" style="margin-bottom:10px"><div class="row" style="gap:10px">' +
       '<div style="font-size:1.8rem">' + r.crop.e + '</div><div class="grow">' +
       '<div class="b">' + esc(r.crop.n) + '</div><div class="tiny muted">' + esc(FAMILY[r.crop.fam].n) +
-      ' · ' + r.crop.dtm + ' days · needs ' + r.crop.sp + '" of room</div></div>' +
+      ' · ' + r.crop.dtm + ' days · needs ' + Units.len(r.crop.sp) + ' of room</div></div>' +
       '<button class="btn sm" onclick="Garden.paint=\'' + r.crop.id + '\';closeSheet();Garden.render();toast(\'Tap the bed to plant\')">Plant</button></div>';
     r.why.slice(0, 3).forEach(x => h += '<div class="tiny" style="margin-top:5px">' + esc(x) + '</div>');
     r.warn.slice(0, 2).forEach(x => h += '<div class="tiny" style="margin-top:5px;color:var(--warn)">' + esc(x) + '</div>');

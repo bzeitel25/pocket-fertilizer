@@ -231,11 +231,11 @@ Geom.fitsIn = function(cropId, r){
     const body = $("#sheet-body"); if(!body) return;
     const pr = Habit.provenance(p.crop_id);
     let h = '<div class="card" style="margin-top:12px"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Where these sizes come from</div>';
-    h += '<div class="tiny"><b>Spread ' + pr.spread.value + '″</b>' +
-      (pr.spread.derived ? ' <span class="chip warn tiny">estimate</span>' : '') + '<br>' + esc(pr.spread.how) + '</div>';
-    h += '<div class="tiny" style="margin-top:8px"><b>Height ' + pr.height.value + '″</b>' +
-      (pr.height.derived ? ' <span class="chip warn tiny">estimate</span>' : '') + '<br>' + esc(pr.height.how) + '</div>';
-    if(pr.note) h += '<div class="note i" style="margin-top:10px">' + esc(pr.note) + '</div>';
+    h += '<div class="tiny"><b>Spread ' + Units.len(pr.spread.value) + '</b>' +
+      (pr.spread.derived ? ' <span class="chip warn tiny">estimate</span>' : '') + '<br>' + escU(pr.spread.how) + '</div>';
+    h += '<div class="tiny" style="margin-top:8px"><b>Height ' + Units.len(pr.height.value) + '</b>' +
+      (pr.height.derived ? ' <span class="chip warn tiny">estimate</span>' : '') + '<br>' + escU(pr.height.how) + '</div>';
+    if(pr.note) h += '<div class="note i" style="margin-top:10px">' + escU(pr.note) + '</div>';
     if(pr.src) h += '<div class="tiny muted" style="margin-top:8px">' + esc(pr.src.org) + ' — <a href="' +
       esc(pr.src.url) + '" target="_blank" rel="noopener noreferrer">' + esc(pr.src.n) + ' ↗</a></div>';
     h += '<div class="tiny muted" style="margin-top:8px">Whatever the book says, your own garden outranks it — resize the plant and the app remembers.</div></div>';

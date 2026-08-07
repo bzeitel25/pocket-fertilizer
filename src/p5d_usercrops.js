@@ -133,13 +133,16 @@ const UserCrops = {
     h += '<div class="sec"><h2>How it grows</h2></div>';
     h += '<div class="grid2">' +
       '<div><label class="f">Sun (hours)</label><input type="number" id="uc-sun" min="0" max="16" value="' + esc(v("sun",6)) + '"></div>' +
-      '<div><label class="f">Water (in/week)</label><input type="number" id="uc-water" step="0.25" min="0" max="4" value="' + esc(v("water",1)) + '"></div></div>';
+      '<div><label class="f">Water (' + Units.lenUnit() + '/week)</label><input type="number" id="uc-water" step="' + Units.waterStep() +
+      '" min="0" max="' + Units.outWater(4) + '" value="' + esc(Units.outWater(num(v("water",1), 1))) + '"></div></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
-      '<div><label class="f">Spacing (inches)</label><input type="number" id="uc-sp" min="1" max="96" value="' + esc(v("sp",12)) + '">' +
+      '<div><label class="f">Spacing (' + Units.lenUnit() + ')</label><input type="number" id="uc-sp" step="' + Units.lenStep() +
+      '" min="' + Units.outLen(1) + '" max="' + Units.outLen(96) + '" value="' + esc(Units.outLen(num(v("sp",12), 12))) + '">' +
       '<div class="tiny muted">Also sets how wide it is drawn.</div></div>' +
       '<div><label class="f">Days to maturity</label><input type="number" id="uc-dtm" min="1" max="400" value="' + esc(v("dtm",60)) + '"></div></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
-      '<div><label class="f">Sow depth (in)</label><input type="number" id="uc-depth" step="0.125" min="0" max="6" value="' + esc(v("depth",0.25)) + '"></div>' +
+      '<div><label class="f">Sow depth (' + Units.lenUnit() + ')</label><input type="number" id="uc-depth" step="' + (Units.metric ? "0.5" : "0.125") +
+      '" min="0" max="' + Units.outLen(6) + '" value="' + esc(Units.outLen(num(v("depth",0.25), 0.25))) + '"></div>' +
       '<div><label class="f">Started as</label><select id="uc-from">' +
         ["seed","transplant"].map(x => '<option value="' + x + '"' + (v("from","seed") === x ? " selected" : "") + '>' + x + '</option>').join("") +
       '</select></div></div>';
@@ -191,9 +194,11 @@ const UserCrops = {
       name: name,
       emoji: $("#uc-emoji-v").value || "🌱",
       fam: $("#uc-fam").value,
-      sun: num($("#uc-sun").value, 6), water: num($("#uc-water").value, 1),
-      sp: num($("#uc-sp").value, 12), dtm: num($("#uc-dtm").value, 60),
-      depth: num($("#uc-depth").value, 0.25), from: $("#uc-from").value,
+      /* typed in whatever system is on; stored in inches like every other crop */
+      sun: num($("#uc-sun").value, 6),
+      water: Units.inWater(num($("#uc-water").value, Units.outWater(1))),
+      sp: Units.inLen(num($("#uc-sp").value, Units.outLen(12))), dtm: num($("#uc-dtm").value, 60),
+      depth: Units.inLen(num($("#uc-depth").value, Units.outLen(0.25))), from: $("#uc-from").value,
       feeder: $("#uc-feeder").value, via: num($("#uc-via").value, 3),
       start_indoor: opt("#uc-si"), start_tp: opt("#uc-st"),
       start_direct: opt("#uc-sd"), start_fall: opt("#uc-sf"),

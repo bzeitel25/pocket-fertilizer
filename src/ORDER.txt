@@ -2,6 +2,7 @@ p1_head.html
 p2_body.html
 p3_core.js
 p4_db.js
+p22_units.js
 p5_plants.js
 p5b_sources.js
 p5c_garden_plants.js
@@ -45,6 +46,7 @@ p16_sources_ui.js
 p17_tips.js
 p18_help.js
 p12b_settings.js
+p22b_unitsui.js
 p20_calsync.js
 p21_share.js
 p19_native.js

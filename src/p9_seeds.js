@@ -153,7 +153,7 @@ const Seeds = {
           ws.map(w => w.icon + ' ' + esc(w.label) + ': <b>' + fmt(w.date) + '</b>').join("<br>") + '</div>';
       }
       if(c) h += '<div class="note g" style="margin-top:8px"><b>Germination.</b> ' + c.depth + '" deep · ' +
-        c.germ[0] + '–' + c.germ[1] + ' days · soil ' + c.soilF[0] + '–' + c.soilF[2] + '°F (best at ' + c.soilF[1] + '°F).</div>';
+        c.germ[0] + '–' + c.germ[1] + ' days · soil ' + Units.tempN(c.soilF[0]) + '–' + Units.temp(c.soilF[2]) + ' (best at ' + Units.temp(c.soilF[1]) + ').</div>';
     }
 
     h += '<div class="row" style="gap:8px;margin-top:16px">' +

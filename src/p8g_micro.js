@@ -256,8 +256,8 @@ const Micro = (() => {
     out.rainCal = rainCal(site);
     out.rainCatch = out.rainCal.ratio;
     if(out.rainCal.measured !== null) out.why.push({ k:"g", t:"Measured against " + out.rainCal.n + " real rain days",
-      m:"The forecast promised " + out.rainCal.forecastIn + '" over those days and you recorded ' + out.rainCal.observedIn +
-        '" here — about ' + Math.round(out.rainCal.measured * 100) + "%. That is what the watering call now assumes, instead of trusting the forecast at face value." });
+      m:"The forecast promised " + Units.water(out.rainCal.forecastIn) + ' over those days and you recorded ' + Units.water(out.rainCal.observedIn) +
+        ' here — about ' + Math.round(out.rainCal.measured * 100) + "%. That is what the watering call now assumes, instead of trusting the forecast at face value." });
     out.frostEvidence = frostEvidence(site);
 
     if(out.waterFactor >= 1.12) out.why.push({ k:"w", t:"Dries out faster than the rest of the garden",

@@ -44,13 +44,14 @@ const Shape = {
       '<div><label class="f">Depth · <b id="sh-hv">' + Shape.ft(Geom.H(bed)) + '</b></label>' +
         '<input type="range" id="sh-h" min="12" max="480" step="3" value="' + Geom.H(bed) +
         '" oninput="Shape.size(\'' + bed.id + '\')"></div></div>';
-    h += '<div class="tiny muted" id="sh-area" style="margin-top:6px">' + Geom.areaSqFt(bed) + ' sq ft of growing space</div>';
+    h += '<div class="tiny muted" id="sh-area" style="margin-top:6px">' + Units.area(Geom.areaSqFt(bed)) + ' of growing space</div>';
 
     h += '<div class="row between" style="margin-top:14px"><div><div class="b sm">Square-foot grid</div>' +
       '<div class="tiny muted">Shows the squares and snaps new plants to them.</div></div>' +
       '<button class="switch ' + (num(bed.grid_on) ? "on" : "") + '" id="sh-grid"></button></div>';
-    h += '<div class="field" style="margin-top:10px"><label class="f">Square size (inches)</label>' +
-      '<input type="number" id="sh-cell" min="3" max="48" value="' + esc(num(bed.cell_in, 12)) + '"></div>';
+    h += '<div class="field" style="margin-top:10px"><label class="f">Square size (' + Units.lenUnit() + ')</label>' +
+      '<input type="number" id="sh-cell" step="' + Units.lenStep() + '" min="' + Units.outLen(3) + '" max="' + Units.outLen(48) +
+      '" value="' + esc(Units.outLen(num(bed.cell_in, 12))) + '"></div>';
 
     /* Companion magnetism used to be buried here. It is a thing you change
        while you are dragging plants about, not while you are choosing how big
@@ -63,9 +64,13 @@ const Shape = {
     const g = $("#sh-grid"); if(g) g.onclick = () => g.classList.toggle("on");
   },
 
+  /* feet-and-inches reads naturally in one system and is meaningless in the
+     other, so metric gets a plain centimetre figure rather than a translation
+     of a convention that does not exist there */
   ft(inches){
+    if(Units.metric) return Units.big(inches);
     const f = Math.floor(inches / 12), i = Math.round(inches - f * 12);
-    return (f ? f + "′" : "") + (i ? " " + i + "″" : (f ? "" : "0″"));
+    return (f ? f + "\u2032" : "") + (i ? " " + i + "\u2033" : (f ? "" : "0\u2033"));
   },
 
   pick(bedId, shape){
@@ -83,11 +88,11 @@ const Shape = {
     const wv = $("#sh-wv"); if(wv) wv.textContent = Shape.ft(w);
     const hv = $("#sh-hv"); if(hv) hv.textContent = Shape.ft(h);
     const pv = $("#sh-prev"); if(pv) pv.innerHTML = Canvas.svg(Geom.bed(bed), { interactive:false, pad:3 });
-    const ar = $("#sh-area"); if(ar) ar.textContent = Geom.areaSqFt(Geom.bed(bed)) + " sq ft of growing space";
+    const ar = $("#sh-area"); if(ar) ar.textContent = Units.area(Geom.areaSqFt(Geom.bed(bed))) + " of growing space";
   },
 
   save(bedId){
-    const cell = clamp(num(($("#sh-cell") || {}).value, 12), 3, 48);
+    const cell = clamp(Units.inLen(num(($("#sh-cell") || {}).value, Units.outLen(12))), 3, 48);
     const gridOn = $("#sh-grid") && $("#sh-grid").classList.contains("on") ? 1 : 0;
     const bed = Geom.bed(DB.find("beds", bedId));
     /* cols and rows are only the grid overlay now, but the map, the recap
@@ -128,11 +133,11 @@ const Shape = {
   drawSheet(){
     const d = Shape.draft; if(!d) return;
     const n = d.pts.length;
-    let h = '<p class="muted sm" style="margin-top:0">Tap to drop a corner. Corners snap to the ' + Shape.GRID +
-      '″ grid and to each other — tap the first corner again to close the shape.</p>';
+    let h = '<p class="muted sm" style="margin-top:0">Tap to drop a corner. Corners snap to the ' + Units.len(Shape.GRID) +
+      ' grid and to each other — tap the first corner again to close the shape.</p>';
     h += '<div class="canvaswrap" id="sh-draw" style="padding:6px">' + Shape.drawSVG() + '</div>';
     h += '<div class="row between tiny muted" style="margin-top:8px">' +
-      '<span>' + n + ' corner' + (n === 1 ? "" : "s") + (n >= 3 ? ' · ' + Shape.draftArea() + ' sq ft' : '') + '</span>' +
+      '<span>' + n + ' corner' + (n === 1 ? "" : "s") + (n >= 3 ? ' · ' + Units.area(Shape.draftArea()) : '') + '</span>' +
       '<span>' + Shape.ft(d.w) + ' × ' + Shape.ft(d.h) + ' canvas</span></div>';
     h += '<div class="row" style="gap:8px;margin-top:12px">' +
       '<button class="btn ghost" onclick="Shape.undo()">↶ Undo</button>' +
@@ -238,7 +243,7 @@ const Shape = {
     Geom.savePoly(d.bedId, norm);
     Shape.draft = null;
     closeSheet(); Garden.render();
-    toast("Outline saved · " + Geom.areaSqFt(Geom.bed(DB.find("beds", d.bedId))) + " sq ft");
+    toast("Outline saved · " + Units.area(Geom.areaSqFt(Geom.bed(DB.find("beds", d.bedId)))));
   }
 };
 
@@ -339,11 +344,14 @@ Garden.newBed = function(){
   });
   h += '</div>';
   h += '<div class="grid2" style="margin-top:14px">' +
-    '<div><label class="f">Width (feet)</label><input type="number" id="nb-w" value="4" min="1" max="40" step="0.5"></div>' +
-    '<div><label class="f">Depth (feet)</label><input type="number" id="nb-h" value="8" min="1" max="40" step="0.5"></div></div>';
+    '<div><label class="f">Width (' + Units.bigUnit() + ')</label><input type="number" id="nb-w" value="' + Units.outBig(48) +
+      '" min="' + Units.outBig(12) + '" max="' + Units.outBig(480) + '" step="' + Units.bigStep() + '"></div>' +
+    '<div><label class="f">Depth (' + Units.bigUnit() + ')</label><input type="number" id="nb-h" value="' + Units.outBig(96) +
+      '" min="' + Units.outBig(12) + '" max="' + Units.outBig(480) + '" step="' + Units.bigStep() + '"></div></div>';
   h += '<div class="grid2" style="margin-top:12px">' +
     '<div><label class="f">Direct sun (hrs)</label><input type="number" id="nb-sun" value="8" min="0" max="16"></div>' +
-    '<div><label class="f">Square size (in)</label><input type="number" id="nb-cell" value="12" min="3" max="48"></div></div>';
+    '<div><label class="f">Square size (' + Units.lenUnit() + ')</label><input type="number" id="nb-cell" value="' + Units.outLen(12) +
+      '" min="' + Units.outLen(3) + '" max="' + Units.outLen(48) + '" step="' + Units.lenStep() + '"></div></div>';
   if(plots.length) h += '<div class="field"><label class="f">Plot</label><select id="nb-plot"><option value="">— none —</option>' +
     plots.map(p => '<option value="' + p.id + '"' + (APP.plotId === p.id ? " selected" : "") + '>' + esc(p.name) + '</option>').join("") + '</select></div>';
   h += '<div class="note i" style="margin-top:12px">Plants go anywhere inside the outline — no grid unless you ask for one. The square size only sets the optional overlay, and how far plants jump when you snap them to it.</div>';
@@ -357,9 +365,10 @@ Garden.newBed = function(){
 Garden.saveNewBed = function(){
   const sel = $("#sheet-body .shapegrid button.on");
   const shape = sel ? sel.dataset.shape : "rect";
-  const cell = clamp(num(($("#nb-cell") || {}).value, 12), 3, 48);
-  const wIn = Math.round(clamp(num(($("#nb-w") || {}).value, 4), 1, 40) * 12);
-  const hIn = Math.round(clamp(num(($("#nb-h") || {}).value, 8), 1, 40) * 12);
+  /* typed in whatever system is on, stored in inches either way */
+  const cell = clamp(Units.inLen(num(($("#nb-cell") || {}).value, Units.outLen(12))), 3, 48);
+  const wIn = Math.round(clamp(Units.inBig(num(($("#nb-w") || {}).value, Units.outBig(48))), 12, 480));
+  const hIn = Math.round(clamp(Units.inBig(num(($("#nb-h") || {}).value, Units.outBig(96))), 12, 480));
   const b = DB.insert("beds", {
     name: (($("#nb-name") || {}).value || "").trim() || ("Bed " + (DB.count("beds") + 1)),
     shape: shape, w_in: wIn, h_in: hIn, cell_in: cell, grid_on: 0, snap_in: 0,

@@ -42,7 +42,7 @@ const w = dom.window;
 const G = w.eval("({DB,CROPS,CONDITIONS,Season,Recommend,Garden,Seeds,Cal,Doctor,Journal,Recap,Library,Settings,SqlView,APP,go,iso,today,pairRating,companionsFor,closeSheet,Photos,Vault,Weather,Assist,AI_TOOLS,SOURCES,COND_SRC,VERIFIED,Sources,Updater,BUILD,cropSource,FIELD_CONFIDENCE,CLAIM_NOTES,Varieties,VARIETY_REF,PROVIDERS,Maturity,INFO,TIPS,Tips,Notify,Coach,GUIDE,Help,Onboard,Live,Gmap,FEATURES,Native,Solar,Micro,MicroUI,MicroLog,SECTORS,SECTOR_AZ," +
   "Geom,PlantArt,Canvas,CanvasDrag,Shape,Habit,HABIT_SRC,addDays,diffDays,crop,cropName,FAMILY," +
   "GARDEN_PLANTS,GARDEN_SRC,PLANT_ROLE,UserCrops,SCHEMA,companionsFor,CROP_ABSENT,CROP_ALIAS," +
-  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,Share,EV,Ask,Vision,firstJsonObject})");
+  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,Share,Units,escU,EV,Ask,Vision,firstJsonObject})");
 for(const k of Object.keys(G)) w[k] = G[k];
 const origErr = console.error;
 const JSDOM_NOISE = /^Not implemented:/;
@@ -3012,6 +3012,170 @@ check("the guide explains the difference between this and a backup", () =>
   w.GUIDE.some(g => g.id === "twodevices" && g.p.join(" ").indexOf("never replaces") >= 0));
 w.closeSheet();
 w.Share.opts = { plots: [], seeds: true, history: false, photos: false };
+
+/* ============================================================
+   INCHES OR CENTIMETRES
+
+   The whole safety argument for this feature is that the toggle
+   changes nothing on disk. So the central test is not "does it
+   convert" — it is "flip it, flip it back, and prove every row is
+   byte for byte what it was".
+   ============================================================ */
+const uWas = w.Units.metric;
+const uBed = w.DB.insert("beds", { name:"Units bed", shape:"rect", w_in:48, h_in:96,
+  cell_in:12, cols:4, rows:8, sun_hours:8, soil:"loam" });
+w.DB.insert("plantings", { bed_id: uBed.id, crop_id:"tomato", qty:1, status:"growing",
+  px: 24, py: 24, rr: 12, rc: 18, x:2, y:2, w:1, h:1 });
+
+check("the app starts in imperial, because that is what it has always shown", () => {
+  w.DB.set("units", "imperial");
+  return w.Units.metric === false && w.Units.lenUnit() === "in" && w.Units.weightUnit() === "lbs"; });
+check("lengths convert exactly, then round — a 4ft bed is 122cm, not 120", () => {
+  w.DB.set("units", "metric");
+  return w.Units.bigN(48) === 122 && w.Units.bigN(96) === 244 &&
+         w.Units.dims(48, 96) === "122×244 cm"; });
+check("and reads as feet again the moment it is switched back", () => {
+  w.DB.set("units", "imperial");
+  return w.Units.dims(48, 96) === "4×8 ft" && w.Units.len(12) === '12"'; });
+check("area, weight and temperature all follow", () => {
+  w.DB.set("units", "metric");
+  const a = w.Units.area(32), wt = w.Units.weight(10), t = w.Units.temp(70), t2 = w.Units.temp(32);
+  w.DB.set("units", "imperial");
+  return a === "2.97 m²" && wt === "4.5 kg" && t === "21°C" && t2 === "0°C" &&
+    w.Units.area(32) === "32 sq ft" && w.Units.weight(10) === "10 lbs" && w.Units.temp(70) === "70°F"; });
+check("a temperature difference is not a temperature — 10°F warmer is 5.6°C warmer", () => {
+  w.DB.set("units", "metric");
+  const d = w.Units.tempDeltaN(10), p = w.Units.tempN(10);
+  w.DB.set("units", "imperial");
+  return d === 5.6 && p === -12; });
+
+check("NOTHING on disk moves when the switch is thrown", () => {
+  const before = JSON.stringify(w.DB.all("beds")) + JSON.stringify(w.DB.all("plantings")) +
+    JSON.stringify(w.DB.all("harvests")) + JSON.stringify(w.DB.all("usercrops"));
+  w.DB.set("units", "metric");
+  w.APP.bedId = uBed.id; w.Garden.render();
+  w.go("library"); w.Library.render(); w.Library.open("tomato"); w.closeSheet();
+  w.go("journal"); w.Journal.render();
+  w.go("recap"); w.Recap.render();
+  w.DB.set("units", "imperial");
+  w.APP.bedId = null;
+  const after = JSON.stringify(w.DB.all("beds")) + JSON.stringify(w.DB.all("plantings")) +
+    JSON.stringify(w.DB.all("harvests")) + JSON.stringify(w.DB.all("usercrops"));
+  return before === after; });
+
+check("a bed typed in centimetres round-trips to the inches it meant", () => {
+  w.DB.set("units", "metric");
+  const cm = w.Units.outBig(48);                 /* what the field shows: 122 */
+  const back = Math.round(w.Units.inBig(cm));    /* what gets stored */
+  w.DB.set("units", "imperial");
+  return cm === 122 && back === 48; });
+check("a spacing typed in centimetres round-trips too", () => {
+  w.DB.set("units", "metric");
+  const shown = w.Units.outLen(12), back = w.Units.inLen(shown);
+  w.DB.set("units", "imperial");
+  return shown === 30 && Math.round(back) === 12; });
+check("a weight typed in kilos comes back as the pounds it was", () => {
+  w.DB.set("units", "metric");
+  const shown = w.Units.outWeight(10), back = w.Units.inWeight(shown);
+  w.DB.set("units", "imperial");
+  return shown === 4.5 && Math.abs(back - 10) < 0.15; });
+
+/* --- what the screens actually say --- */
+check("the bed screen swaps its dimensions on the spot", () => {
+  w.APP.bedId = uBed.id;
+  w.DB.set("units", "imperial"); w.Garden.render();
+  const imp = w.document.getElementById("s-garden").innerHTML;
+  w.DB.set("units", "metric"); w.Garden.render();
+  const met = w.document.getElementById("s-garden").innerHTML;
+  w.DB.set("units", "imperial"); w.APP.bedId = null; w.Garden.render();
+  return imp.includes("4×8 ft") && met.includes("122×244 cm") && !met.includes("4×8 ft"); });
+check("the crop page swaps spacing, depth and germination temperature", () => {
+  w.DB.set("units", "metric"); w.go("library"); w.Library.open("tomato");
+  const met = w.document.getElementById("sheet-body").innerHTML || "";
+  w.closeSheet(); w.DB.set("units", "imperial"); w.Library.open("tomato");
+  const imp = w.document.getElementById("sheet-body").innerHTML || "";
+  w.closeSheet();
+  return met.includes("61 cm") && met.includes("°C") && !met.includes("°F") &&
+         imp.includes('24"') && imp.includes("°F"); });
+check("the season recap restates yield and density rather than relabelling pounds", () => {
+  w.DB.set("units", "metric"); w.go("recap"); w.Recap.render();
+  const met = w.document.getElementById("s-recap").innerHTML || "";
+  w.DB.set("units", "imperial"); w.Recap.render();
+  const imp = w.document.getElementById("s-recap").innerHTML || "";
+  return met.includes("kg") && met.includes("kg/m²") && imp.includes("lbs") && imp.includes("lbs/sq ft"); });
+
+/* --- written advice carries measurements inside the sentences --- */
+check("prose converts figures written in digits", () => {
+  w.DB.set("units", "metric");
+  const a = w.Units.prose("Peppers sulk below 55°F.");
+  const b = w.Units.prose("Thin to 6–8 inches apart.");
+  const c = w.Units.prose("Give it 6 feet of trellis.");
+  w.DB.set("units", "imperial");
+  return a === "Peppers sulk below 13°C." && b === "Thin to 15–20 cm apart." && c === "Give it 1.8 m of trellis."; });
+check("and figures written as words, which is how the tips are phrased", () => {
+  w.DB.set("units", "metric");
+  const a = w.Units.prose("Push a finger two inches into the soil.");
+  const b = w.Units.prose("Keep fertiliser four to six inches away from stems.");
+  w.DB.set("units", "imperial");
+  return a === "Push a finger 5.1 cm into the soil." && b === "Keep fertiliser 10–15 cm away from stems."; });
+check("a number that is not a measurement is left alone", () => {
+  w.DB.set("units", "metric");
+  const a = w.Units.prose("Two of the three beds are empty, and 5 seedlings survived.");
+  const b = w.Units.prose('She said "that one" and left.');
+  w.DB.set("units", "imperial");
+  return a === "Two of the three beds are empty, and 5 seedlings survived." &&
+         b === 'She said "that one" and left.'; });
+check("prose is untouched in imperial, so nothing can drift by being converted twice", () => {
+  const s = "Thin to 6–8 inches apart at 55°F.";
+  return w.Units.prose(s) === s; });
+check("the crop guide's own advice is run through it, not just the table above", () => {
+  w.DB.set("units", "metric"); w.Library.open("pepper");
+  const h = w.document.getElementById("sheet-body").innerHTML || "";
+  w.closeSheet(); w.DB.set("units", "imperial");
+  return h.indexOf("°F") < 0; });
+
+/* --- the switch itself --- */
+check("the switch sits in the plot strip, where the measurements are", () => {
+  w.APP.bedId = null; w.go("garden"); w.Garden.setView("beds"); w.Garden.render();
+  const sc = w.document.querySelector("#s-garden .scroller");
+  return !!sc && sc.innerHTML.includes("Units.flip"); });
+check("and on the bed screen, beside the size it is questioning", () => {
+  w.APP.bedId = uBed.id; w.Garden.render();
+  const ok2 = (w.document.getElementById("s-garden").innerHTML || "").includes("Units.flip");
+  w.APP.bedId = null; w.Garden.render();
+  return ok2; });
+check("tapping it swaps the app and says which system it landed in", () => {
+  w.go("garden"); w.Garden.render();
+  const was = w.Units.metric;
+  w.Units.flip();
+  const flipped = w.Units.metric !== was;
+  const t = (w.document.getElementById("toast").textContent || "");
+  w.Units.flip();
+  return flipped && w.Units.metric === was && /Metric|Imperial/.test(t); });
+check("settings offers it too, and explains that nothing is rewritten", () => {
+  w.go("settings"); w.Settings.render();
+  const h = w.document.getElementById("s-settings").innerHTML || "";
+  return h.includes("Units.pick") && /Measurements/.test(h) &&
+    /Nothing is rewritten/i.test(h) && !!w.INFO.units; });
+check("the setting rides along in the vault like every other preference", () => {
+  w.DB.set("units", "metric");
+  const kept = w.DB.get("units");
+  w.DB.set("units", "imperial");
+  return kept === "metric" && JSON.parse(w.DB.exportJSON()).settings.units === "imperial"; });
+check("the assistant is told which system to answer in, and not to quote raw tool units", () => {
+  w.DB.set("units", "metric");
+  const met = w.Assist.system();
+  w.DB.set("units", "imperial");
+  const imp = w.Assist.system();
+  return /METRIC/.test(met) && /never quote them back raw/.test(met) && /IMPERIAL/.test(imp); });
+check("a harvest keeps the unit it was actually recorded in", () => {
+  const hv = w.DB.insert("harvests", { date: w.iso(w.today()), crop_id:"tomato",
+    bed_id: uBed.id, weight:"2", unit:"kg" });
+  w.DB.set("units", "imperial");
+  const back = w.DB.find("harvests", hv.id);
+  return back.unit === "kg" && back.weight === "2" && Math.abs(w.Journal.lbs(back) - 4.41) < 0.02; });
+w.DB.set("units", uWas ? "metric" : "imperial");
+w.APP.bedId = null;
 
 /* --- the toolbar carries what it claims to --- */
 check("the snap toggle is on the bed toolbar, not buried in the shape sheet", () => {

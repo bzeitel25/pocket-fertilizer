@@ -63,8 +63,8 @@ const MicroLog = {
     if(bias){
       const pct = Math.round(bias.ratio * 100);
       h += '<div class="note ' + (bias.ratio < 0.8 ? "w" : bias.ratio > 1.2 ? "i" : "g") + '" style="margin-top:' + (p.length ? "10px" : "0") + '">' +
-        '🌧️ <b>The forecast at your address.</b> Over ' + bias.n + ' rain days it promised ' + bias.forecastIn +
-        '" and you recorded ' + bias.observedIn + '" — about <b>' + pct + '%</b>. ' +
+        '🌧️ <b>The forecast at your address.</b> Over ' + bias.n + ' rain days it promised ' + Units.water(bias.forecastIn) +
+        ' and you recorded ' + Units.water(bias.observedIn) + ' — about <b>' + pct + '%</b>. ' +
         (bias.ratio < 0.8 ? "The watering call already discounts it by that much."
          : bias.ratio > 1.2 ? "It has been running low here, and the watering call allows for that."
          : "Close enough to trust as it stands.") +
@@ -96,19 +96,19 @@ const MicroLog = {
       '<div style="font-size:2rem">' + (it.kind === "rain" ? "🌧️" : "🥶") + '</div></div>';
 
     if(it.kind === "rain"){
-      h += '<div class="note i">The forecast recorded <b>' + it.forecast + '"</b> of rain for the garden that day. How much actually landed here?</div>';
+      h += '<div class="note i">The forecast recorded <b>' + Units.water(it.forecast) + '</b> of rain for the garden that day. How much actually landed here?</div>';
       h += '<div class="row wrap" style="gap:6px;margin-top:12px">' +
         MicroLog.chips(it.forecast).map(c =>
           '<button class="chip" onclick="MicroLog.setAmount(' + c[1] + ')">' + esc(c[0]) + '</button>').join("") +
         '</div>';
       h += '<div class="field" style="margin-top:12px"><label class="f">Inches</label>' +
-        '<input type="number" id="ml-amt" step="0.01" min="0" max="20" value="' + it.forecast + '"></div>';
+        '<input type="number" id="ml-amt" step="' + Units.waterStep() + '" min="0" max="' + Units.outWater(20) + '" value="' + Units.outWater(it.forecast) + '"></div>';
       h += '<div class="tiny muted" style="margin-top:6px">A rain gauge is ideal, but an honest guess beats trusting a forecast cell several miles wide. Answer for this spot — a bed under the eaves gets less than the one beside it.</div>';
       h += '<div class="row" style="gap:8px;margin-top:16px">' +
         '<button class="btn ghost" onclick="MicroLog.skip()">Not sure</button>' +
         '<button class="btn grow" onclick="MicroLog.saveRain()">Save</button></div>';
     } else {
-      h += '<div class="note i">The forecast low for the garden that night was <b>' + it.low + '°F</b>. Did this spot actually take a frost?</div>';
+      h += '<div class="note i">The forecast low for the garden that night was <b>' + Units.temp(it.low) + '</b>. Did this spot actually take a frost?</div>';
       h += '<div class="row" style="gap:8px;margin-top:14px">' +
         '<button class="btn grow" onclick="MicroLog.saveFrost(true)">❄️ Yes, it frosted</button>' +
         '<button class="btn ghost grow" onclick="MicroLog.saveFrost(false)">No frost here</button></div>';
@@ -119,17 +119,20 @@ const MicroLog = {
     openSheet("Confirm what happened", h);
   },
 
+  /* the quick answers are offered in whatever unit the box is showing,
+     so tapping one and typing by hand cannot mean two different things */
   chips(f){
-    return [["None at all", 0], ["A trace", 0.02],
-            ["About a quarter", Math.round(f * 0.25 * 100) / 100],
-            ["About half", Math.round(f * 0.5 * 100) / 100],
-            ["All of it", f]];
+    const u = v => Units.outWater(v);
+    return [["None at all", 0], ["A trace", u(0.02)],
+            ["About a quarter", u(f * 0.25)],
+            ["About half", u(f * 0.5)],
+            ["All of it", u(f)]];
   },
   setAmount(v){ const el = $("#ml-amt"); if(el) el.value = v; },
 
   saveRain(){
     const it = MicroLog.queue[MicroLog.i];
-    const v = num(($("#ml-amt") || {}).value, 0);
+    const v = Units.inWater(num(($("#ml-amt") || {}).value, 0));
     Micro.logRain(it.site.scope, it.site.ref_id, it.date, it.forecast, v);
     MicroLog.i++; MicroLog.step();
   },

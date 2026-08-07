@@ -97,7 +97,7 @@ const BedRecs = {
     if(!recs.length) return "";
     const free = BedRecs.freeSqFt(bed);
     let h = '<div class="sec"><h2>Would go well here</h2>' +
-      '<span class="tiny muted">' + free + ' sq ft free</span></div><div class="card">';
+      '<span class="tiny muted">' + Units.area(free) + ' free</span></div><div class="card">';
     h += '<div class="tiny muted" style="margin-bottom:10px">Chosen for what is already planted in this bed, not just what is in season. ' +
       'Anything that would fight one of these plants has been left out.</div>';
     recs.forEach(r => {

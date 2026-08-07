@@ -104,6 +104,13 @@ A tab in the bottom bar. Type, or hold the mic and talk. It's wired to the app's
 ### Journal and season recap
 Log watering, feeding, amendments, treatments, weeding, soil tests, purchases and harvests with weight, count, value, cost and time. The recap computes yield by crop, pounds per square foot by bed, cost per pound, spend breakdown, recurring problems, and written takeaways for next season. Exports to CSV.
 
+### Inches or centimetres
+A **⇄** button sits in the plot strip on the Garden tab, and beside the size line when a bed is open. Tap it and the whole app swaps: bed dimensions, spacing, sow depth, canopy spread, rainfall, watering calls, harvest weights, yield per bed, and temperatures. Settings has the same switch for setting it once and forgetting it.
+
+It changes how figures are shown, not what is recorded. Everything stays stored in one system and is converted where it is drawn, so you can flip back and forth as often as you like and your beds cannot drift a fraction of an inch either way. The growing notes convert too — "thin to 6–8 inches" reads as "thin to 15–20 cm" — and anything the app cannot confidently identify as a measurement is left exactly as written.
+
+Harvests keep whatever unit you logged them in; the totals and the season recap restate them in the system you are reading in.
+
 ### Two devices
 A phone in the garden and a tablet indoors are two separate copies of this app. **Copy this garden to another device** saves one file — pick which plots go, and whether to bring seed packets, journal and harvests, and photos — and sends it however suits: AirDrop, Nearby Share, email, a cloud drive.
 

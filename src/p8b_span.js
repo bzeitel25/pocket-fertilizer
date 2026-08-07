@@ -242,7 +242,7 @@ Object.assign(Garden, {
     let h = '<div class="row" style="gap:12px;margin-bottom:12px"><div style="font-size:2.4rem">' + cropEmoji(p.crop_id) + '</div>' +
       '<div class="grow"><div class="b" style="font-size:1.1rem">' + esc(cropName(p.crop_id)) + '</div>' +
       '<div class="tiny muted">Row ' + (num(p.y)+1) + ', column ' + (num(p.x)+1) + ' of ' + esc(bed.name) +
-      ' · ' + w + '×' + hh + ' (' + (Math.round(area*10)/10) + ' sq ft)</div></div></div>';
+      ' · ' + w + '×' + hh + ' (' + Units.area(area) + ')</div></div></div>';
 
     /* size */
     h += '<div class="card"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Area it covers</div>' +
@@ -264,9 +264,9 @@ Object.assign(Garden, {
       '</div>';
     h += single
       ? '<div class="note i" style="margin-top:10px">One ' + esc(cropName(p.crop_id)) + ' claiming ' + (Math.round(area*10)/10) +
-        ' sq ft. This is how you record a plant that grew far bigger than the book says — and the app remembers it for next season.</div>'
-      : '<div class="note g" style="margin-top:10px">At ' + esc(c ? c.sp + '" spacing' : 'normal spacing') + ', ' +
-        (Math.round(area*10)/10) + ' sq ft holds about <b>' + fit + ' plant' + (fit === 1 ? "" : "s") + '</b>.</div>';
+        '. This is how you record a plant that grew far bigger than the book says — and the app remembers it for next season.</div>'
+      : '<div class="note g" style="margin-top:10px">At ' + (c ? Units.len(c.sp) + ' spacing' : 'normal spacing') + ', ' +
+        Units.area(area) + ' holds about <b>' + fit + ' plant' + (fit === 1 ? "" : "s") + '</b>.</div>';
     h += '<div class="field" style="margin-top:12px"><label class="f">Plants here</label>' +
       '<input type="number" id="pl-qty" min="1" value="' + esc(p.qty || 1) + '"></div>';
     const vv = p.variety ? Varieties.find(p.crop_id, p.variety) : null;
@@ -297,7 +297,7 @@ Object.assign(Garden, {
 
     /* what she has seen before */
     if(obs) h += '<div class="note w" style="margin-top:12px">📐 <b>From your own garden.</b> You recorded ' + esc(cropName(p.crop_id)) +
-      ' covering ' + obs.w + '×' + obs.h + (obs.sqft ? ' (' + obs.sqft + ' sq ft)' : '') + ' as a single plant' +
+      ' covering ' + obs.w + '×' + obs.h + (obs.sqft ? ' (' + Units.area(obs.sqft) + ')' : '') + ' as a single plant' +
       (obs.when ? ', ' + fmtY(obs.when) : '') + '. Worth allowing that much room again.</div>';
 
     /* status & dates */

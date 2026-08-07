@@ -36,7 +36,7 @@ const Garden = {
     const planted = shown.reduce((a, b) => a + DB.where("plantings", p => p.bed_id === b.id && p.status !== "removed").length, 0);
     h += '<div class="card"><div class="grid3">' +
       '<div class="stat"><span class="n">' + shown.length + '</span><span class="l">beds</span></div>' +
-      '<div class="stat"><span class="n">' + Math.round(totalSq) + '</span><span class="l">sq ft</span></div>' +
+      '<div class="stat"><span class="n">' + Units.areaN(totalSq) + '</span><span class="l">' + Units.areaUnit() + '</span></div>' +
       '<div class="stat"><span class="n">' + planted + '</span><span class="l">planted</span></div>' +
       '</div></div>';
 
@@ -45,7 +45,7 @@ const Garden = {
       const conf = Recommend.conflicts(b.id);
       const crops = {}; ps.forEach(p => crops[p.crop_id] = (crops[p.crop_id] || 0) + 1);
       h += '<div class="card"><div class="bedtitle"><div class="grow"><div class="b">' + esc(b.name) + '</div>' +
-        '<div class="tiny muted">' + b.cols + '×' + b.rows + ' squares · ' + esc(b.cell_in || 12) + '" each · ' + esc(b.sun_hours || "?") + 'h sun' +
+        '<div class="tiny muted">' + b.cols + '×' + b.rows + ' squares · ' + Units.len(num(b.cell_in, 12)) + ' each · ' + esc(b.sun_hours || "?") + 'h sun' +
         (b.plot_id && DB.find("plots", b.plot_id) ? ' · ' + esc(DB.find("plots", b.plot_id).name) : '') + '</div></div>' +
         '<button class="btn sm" onclick="Garden.open(\'' + b.id + '\')">Open</button></div>';
       h += Garden.miniGrid(b);
@@ -87,7 +87,7 @@ const Garden = {
 
     let h = '';
     h += '<div class="row" style="margin-bottom:10px"><button class="iconbtn" onclick="Garden.back()">‹</button>' +
-      '<div class="grow"><div class="b">' + esc(b.name) + '</div><div class="tiny muted">' + cols + '×' + rows + ' · ' + esc(b.cell_in || 12) + '" squares · ' + esc(b.sun_hours || "?") + 'h sun</div></div>' +
+      '<div class="grow"><div class="b">' + esc(b.name) + '</div><div class="tiny muted">' + cols + '×' + rows + ' · ' + Units.len(num(b.cell_in, 12)) + ' squares · ' + esc(b.sun_hours || "?") + 'h sun</div></div>' +
       '<button class="iconbtn" onclick="Garden.bedMenu()">⋯</button></div>';
 
     /* size controls */
@@ -97,7 +97,7 @@ const Garden = {
       '<div><div class="l tiny b muted" style="text-transform:uppercase">Rows</div><div class="stepper">' +
         '<button onclick="Garden.resize(0,-1)">−</button><span class="v">' + rows + '</span><button onclick="Garden.resize(0,1)">＋</button></div></div>' +
       '<div class="grow" style="text-align:right"><div class="tiny muted">' +
-        Math.round(cols * rows * Math.pow(num(b.cell_in,12)/12, 2)) + ' sq ft</div>' +
+        Units.area(cols * rows * Math.pow(num(b.cell_in,12)/12, 2)) + '</div>' +
         '<div class="tiny muted">' + ps.length + '/' + (cols*rows) + ' filled</div></div>' +
       '</div></div>';
 
@@ -178,7 +178,7 @@ const Garden = {
       h += '<div class="sec"><h2>Care</h2></div><div class="card">';
       h += '<div class="row between"><div><div class="b">' +
         (w.verdict === "skip" ? "💧 Skip watering" : w.verdict === "light" ? '💧 Light top-up' : '💧 Water this week') + '</div>' +
-        '<div class="tiny muted">Needs ' + w.need + '"/wk · ' + w.rain + '" rain · ' + w.logged + '" logged</div></div>' +
+        '<div class="tiny muted">Needs ' + Units.waterWeek(w.need) + ' · ' + Units.water(w.rain) + ' rain · ' + Units.water(w.logged) + ' logged</div></div>' +
         '<button class="btn sm" onclick="Journal.quick(\'water\',\'' + b.id + '\')">Log</button></div>';
       const heavy = ps.map(p => crop(p.crop_id)).filter(c => c && c.feeder === "heavy");
       if(heavy.length) h += '<div class="note w" style="margin-top:10px">🌿 Heavy feeders here (' +

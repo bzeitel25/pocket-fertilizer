@@ -20,15 +20,15 @@ const Weather = {
       }
       if(dd < 0 && dd >= -7) rainPast += pr;
     });
-    if(frost) out.push({ k:"d", i:"🥶", t: Math.round(frost.t) + "°F on " + fmt(frost.d),
+    if(frost) out.push({ k:"d", i:"🥶", t: Units.temp(frost.t) + " on " + fmt(frost.d),
       m:"Cover tender crops — tomato, pepper, basil, squash, beans — or bring containers in. Water the soil beforehand; moist soil holds heat overnight." });
-    if(hot) out.push({ k:"w", i:"🥵", t: Math.round(hot.t) + "°F on " + fmt(hot.d),
-      m:"Tomato and pepper pollen goes sterile above about 90°F, so expect blossom drop. Shade cloth over the hottest hours, water deeply in the morning, and do not let anything wilt." });
-    if(rain7 >= 0.5) out.push({ k:"i", i:"🌧️", t: (Math.round(rain7*100)/100) + '" of rain coming',
+    if(hot) out.push({ k:"w", i:"🥵", t: Units.temp(hot.t) + " on " + fmt(hot.d),
+      m:"Tomato and pepper pollen goes sterile above about " + Units.temp(90) + ", so expect blossom drop. Shade cloth over the hottest hours, water deeply in the morning, and do not let anything wilt." });
+    if(rain7 >= 0.5) out.push({ k:"i", i:"🌧️", t: Units.water(rain7) + ' of rain coming',
       m:"Hold off watering established beds. Wet foliage spreads blight and mildew — stay out of the beds while leaves are wet." });
     if(rain7 < 0.1 && dry >= 6) out.push({ k:"w", i:"🏜️", t:"Dry week ahead",
       m:"No meaningful rain forecast. Water deeply and less often rather than a little every day, and mulch to cut losses roughly in half." });
-    if(rainPast > 0.25) out.push({ k:"g", i:"💧", t: (Math.round(rainPast*100)/100) + '" fell in the last week',
+    if(rainPast > 0.25) out.push({ k:"g", i:"💧", t: Units.water(rainPast) + ' fell in the last week',
       m:"Already banked — subtract this from what your beds need." });
     return out;
   },
@@ -66,7 +66,7 @@ const Weather = {
 
     h += '<div class="hero"><div class="row between">' +
       '<div><div class="lbl">' + esc(DB.get("locLabel") || "") + '</div>' +
-      '<div style="font-size:2.6rem;font-weight:800;line-height:1">' + Math.round(num(c.temperature_2m)) + '°F</div>' +
+      '<div style="font-size:2.6rem;font-weight:800;line-height:1">' + Units.temp(num(c.temperature_2m)) + '</div>' +
       '<div class="sm" style="opacity:.94">' + esc(Live.wx(c.weather_code)[0]) + '</div></div>' +
       '<div style="font-size:3.2rem">' + Live.wx(c.weather_code)[1] + '</div></div>';
     if(todayIdx >= 0) h += '<div class="row" style="gap:14px;margin-top:10px;font-size:.8rem;opacity:.95">' +
@@ -96,7 +96,7 @@ const Weather = {
         '<td>' + Live.wx(d.weather_code[i])[1] + '</td>' +
         '<td>' + Math.round(hi) + '°' + (hi >= 90 ? ' 🥵' : '') + '</td>' +
         '<td' + (lo <= 36 ? ' style="color:var(--info);font-weight:700"' : '') + '>' + Math.round(lo) + '°' + (lo <= 32 ? ' ❄️' : lo <= 36 ? ' 🥶' : '') + '</td>' +
-        '<td>' + (pr > 0.01 ? (Math.round(pr*100)/100) + '"' : '—') + '</td></tr>';
+        '<td>' + (pr > 0.01 ? Units.water(pr) : '—') + '</td></tr>';
     });
     h += '</table></div>';
 
@@ -107,7 +107,7 @@ const Weather = {
       h += '<tr><td class="b">' + DOW[parseISO(t).getDay()] + " " + parseISO(t).getDate() + '</td>' +
         '<td>' + Live.wx(d.weather_code[i])[1] + '</td><td>' + Math.round(num(d.temperature_2m_max[i])) + '°</td>' +
         '<td>' + Math.round(num(d.temperature_2m_min[i])) + '°</td>' +
-        '<td>' + (num(d.precipitation_sum[i]) > 0.01 ? (Math.round(num(d.precipitation_sum[i])*100)/100) + '"' : '—') + '</td></tr>';
+        '<td>' + (num(d.precipitation_sum[i]) > 0.01 ? Units.water(num(d.precipitation_sum[i])) : '—') + '</td></tr>';
     });
     h += '</table></div>';
 
@@ -118,10 +118,10 @@ const Weather = {
         const r = Recommend.water(b.id, w);
         if(!r){ h += '<div class="item"><div class="av">🪴</div><div class="grow"><div class="b">' + esc(b.name) + '</div>' +
           '<div class="tiny muted">Nothing planted</div></div></div>'; return; }
-        const label = r.verdict === "skip" ? "Skip — rain covers it" : r.verdict === "light" ? 'Light top-up, ~' + r.deficit + '"' : 'Water ' + r.deficit + '" this week';
+        const label = r.verdict === "skip" ? "Skip — rain covers it" : r.verdict === "light" ? 'Light top-up, ~' + Units.water(r.deficit) : 'Water ' + Units.water(r.deficit) + ' this week';
         h += '<button class="item" onclick="Journal.quick(\'water\',\'' + b.id + '\')"><div class="av">' +
           (r.verdict === "skip" ? "✅" : "💧") + '</div><div class="grow"><div class="b">' + esc(b.name) + '</div>' +
-          '<div class="tiny muted">' + esc(label) + ' · needs ' + r.need + '"/wk · ' + r.rain + '" rain</div></div><span class="go">›</span></button>';
+          '<div class="tiny muted">' + esc(label) + ' · needs ' + Units.waterWeek(r.need) + ' · ' + Units.water(r.rain) + ' rain</div></div><span class="go">›</span></button>';
       });
       h += '</div></div>';
     }
@@ -191,7 +191,7 @@ const Weather = {
         x.fillStyle = "#fff"; x.font = F(32, "800"); x.fillText(Math.round(hi) + "°", cx, y + 208);
         x.fillStyle = lo <= 36 ? "#bfe4ff" : "rgba(255,255,255,.72)"; x.font = F(28, "600");
         x.fillText(Math.round(lo) + "°", cx, y + 248);
-        if(pr > 0.01){ x.fillStyle = "#cfe8ff"; x.font = F(22, "600"); x.fillText(Math.round(pr*100)/100 + '"', cx, y + 286); }
+        if(pr > 0.01){ x.fillStyle = "#cfe8ff"; x.font = F(22, "600"); x.fillText(Units.water(pr), cx, y + 286); }
         x.textAlign = "left";
       });
       y += 348;

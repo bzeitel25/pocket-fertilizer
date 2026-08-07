@@ -530,12 +530,12 @@ const Doctor = {
         '<div class="stat" style="text-align:right"><span class="n">' + r.conf + '%</span><span class="l">match</span></div></div>';
       h += '<div class="bar-track" style="margin:8px 0"><div class="bar-fill" style="width:' + r.conf + '%;background:' +
         (c.sev >= 3 ? "var(--danger)" : c.sev === 2 ? "var(--warn)" : "var(--green-600)") + '"></div></div>';
-      h += '<p class="sm" style="margin:8px 0">' + esc(c.quick) + '</p>';
+      h += '<p class="sm" style="margin:8px 0">' + escU(c.quick) + '</p>';
       h += '<div class="note ' + cls + '"><b>What to do now</b><ul style="margin:6px 0 0;padding-left:18px">' +
-        c.treat.map(t => '<li style="margin-bottom:4px">' + esc(t) + '</li>').join("") + '</ul></div>';
+        c.treat.map(t => '<li style="margin-bottom:4px">' + escU(t) + '</li>').join("") + '</ul></div>';
       h += '<details style="margin-top:8px"><summary class="sm b" style="cursor:pointer">Stop it happening again</summary>' +
-        '<ul class="sm" style="margin:8px 0 0;padding-left:18px">' + c.prev.map(t => '<li style="margin-bottom:4px">' + esc(t) + '</li>').join("") + '</ul></details>';
-      if(CLAIM_NOTES[c.id]) h += '<div class="note i" style="margin-top:8px"><b>Worth knowing.</b> ' + esc(CLAIM_NOTES[c.id]) + '</div>';
+        '<ul class="sm" style="margin:8px 0 0;padding-left:18px">' + c.prev.map(t => '<li style="margin-bottom:4px">' + escU(t) + '</li>').join("") + '</ul></details>';
+      if(CLAIM_NOTES[c.id]) h += '<div class="note i" style="margin-top:8px"><b>Worth knowing.</b> ' + escU(CLAIM_NOTES[c.id]) + '</div>';
       if(c.src && c.src.length) h += '<div style="margin-top:10px">' + c.src.map(s =>
         '<a class="chip info" style="margin:0 6px 6px 0" href="' + esc(s[1]) + '" target="_blank" rel="noopener noreferrer">🔗 ' + esc(s[0]) + ' ↗</a>').join("") + '</div>';
       h += '</div>';
@@ -577,10 +577,10 @@ const Doctor = {
       '<div class="tiny muted">' + fmtY(d.date) + (d.crop_id ? ' · ' + esc(cropName(d.crop_id)) : '') +
       (d.confidence ? ' · ' + esc(d.confidence) + '% match' : '') + ' · ' + esc(d.source === "ai" ? "AI vision" : "symptom rules") + '</div>';
     if(d.treatment) h += '<div class="note g" style="margin-top:12px"><b>Treatment given</b><ul style="margin:6px 0 0;padding-left:18px">' +
-      d.treatment.split(" | ").map(t => '<li style="margin-bottom:4px">' + esc(t) + '</li>').join("") + '</ul></div>';
+      d.treatment.split(" | ").map(t => '<li style="margin-bottom:4px">' + escU(t) + '</li>').join("") + '</ul></div>';
     if(d.notes) h += '<div class="note i" style="margin-top:8px">' + esc(d.notes) + '</div>';
     if(c) h += '<details style="margin-top:10px"><summary class="sm b">Prevention</summary><ul class="sm" style="padding-left:18px">' +
-      c.prev.map(t => '<li>' + esc(t) + '</li>').join("") + '</ul></details>';
+      c.prev.map(t => '<li>' + escU(t) + '</li>').join("") + '</ul></details>';
     h += '<button class="btn ghost block danger" style="margin-top:14px" onclick="Photos.drop(\'' + (d.photo_id||"") + '\');DB.remove(\'diagnoses\',\'' + d.id + '\');closeSheet();Doctor.render()">Delete this record</button>';
     openSheet("Scan record", h);
   },

@@ -27,13 +27,13 @@ const Journal = {
 
     const jy = DB.all("journal").filter(j => (j.date||"").slice(0,4) === yr);
     const hy = DB.all("harvests").filter(x => (x.date||"").slice(0,4) === yr);
-    const water = jy.filter(j => j.type === "water").reduce((a,j) => a + num(j.amount), 0);
+    const water = jy.filter(j => j.type === "water").reduce((a,j) => a + Journal.waterIn(j), 0);
     const spend = jy.reduce((a,j) => a + num(j.cost), 0);
     const lbs = hy.reduce((a,x) => a + Journal.lbs(x), 0);
 
     let h = '<div class="card"><div class="grid3">' +
-      '<div class="stat"><span class="n">' + (Math.round(lbs*10)/10) + '</span><span class="l">lbs picked</span></div>' +
-      '<div class="stat"><span class="n">' + (Math.round(water*10)/10) + '"</span><span class="l">water logged</span></div>' +
+      '<div class="stat"><span class="n">' + Units.weightN(lbs) + '</span><span class="l">' + Units.weightUnit() + ' picked</span></div>' +
+      '<div class="stat"><span class="n">' + Units.waterN(water) + Units.waterMark() + '</span><span class="l">water logged</span></div>' +
       '<div class="stat"><span class="n">$' + Math.round(spend) + '</span><span class="l">spent</span></div>' +
       '</div></div>';
 
@@ -75,6 +75,17 @@ const Journal = {
   },
 
   lbs(x){ const w = num(x.weight); return x.unit === "oz" ? w/16 : x.unit === "kg" ? w*2.205 : x.unit === "g" ? w/453.6 : w; },
+  /* the same idea for watering. A row records the unit it was entered in, so
+     a garden logged half in inches and half in centimetres still totals
+     correctly — which it did not before the switch existed. */
+  waterIn(j){ const a = num(j.amount); const u = String(j.unit || "").toLowerCase();
+    return u === "cm" ? a / 2.54 : u === "mm" ? a / 25.4 : a; },
+  /* what a new entry of this kind should be measured in */
+  unitFor(type){
+    if(type === "water") return Units.metric ? "cm" : "inches";
+    if(type === "amend") return Units.metric ? "kg" : "lbs";
+    return (JTYPE[type] || JTYPE.note).unit;
+  },
   bedName(id){ const b = id ? DB.find("beds", id) : null; return b ? b.name : "Garden"; },
 
   quick(type, bedId, plantingId){
@@ -100,13 +111,15 @@ const Journal = {
     let h = '';
     if(t.amount) h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Amount</label><input type="number" step="0.01" id="jl-amt" placeholder="1"></div>' +
-      '<div><label class="f">Unit</label><input type="text" id="jl-unit" value="' + esc(t.unit) + '"></div></div>';
-    if($("#jl-type").value === "water") h += '<div class="note i" style="margin-top:8px">Log in inches to match crop requirements. Rough guide: 0.6 gallons per square foot ≈ 1 inch of water.</div>';
+      '<div><label class="f">Unit</label><input type="text" id="jl-unit" value="' + esc(Journal.unitFor($("#jl-type").value)) + '"></div></div>';
+    if($("#jl-type").value === "water") h += '<div class="note i" style="margin-top:8px">' + (Units.metric
+      ? 'Log in centimetres to match what the crops ask for. Rough guide: 10 litres per square metre ≈ 1 cm of water.'
+      : 'Log in inches to match crop requirements. Rough guide: 0.6 gallons per square foot ≈ 1 inch of water.') + '</div>';
     if($("#jl-type").value === "feed" || $("#jl-type").value === "treat" || $("#jl-type").value === "amend")
       h += '<div class="field"><label class="f">Product</label><input type="text" id="jl-prod" placeholder="Fish emulsion 5-1-1"></div>';
     if($("#jl-type").value === "soil") h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">pH</label><input type="number" step="0.1" id="jl-ph" placeholder="6.5"></div>' +
-      '<div><label class="f">Soil temp °F</label><input type="number" id="jl-temp" placeholder="62"></div></div>';
+      '<div><label class="f">Soil temp ' + Units.tempUnit() + '</label><input type="number" id="jl-temp" placeholder="' + Units.tempN(62) + '"></div></div>';
     if(t.cost) h += '<div class="field"><label class="f">Cost ($)</label><input type="number" step="0.01" id="jl-cost" placeholder="0.00"></div>';
     h += '<div class="field"><label class="f">Time spent (minutes)</label><input type="number" id="jl-min" placeholder="15"></div>';
     $("#jl-dyn").innerHTML = h;
@@ -125,7 +138,8 @@ const Journal = {
     };
     DB.insert("journal", rec);
     if(type === "soil" && $("#jl-ph"))
-      DB.insert("observations", { date: rec.date, bed_id: rec.bed_id, ph: num($("#jl-ph").value), soil_temp: num($("#jl-temp").value), notes: rec.notes });
+      DB.insert("observations", { date: rec.date, bed_id: rec.bed_id, ph: num($("#jl-ph").value),
+        soil_temp: $("#jl-temp").value === "" ? null : Units.inTemp(num($("#jl-temp").value)), notes: rec.notes });
     closeSheet(); Journal.render(); refresh(); toast("Logged");
   },
 
@@ -162,12 +176,14 @@ const Journal = {
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Weight</label><input type="number" step="0.01" id="hv-w" value="' + esc(h0 ? h0.weight : "") + '" placeholder="1.5"></div>' +
       '<div><label class="f">Unit</label><select id="hv-unit">' + ["lbs","oz","kg","g","count"].map(u =>
-        '<option' + (h0 && h0.unit === u ? " selected" : "") + '>' + u + '</option>').join("") + '</select></div></div>';
+        '<option' + ((h0 ? h0.unit === u : u === (Units.metric ? "kg" : "lbs")) ? " selected" : "") + '>' + u + '</option>').join("") + '</select></div></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Count (optional)</label><input type="number" id="hv-count" value="' + esc(h0 ? h0.count : "") + '" placeholder="12"></div>' +
       '<div><label class="f">Value ($)</label><input type="number" step="0.01" id="hv-val" value="' + esc(h0 ? h0.value : "") + '" placeholder="market price"></div></div>';
     h += '<div class="field"><label class="f">Notes</label><textarea id="hv-notes" placeholder="Flavour, size, what you would change">' + esc(h0 ? h0.notes || "" : "") + '</textarea></div>';
-    h += '<div class="note i" style="margin-top:12px">Filling in value turns the recap into a real cost-per-pound picture. Use whatever your local shop charges.</div>';
+    h += '<div class="note i" style="margin-top:12px">What you pick is recorded in the unit you choose here, exactly as you entered it. ' +
+      'Totals and the recap are shown in ' + (Units.metric ? "kilograms" : "pounds") + ', whatever mix of units you have used. ' +
+      'Filling in value turns the recap into a real cost-per-' + (Units.metric ? "kilo" : "pound") + ' picture.</div>';
     h += '<button class="btn block" style="margin-top:14px" onclick="Journal.saveHarvest(' + (h0 ? "'" + h0.id + "'" : "null") + ')">Save harvest</button>';
     openSheet(h0 ? "Edit harvest" : "Log a harvest", h);
     setTimeout(Journal.hvSync, 50);
@@ -234,7 +250,7 @@ const Recap = {
     const spendJ = jl.reduce((a,x) => a + num(x.cost), 0);
     const spendS = sd.reduce((a,s) => a + num(s.cost), 0);
     const spend = spendJ + spendS;
-    const water = jl.filter(j => j.type === "water").reduce((a,j) => a + num(j.amount), 0);
+    const water = jl.filter(j => j.type === "water").reduce((a,j) => a + Journal.waterIn(j), 0);
     const mins = jl.reduce((a,j) => a + num(j.minutes), 0);
     const feeds = jl.filter(j => j.type === "feed").length;
 
@@ -242,7 +258,7 @@ const Recap = {
     h += '<div class="scroller">' + ys.map(y => '<button class="chip ' + (y === Y ? "on" : "") + '" onclick="Recap.year=\'' + y + '\';Recap.render()">' + y + '</button>').join("") + '</div>';
 
     h += '<div class="hero" style="margin-top:12px"><div class="lbl">' + Y + ' season</div>' +
-      '<div style="font-size:2.4rem;font-weight:800;line-height:1.1">' + (Math.round(lbs*10)/10) + ' lbs</div>' +
+      '<div style="font-size:2.4rem;font-weight:800;line-height:1.1">' + Units.weight(lbs) + '</div>' +
       '<div class="sm" style="opacity:.92">' + hv.length + ' harvests across ' +
       Object.keys(hv.reduce((a,x) => (a[x.crop_id]=1, a), {})).length + ' crops</div>' +
       '<div class="row" style="gap:16px;margin-top:12px;font-size:.82rem;opacity:.95">' +
@@ -266,7 +282,7 @@ const Recap = {
     h += '<div class="sec"><h2>What produced</h2></div><div class="card">';
     cropRows.forEach(r => {
       h += '<div style="margin-bottom:10px"><div class="row between"><div class="sm b">' + cropEmoji(r.id) + ' ' + esc(cropName(r.id)) + '</div>' +
-        '<div class="tiny muted">' + (Math.round(r.lbs*10)/10) + ' lbs' + (r.val ? ' · $' + Math.round(r.val) : '') + '</div></div>' +
+        '<div class="tiny muted">' + Units.weight(r.lbs) + (r.val ? ' · $' + Math.round(r.val) : '') + '</div></div>' +
         '<div class="bar-track" style="margin-top:4px"><div class="bar-fill" style="width:' + Math.round(r.lbs/maxL*100) + '%"></div></div></div>';
     });
     h += '</div>';
@@ -282,24 +298,25 @@ const Recap = {
     }).sort((a,b) => b.per - a.per);
     if(bedRows.length){
       h += '<div class="sec"><h2>Bed productivity</h2></div><div class="card"><table class="mini">' +
-        '<tr><th>Bed</th><th>Yield</th><th>Sq ft</th><th>lbs/sq ft</th></tr>' +
-        bedRows.map(r => '<tr><td class="b">' + esc(r.name) + '</td><td>' + (Math.round(r.lbs*10)/10) + '</td><td>' +
-          Math.round(r.sq) + '</td><td class="b">' + (Math.round(r.per*100)/100) + '</td></tr>').join("") +
-        '</table><div class="tiny muted" style="margin-top:8px">A well-run intensive bed runs about 0.5–1.5 lbs per square foot per season. Use this to decide what to expand.</div></div>';
+        '<tr><th>Bed</th><th>Yield</th><th>' + Units.areaUnit() + '</th><th>Density</th></tr>' +
+        bedRows.map(r => '<tr><td class="b">' + esc(r.name) + '</td><td>' + Units.weightN(r.lbs) + '</td><td>' +
+          Units.areaN(r.sq) + '</td><td class="b">' + Units.density(r.per) + '</td></tr>').join("") +
+        '</table><div class="tiny muted" style="margin-top:8px">A well-run intensive bed runs about ' +
+        Units.density(0.5) + '–' + Units.density(1.5) + ' a season. Use this to decide what to expand.</div></div>';
     }
 
     /* resources */
     h += '<div class="sec"><h2>Resources used</h2></div><div class="card"><div class="grid2">' +
-      '<div class="stat"><span class="n">' + (Math.round(water*10)/10) + '"</span><span class="l">water logged</span></div>' +
+      '<div class="stat"><span class="n">' + Units.waterN(water) + Units.waterMark() + '</span><span class="l">water logged</span></div>' +
       '<div class="stat"><span class="n">' + feeds + '</span><span class="l">feedings</span></div>' +
       '<div class="stat"><span class="n">' + Math.round(mins/60*10)/10 + 'h</span><span class="l">time logged</span></div>' +
       '<div class="stat"><span class="n">' + dx.length + '</span><span class="l">problems diagnosed</span></div>' +
       '</div>';
     if(lbs > 0){
       h += '<table class="mini" style="margin-top:12px">' +
-        '<tr><th>Cost per pound</th><td class="b">$' + (Math.round(spend/lbs*100)/100) + '</td></tr>' +
-        '<tr><th>Value per pound</th><td>$' + (value ? Math.round(value/lbs*100)/100 : "—") + '</td></tr>' +
-        (mins ? '<tr><th>Pounds per hour</th><td>' + (Math.round(lbs/(mins/60)*10)/10) + '</td></tr>' : '') +
+        '<tr><th>Cost per ' + Units.perUnitWord() + '</th><td class="b">$' + (Math.round(spend/Units.weightN(lbs)*100)/100) + '</td></tr>' +
+        '<tr><th>Value per ' + Units.perUnitWord() + '</th><td>$' + (value ? Math.round(value/Units.weightN(lbs)*100)/100 : "—") + '</td></tr>' +
+        (mins ? '<tr><th>' + Units.weightUnit() + ' per hour</th><td>' + (Math.round(Units.weightN(lbs)/(mins/60)*10)/10) + '</td></tr>' : '') +
         '</table>';
     }
     h += '</div>';

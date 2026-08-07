@@ -208,6 +208,16 @@ Assist.system = function(){
         Assist.done.map(d => "· " + d.what).join("\n") + "\n\n"
       : "") +
 
+    /* Tool arguments and results stay canonical — inches and Fahrenheit —
+       because that contract is with the model, not the gardener. What the model
+       WRITES is prose this app cannot convert after the fact, so it is told
+       which system to answer in. */
+    "UNITS — the gardener reads in " + (Units.metric ? "METRIC" : "IMPERIAL") + ":\n" +
+    (Units.metric
+      ? "· Answer in centimetres, metres, kilograms and °C. Convert before you speak.\n" +
+        "· The tools report inches, square feet, pounds and °F. Those are the app's internal units — never quote them back raw.\n"
+      : "· Answer in inches, feet, square feet, pounds and °F, which is what the tools already report.\n") + "\n" +
+
     "GENERAL:\n" +
     "· Use the tools rather than guessing. For anything about what they own, grew, spent or harvested, query their database.\n" +
     "· When asked to plant something in a bed, call plant_crop — it opens the bed with the crop ready to place.\n" +

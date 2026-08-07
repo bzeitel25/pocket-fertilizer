@@ -95,7 +95,9 @@ const REQUIRED = [
   ["const Orient",     "which way a bed faces"],
   ["const Templates",  "saved bed layouts"],
   ["const CalSync",    "calendar export"],
-  ["const Share",      "moving a garden between devices"]
+  ["const Share",      "moving a garden between devices"],
+  ["const Units",      "inches or centimetres"],
+  ["Units.chip",       "the units switch in the plot strip"]
 ];
 const lost = REQUIRED.filter(([marker]) => html.indexOf(marker) < 0);
 if (lost.length && process.argv.indexOf("--force") < 0) {
