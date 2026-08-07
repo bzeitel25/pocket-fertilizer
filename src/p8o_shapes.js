@@ -39,10 +39,12 @@ const Shape = {
 
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Width · <b id="sh-wv">' + Shape.ft(Geom.W(bed)) + '</b></label>' +
-        '<input type="range" id="sh-w" min="12" max="480" step="3" value="' + Geom.W(bed) +
+        '<input type="range" id="sh-w" min="' + Units.outLen(12) + '" max="' + Units.outLen(480) +
+        '" step="' + Units.sizeStep() + '" value="' + Units.outLen(Geom.W(bed)) +
         '" oninput="Shape.size(\'' + bed.id + '\')"></div>' +
       '<div><label class="f">Depth · <b id="sh-hv">' + Shape.ft(Geom.H(bed)) + '</b></label>' +
-        '<input type="range" id="sh-h" min="12" max="480" step="3" value="' + Geom.H(bed) +
+        '<input type="range" id="sh-h" min="' + Units.outLen(12) + '" max="' + Units.outLen(480) +
+        '" step="' + Units.sizeStep() + '" value="' + Units.outLen(Geom.H(bed)) +
         '" oninput="Shape.size(\'' + bed.id + '\')"></div></div>';
     h += '<div class="tiny muted" id="sh-area" style="margin-top:6px">' + Units.area(Geom.areaSqFt(bed)) + ' of growing space</div>';
 
@@ -81,8 +83,9 @@ const Shape = {
   },
 
   size(bedId){
-    const w = clamp(num(($("#sh-w") || {}).value, 48), 12, 480);
-    const h = clamp(num(($("#sh-h") || {}).value, 48), 12, 480);
+    /* the sliders run in display units; the bed is stored in inches */
+    const w = clamp(Units.inLen(num(($("#sh-w") || {}).value, Units.outLen(48))), 12, 480);
+    const h = clamp(Units.inLen(num(($("#sh-h") || {}).value, Units.outLen(48))), 12, 480);
     DB.update("beds", bedId, { w_in: w, h_in: h });
     const bed = DB.find("beds", bedId);
     const wv = $("#sh-wv"); if(wv) wv.textContent = Shape.ft(w);

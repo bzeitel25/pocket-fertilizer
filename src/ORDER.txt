@@ -26,9 +26,12 @@ p8s_select.js
 p8t_bedrecs.js
 p8u_orient.js
 p8v_templates.js
+p8w_groups.js
 p8g_micro.js
 p8h_microui.js
 p9_seeds.js
+p9b_trays.js
+p9c_trayui.js
 p10_doctor.js
 p10b_condsrc.js
 p11_journal.js

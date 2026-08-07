@@ -30,7 +30,8 @@ const Geom = (() => {
     trap:    { n:"Trapezoid",  e:"⏢", d:"Tapered ends, keyhole beds" },
     hex:     { n:"Hexagon",    e:"⬡", d:"Tiles against its neighbours with no waste" },
     ell:     { n:"L-shape",    e:"⌐", d:"Wraps a corner" },
-    poly:    { n:"Draw it",    e:"✎", d:"Trace your own outline, corner by corner" }
+    poly:    { n:"Draw it",    e:"✎", d:"Trace your own outline, corner by corner" },
+    group:   { n:"Pots & planters", e:"⁙", d:"Several separate containers treated as one space" }
   };
 
   /* every preset is a normalised outline, 0..1, y downward */
@@ -87,6 +88,61 @@ const Geom = (() => {
     polyMemo = { src: null, val: null };
   }
 
+  /* ============================================================
+     A BED MADE OF SEVERAL SHAPES
+
+     Plenty of gardens are not one outline. A row of pots along a
+     wall, three half-barrels, a shelf of window boxes — each is its
+     own pocket of soil, and asking someone to create fifteen beds
+     called "Pot 1".."Pot 15" is a filing system, not a garden.
+
+     So a bed may carry `parts`: a list of sub-shapes in inches,
+     each an independent container. Everything that used to ask
+     "is this point in the bed" now asks "is it in ANY part", and
+     everything that measured the bed sums the parts. A normal bed
+     is simply a bed with one part, so there is a single code path
+     rather than two models to keep in agreement.
+
+     Stored as a JSON string, parsed on demand and memoised against
+     the raw string, NEVER written back onto the row — the same
+     hazard polyOf warns about. */
+  let partMemo = { src: null, val: null };
+  function partsOf(b){
+    const raw = b && b.parts;
+    if(!raw) return null;
+    if(Array.isArray(raw)) return raw;
+    if(partMemo.src === raw) return partMemo.val;
+    let val = null;
+    try{ val = JSON.parse(raw); }catch(e){ val = null; }
+    if(!Array.isArray(val) || !val.length) val = null;
+    partMemo = { src: raw, val: val };
+    return val;
+  }
+  function saveParts(bedId, list, wIn, hIn){
+    DB.update("beds", bedId, {
+      parts: JSON.stringify(list), shape: "group",
+      w_in: Math.max(6, Math.round(wIn)), h_in: Math.max(6, Math.round(hIn))
+    });
+    partMemo = { src: null, val: null };
+  }
+  const isGroup = b => (bed(b) || {}).shape === "group" && !!partsOf(bed(b));
+
+  /* one sub-shape as an absolute polygon in inches */
+  function partPoly(p){
+    const x = num(p.x, 0), y = num(p.y, 0);
+    const w = Math.max(1, num(p.w, 12)), h = Math.max(1, num(p.h, 12));
+    const s = p.s || "rect";
+    if(s === "circle" || s === "ellipse"){
+      const out = [];
+      for(let i = 0; i < 40; i++){
+        const t = i / 40 * Math.PI * 2;
+        out.push([x + w/2 + w/2 * Math.cos(t), y + h/2 + h/2 * Math.sin(t)]);
+      }
+      return out;
+    }
+    return outline(s).map(q => [x + q[0] * w, y + q[1] * h]);
+  }
+
   const W = b => Math.max(6, num(bed(b).w_in, 48));
   const H = b => Math.max(6, num(bed(b).h_in, 48));
   const shape = b => bed(b).shape || "rect";
@@ -111,6 +167,15 @@ const Geom = (() => {
     return outline(s).map(p => [p[0] * w, p[1] * h]);
   }
 
+  /* every outline this bed is made of. A normal bed has exactly one. */
+  function parts(b){
+    const bb = bed(b);
+    if(!isGroup(bb)) return [pts(bb)];
+    return partsOf(bb).map(partPoly);
+  }
+  /* the raw sub-shape records, for the editor */
+  function partList(b){ const bb = bed(b); return isGroup(bb) ? partsOf(bb) : null; }
+
   /* ---------- containment ---------- */
   function inPoly(poly, x, y){
     let inside = false;
@@ -134,26 +199,46 @@ const Geom = (() => {
       m = Math.min(m, segDist(x, y, poly[j][0], poly[j][1], poly[i][0], poly[i][1]));
     return m;
   }
-  /* inside, and at least `margin` inches clear of every edge */
+  /* inside ANY part, and at least `margin` inches clear of that part's edges.
+     A pot is a pot: a plant may not straddle the gap between two of them. */
   function inside(b, x, y, margin){
-    const P = pts(b);
-    if(!inPoly(P, x, y)) return false;
-    return !margin || edgeDist(P, x, y) >= margin;
+    return parts(b).some(P => inPoly(P, x, y) && (!margin || edgeDist(P, x, y) >= margin));
   }
-  function centroid(b){
-    const P = pts(b);
+  function polyCentroid(P){
     let a = 0, cx = 0, cy = 0;
     for(let i = 0, j = P.length - 1; i < P.length; j = i++){
       const f = P[j][0]*P[i][1] - P[i][0]*P[j][1];
       a += f; cx += (P[j][0] + P[i][0]) * f; cy += (P[j][1] + P[i][1]) * f;
     }
-    if(Math.abs(a) < 1e-6) return { x: W(b)/2, y: H(b)/2 };
-    return { x: cx / (3*a), y: cy / (3*a) };
+    if(Math.abs(a) < 1e-6) return null;
+    return { x: cx / (3*a), y: cy / (3*a), a: Math.abs(a / 2) };
+  }
+  function centroid(b){
+    /* the biggest part, so "the middle of the bed" is somewhere a plant can
+       actually go rather than the empty air between two pots */
+    let best = null;
+    parts(b).forEach(P => { const c = polyCentroid(P); if(c && (!best || c.a > best.a)) best = c; });
+    return best || { x: W(b)/2, y: H(b)/2 };
+  }
+  /* the part a point belongs to, or the nearest one to fall back into */
+  function nearestPart(b, x, y, margin){
+    const ps = parts(b);
+    let hit = null, best = null, bd = Infinity;
+    ps.forEach(P => {
+      if(inPoly(P, x, y) && (!margin || edgeDist(P, x, y) >= margin)) hit = hit || P;
+      const c = polyCentroid(P); if(!c) return;
+      const d = Math.hypot(c.x - x, c.y - y);
+      if(d < bd){ bd = d; best = P; }
+    });
+    return hit || best || ps[0];
   }
   /* pull a point back inside — walk it toward the centre until it fits */
   function clampInto(b, x, y, margin){
     if(inside(b, x, y, margin)) return { x: x, y: y };
-    const c = centroid(b);
+    /* pull it into the container it was dropped nearest, not toward the bed's
+       overall middle — on a row of pots that middle is usually bare bench */
+    const pc = polyCentroid(nearestPart(b, x, y, margin));
+    const c = pc || centroid(b);
     let lo = 0, hi = 1;
     if(!inside(b, c.x, c.y, margin)){
       /* the bed is too small for this plant at all — centre it and let the
@@ -168,21 +253,25 @@ const Geom = (() => {
     return { x: c.x + (x - c.x) * lo, y: c.y + (y - c.y) * lo, clamped: true };
   }
 
+  /* growing space is the sum of the containers, not the rectangle they sit in */
   function areaSqIn(b){
-    const P = pts(b);
-    let a = 0;
-    for(let i = 0, j = P.length - 1; i < P.length; j = i++)
-      a += P[j][0]*P[i][1] - P[i][0]*P[j][1];
-    return Math.abs(a / 2);
+    return parts(b).reduce((sum, P) => {
+      let a = 0;
+      for(let i = 0, j = P.length - 1; i < P.length; j = i++)
+        a += P[j][0]*P[i][1] - P[i][0]*P[j][1];
+      return sum + Math.abs(a / 2);
+    }, 0);
   }
   const areaSqFt = b => Math.round(areaSqIn(b) / 144 * 10) / 10;
 
   function svgPath(b){
-    const s = shape(b), w = W(b), h = H(b);
+    const s = shape(b);
     if(isRound(s)) return null;                       /* drawn as an <ellipse> */
-    const P = pts(b);
-    let d = "M" + P.map(p => (Math.round(p[0]*10)/10) + " " + (Math.round(p[1]*10)/10)).join("L") + "Z";
-    return d;
+    /* a group is one compound path of disjoint subpaths, so a single element
+       still carries the whole bed and every clip and fill keeps working */
+    return parts(b).map(P =>
+      "M" + P.map(p => (Math.round(p[0]*10)/10) + " " + (Math.round(p[1]*10)/10)).join("L") + "Z"
+    ).join(" ");
   }
 
   /* ============================================================
@@ -344,6 +433,8 @@ const Geom = (() => {
   return {
     SHAPES: SHAPES, SPREAD: SPREAD, HEIGHT: HEIGHT,
     outline: outline, isRound: isRound, bed: bed, savePoly: savePoly, polyOf: polyOf,
+    parts: parts, partList: partList, partsOf: partsOf, saveParts: saveParts,
+    isGroup: isGroup, partPoly: partPoly, nearestPart: nearestPart, polyCentroid: polyCentroid,
     W: W, H: H, shape: shape, pts: pts, svgPath: svgPath,
     inPoly: inPoly, inside: inside, centroid: centroid, clampInto: clampInto,
     edgeDist: edgeDist, segDist: segDist,

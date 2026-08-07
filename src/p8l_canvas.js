@@ -189,7 +189,9 @@ const Canvas = {
 
   bedShapeSVG(bed, attrs){
     const s = Geom.shape(bed), w = Geom.W(bed), h = Geom.H(bed);
-    if(Geom.isRound(s))
+    /* a group is always a compound path, never a single ellipse, even when
+       every container in it happens to be round */
+    if(Geom.isRound(s) && !Geom.isGroup(bed))
       return '<ellipse cx="' + (w/2) + '" cy="' + (h/2) + '" rx="' + (w/2) + '" ry="' + (h/2) + '" ' + attrs + '/>';
     if(s === "round")
       return '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="' +

@@ -59,13 +59,15 @@ p8c_varieties.js  p8e_map.js  p8j_geom.js  p8k_plantart.js
 p8l_canvas.js  p8m_canvasui.js  p8n_canvasdrag.js  p8o_shapes.js
 p8p_habit.js  p8q_zoom.js  p8r_undo.js  p8s_select.js
 p8t_bedrecs.js  p8u_orient.js  p8v_templates.js  p8g_micro.js
-p8h_microui.js  p9_seeds.js  p10_doctor.js  p10b_condsrc.js
+p8w_groups.js  p8h_microui.js  p9_seeds.js  p9b_trays.js
+p9c_trayui.js  p10_doctor.js  p10b_condsrc.js
 p11_journal.js  p8d_maturity.js  p12_library.js  p5d_usercrops.js
 p14_weather.js  p8i_microlog.js  p15_assistant.js  p15b_providers.js
 p15c_assist_rules.js  p15e_microtools.js  p15d_coach.js  p16_sources_ui.js
 p17_tips.js  p18_help.js  p12b_settings.js  p22b_unitsui.js
 p20_calsync.js  p21_share.js  p19_native.js  p13_init.js
 ```
+(the list above is documentation and drifts — `src/ORDER.txt` is what the build reads)
 (`p22_units.js` sits between `p4_db.js` and `p5_plants.js` — it has to load before
 anything that draws a measurement.)
 
@@ -267,6 +269,51 @@ working in inches and never need to know the file exists.
 The switch is a chip in the plot strip on the Garden tab and beside the size line on the bed
 screen, plus a segmented control in Settings. `Units.flip()` re-renders the current tab; that
 is the whole of "swap the app over", because every number on screen is derived.
+
+## Pots, planters and a bed that is several shapes
+
+`beds.parts` is a JSON list of sub-shapes in inches; `shape:"group"` turns it on.
+`p8w_groups.js` is the editor, and the whole of the model is **`Geom.parts(bed)`** — an
+array of outlines, which for an ordinary bed is a one-element array. There is one code
+path, not two.
+
+Everything that used to ask "is this point in the bed" now asks **"is it in ANY part"**:
+
+- `Geom.inside` tests each part separately, so a plant cannot straddle the gap between
+  two pots — the gap is bench, not soil.
+- `Geom.areaSqIn` sums the containers. This matters beyond cosmetics: it is what decides
+  how much fits and what the yield-per-area figures divide by. A row of six 14″ pots is
+  4.3 sq ft of soil inside a 6.5 sq ft footprint.
+- `Geom.centroid` returns the centre of the **largest** part, and `clampInto` walks a
+  dropped plant toward the **nearest** part. Using the bed's overall middle would drop
+  things onto the empty bench between two pots.
+- `Geom.svgPath` emits one compound path with a subpath per container, so a single element
+  still carries the whole bed and every clip, fill and gradient keeps working. `Canvas.bedShapeSVG`
+  must not take its `isRound` shortcut for a group even when every container is round.
+
+`parts` is parsed on demand and memoised against the raw string, **never written back onto
+the row** — the same hazard `polyOf` warns about.
+
+## Seed trays
+
+`p9b_trays.js` (model) and `p9c_trayui.js` (the screen, folded into the Seeds tab behind a
+segmented control). Two real tables, `trays` and `traycells`, rather than a JSON blob,
+because the useful questions are asked across them and the `.sqlite` export should see them.
+
+**`Trays.plan()` derives, never stores.** Sprout window is the crop's own `germ` range from
+the sowing date. Time in the tray is the gap between the crop's own `start.indoor` and
+`start.tp` offsets — and where a crop has no indoor window the answer is `null` and the UI
+says so rather than inventing six weeks. Plant-out is never earlier than `lastFrost + start.tp`.
+Everything being derived means a tray re-reads correctly if the frost dates are later corrected.
+
+**The sowing date is the load-bearing part.** `Trays.plantOut` creates a planting carrying the
+date the seed went into the TRAY, with today only as `transplant_on`. Dating it today would
+teach `Maturity` that every transplanted crop finishes six weeks faster than it does, and
+those are the figures the whole app defers to.
+
+A tray is also the only honest measurement of what a packet is really doing, so germination
+observed across its cells is offered back to the packet's `germ_rate` — as a confirm, never
+silently, because she may have let that tray dry out and knows it.
 
 ## Moving a garden between devices
 
@@ -514,6 +561,26 @@ arrive one tap at a time, where the stamp did most of the work; an imported gard
 several hundred inside the same millisecond, which left six random base36 characters
 carrying it alone — and `Math.random().toString(36)` is allowed to come back shorter than
 that. The counter makes two ids from one session incapable of colliding at all.
+
+## The camera
+
+`Cam.rear()` defaults to a 1280×1280 `ideal`, and **a square ideal is a request no phone
+sensor can satisfy** — browsers meet it by cropping, which arrives looking like the camera
+zoomed itself in. Fine for a seed packet held close; wrong for a skyline, where the crop
+silently removes the top of the obstruction being measured. Pass `{ native: true }` for the
+sensor's own framing.
+
+A live view must fit the phone with its shutter visible without scrolling. `.camstage` is a
+fixed slice of the screen (`height:min(50vh,72vw)`) and the video is `object-fit: contain`,
+not `cover` — the survey measures the whole frame. Pinch applies a digital zoom that
+**`MicroUI.snap` crops to match**, so what is framed is what is recorded.
+
+`Vision.json` takes a `maxTokens` and a `what`. The micro-climate survey asks for a nested
+object with an obstruction array and needs ~2600; on the old 900 default a thinking model
+spent the entire budget reasoning and returned a candidate **with no parts at all**, which
+surfaced to the gardener mid-skyline-survey as "Could not make sense of the packet. Try a
+straighter, better-lit shot of the front." An empty answer with `finishReason: MAX_TOKENS`
+is now its own error and says what it actually is.
 
 ## Things that will bite you
 

@@ -42,7 +42,7 @@ const w = dom.window;
 const G = w.eval("({DB,CROPS,CONDITIONS,Season,Recommend,Garden,Seeds,Cal,Doctor,Journal,Recap,Library,Settings,SqlView,APP,go,iso,today,pairRating,companionsFor,closeSheet,Photos,Vault,Weather,Assist,AI_TOOLS,SOURCES,COND_SRC,VERIFIED,Sources,Updater,BUILD,cropSource,FIELD_CONFIDENCE,CLAIM_NOTES,Varieties,VARIETY_REF,PROVIDERS,Maturity,INFO,TIPS,Tips,Notify,Coach,GUIDE,Help,Onboard,Live,Gmap,FEATURES,Native,Solar,Micro,MicroUI,MicroLog,SECTORS,SECTOR_AZ," +
   "Geom,PlantArt,Canvas,CanvasDrag,Shape,Habit,HABIT_SRC,addDays,diffDays,crop,cropName,FAMILY," +
   "GARDEN_PLANTS,GARDEN_SRC,PLANT_ROLE,UserCrops,SCHEMA,companionsFor,CROP_ABSENT,CROP_ALIAS," +
-  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,Share,Units,escU,EV,Ask,Vision,firstJsonObject})");
+  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,Share,Units,escU,Trays,TrayUI,Groups,MicroUI,EV,Ask,Vision,firstJsonObject})");
 for(const k of Object.keys(G)) w[k] = G[k];
 const origErr = console.error;
 const JSDOM_NOISE = /^Not implemented:/;
@@ -2191,7 +2191,7 @@ check("the vault carries schema columns and nothing else", () => {
   const dump = JSON.parse(w.DB.exportJSON());
   const SCHEMA_KEYS = {
     beds:["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil",
-          "irrigation","notes","mx","my","rot","created","shape","w_in","h_in","poly","grid_on","snap_in","north_deg"],
+          "irrigation","notes","mx","my","rot","created","shape","w_in","h_in","poly","grid_on","snap_in","north_deg","parts"],
     plantings:["id","bed_id","x","y","w","h","span_mode","crop_id","variety","variety_id","seed_id",
                "qty","status","sown_on","transplant_on","harvest_from","harvest_to","removed_on",
                "notes","created","px","py","rr","rc","rot","sv"]
@@ -3176,6 +3176,168 @@ check("a harvest keeps the unit it was actually recorded in", () => {
   return back.unit === "kg" && back.weight === "2" && Math.abs(w.Journal.lbs(back) - 4.41) < 0.02; });
 w.DB.set("units", uWas ? "metric" : "imperial");
 w.APP.bedId = null;
+
+/* ============================================================
+   SEED TRAYS
+
+   The load-bearing claim is the sowing date: a seedling planted
+   out in May from a February tray is a February sowing, and dating
+   it May would teach the app that everything matures six weeks
+   faster than it does.
+   ============================================================ */
+const trBed = w.DB.insert("beds", { name:"Tray target", shape:"rect", w_in:96, h_in:96,
+  cell_in:12, cols:8, rows:8, sun_hours:8 });
+const trSeed = w.DB.insert("seeds", { crop_id:"tomato", name:"Tomato", variety:"Sungold",
+  brand:"X", packed_year:"2025", germ_rate:"90", qty:"40", unit:"seeds" });
+const trTray = w.Trays.create({ name:"Feb tray", cols:6, rows:4, sown_on:"2026-02-15" });
+
+check("a tray is built with a row per cell, not a blob on the tray", () =>
+  w.Trays.cells(trTray.id).length === 24 &&
+  w.DB.where("traycells", c => c.tray_id === trTray.id).length === 24);
+check("sowing a cell carries the packet, the variety and the date", () => {
+  const c = w.Trays.cells(trTray.id)[0];
+  w.Trays.sow(c.id, { crop_id:"tomato", variety:"Sungold", seed_id: trSeed.id, seeds_sown: 2 });
+  const r = w.DB.find("traycells", c.id);
+  return r.crop_id === "tomato" && r.seed_id === trSeed.id && r.sown_on === "2026-02-15"; });
+check("the sprout window comes from the crop's own germination range", () => {
+  const p = w.Trays.plan(w.Trays.filled(trTray.id)[0], trTray), c = w.crop("tomato");
+  return w.iso(p.sproutFrom) === w.iso(w.addDays(w.parseISO("2026-02-15"), c.germ[0])) &&
+         w.iso(p.sproutTo) === w.iso(w.addDays(w.parseISO("2026-02-15"), c.germ[1])); });
+check("plant-out is never earlier than the crop's own transplant window", () => {
+  const p = w.Trays.plan(w.Trays.filled(trTray.id)[0], trTray);
+  return p.out >= w.addDays(w.Season.lastFrost(), Math.round(w.crop("tomato").start.tp * 7)); });
+check("hardening off is a week before that", () => {
+  const p = w.Trays.plan(w.Trays.filled(trTray.id)[0], trTray);
+  return w.diffDays(p.harden, p.out) === 7; });
+check("a crop with no indoor window admits it rather than inventing six weeks", () => {
+  const c = w.Trays.cells(trTray.id)[1];
+  w.Trays.sow(c.id, { crop_id:"carrot", seeds_sown: 3 });
+  return w.Trays.plan(w.DB.find("traycells", c.id), trTray).weeksInTray === null; });
+check("the tray puts sprout, harden and plant-out dates on the calendar", () => {
+  w.Cal.rebuild();
+  const ev = w.DB.all("events").filter(e => /^tray:/.test(e.auto || ""));
+  return ev.some(e => /germ/.test(e.auto)) && ev.some(e => /harden/.test(e.auto)) && ev.some(e => /out/.test(e.auto)); });
+check("germination is measured in seeds, not in cells", () => {
+  const cs = w.Trays.cells(trTray.id);
+  w.Trays.sow(cs[2].id, { crop_id:"tomato", seed_id: trSeed.id, seeds_sown: 2 });
+  w.Trays.mark(cs[0].id, true); w.Trays.mark(cs[2].id, false);
+  const r = w.Trays.rate(w.Trays.filled(trTray.id));
+  return r.sown === 4 && r.up === 2 && r.pct === 50; });
+let trOut = null;
+check("planting out keeps the ORIGINAL sowing date and records today as the transplant", () => {
+  trOut = w.Trays.plantOut(w.Trays.filled(trTray.id)[0].id, trBed.id);
+  return trOut.planting.sown_on === "2026-02-15" && trOut.planting.transplant_on === w.iso(w.today()); });
+check("the seedling arrives as a real planting inside the bed, carrying its variety", () => {
+  const p = trOut.planting;
+  return p.crop_id === "tomato" && p.variety === "Sungold" && p.seed_id === trSeed.id &&
+    w.Geom.inside(w.Geom.bed(w.DB.find("beds", trBed.id)), num0(p.px), num0(p.py), 0); });
+check("the cell remembers where it went, and drops off the calendar", () => {
+  w.Cal.rebuild();
+  const c = w.Trays.filled(trTray.id).find(x => x.out_on);
+  return c.planting_id === trOut.planting.id && c.bed_id === trBed.id &&
+    !w.DB.all("events").some(e => e.auto === "tray:out:" + c.id); });
+check("shrinking a tray refuses to throw away a cell that was sown", () => {
+  const before = w.Trays.cells(trTray.id).length;
+  w.Trays.resize(trTray.id, 1, 1);
+  return w.Trays.cells(trTray.id).length === before; });
+check("the tray screen renders, and the packet list still works beside it", () => {
+  w.go("seeds"); w.TrayUI.setView("trays"); w.Seeds.render();
+  const trays = w.document.getElementById("s-seeds").innerHTML;
+  w.TrayUI.setView("packets"); w.Seeds.render();
+  const packets = w.document.getElementById("s-seeds").innerHTML;
+  return trays.includes("Feb tray") && packets.includes("Packets") && packets.includes("Tomato"); });
+w.TrayUI.view = "packets"; w.TrayUI.open = null;
+
+/* ============================================================
+   POTS, PLANTERS AND WINDOW BOXES
+
+   The point of a group is that the gaps are not soil. If
+   containment, area or the drop target ever forget that, a row of
+   pots silently becomes one long trough.
+   ============================================================ */
+const gpBed = w.DB.insert("beds", { name:"Pot row", shape:"rect", w_in:48, h_in:48,
+  cell_in:12, cols:4, rows:4, sun_hours:8 });
+check("an ordinary bed is one part and is not a group", () => {
+  const b = w.Geom.bed(w.DB.find("beds", gpBed.id));
+  return w.Geom.parts(b).length === 1 && w.Geom.isGroup(b) === false; });
+check("four pots in a row become one bed made of four containers", () => {
+  const r = w.Groups.apply(gpBed.id, { s:"circle", w:14, h:14, gap:4, cols:4, rows:1 });
+  const b = w.Geom.bed(w.DB.find("beds", gpBed.id));
+  return r.count === 4 && w.Geom.isGroup(b) && w.Geom.parts(b).length === 4 &&
+    w.Geom.W(b) === 6 + 4*14 + 3*4; });
+check("a point inside a pot is in the bed", () =>
+  w.Geom.inside(w.Geom.bed(w.DB.find("beds", gpBed.id)), 10, 10, 0) === true);
+check("a point in the GAP between two pots is not — that is bench, not soil", () =>
+  w.Geom.inside(w.Geom.bed(w.DB.find("beds", gpBed.id)), 3 + 14 + 2, 10, 0) === false);
+check("growing space is the sum of the pots, well under their bounding box", () => {
+  const b = w.Geom.bed(w.DB.find("beds", gpBed.id));
+  const pots = 4 * Math.PI * 49 / 144, box = w.Geom.W(b) * w.Geom.H(b) / 144;
+  const a = w.Geom.areaSqFt(b);
+  return Math.abs(a - pots) < 0.3 && a < box * 0.75; });
+check("a plant dropped in a gap is pulled into the nearest pot", () => {
+  const b = w.Geom.bed(w.DB.find("beds", gpBed.id));
+  const fit = w.Geom.clampInto(b, 3 + 14 + 2, 10, 1);
+  return w.Geom.inside(b, fit.x, fit.y, 1) === true; });
+check("the outline is one compound path with a subpath per container", () => {
+  const d = w.Geom.svgPath(w.Geom.bed(w.DB.find("beds", gpBed.id)));
+  return (d.match(/M/g) || []).length === 4; });
+check("the canvas draws a round group as paths, never as one ellipse", () => {
+  const svg = w.Canvas.svg(w.Geom.bed(w.DB.find("beds", gpBed.id)), { interactive:false });
+  return svg.indexOf("<path") >= 0 && svg.indexOf("<ellipse") < 0; });
+check("planting into a group lands inside a container", () => {
+  const b = w.Geom.bed(w.DB.find("beds", gpBed.id));
+  const p = w.Garden.placeAt(b, 10, 10, "lettuce");
+  return !!p && w.Geom.inside(b, num0(p.px), num0(p.py), 0); });
+check("window boxes stack as rows rather than a line", () => {
+  const b2 = w.DB.insert("beds", { name:"Boxes", shape:"rect", w_in:48, h_in:48, cell_in:12, cols:4, rows:4, sun_hours:6 });
+  const r = w.Groups.apply(b2.id, { s:"rect", w:30, h:8, gap:4, cols:1, rows:3 });
+  const bb = w.Geom.bed(w.DB.find("beds", b2.id));
+  return r.count === 3 && w.Geom.parts(bb).length === 3 && w.Geom.H(bb) > w.Geom.W(bb); });
+check("a group survives the move to another device as the same arrangement", () => {
+  const f = w.Share.collect({ plots: [], seeds:false, history:false, photos:false });
+  w.Share.apply(JSON.parse(w.Share.json(f)));
+  const copy = w.DB.all("beds").filter(x => x.name === "Pot row").pop();
+  const cb = w.Geom.bed(copy);
+  return w.Geom.isGroup(cb) && w.Geom.parts(cb).length === 4 &&
+    Math.abs(w.Geom.areaSqFt(cb) - w.Geom.areaSqFt(w.Geom.bed(w.DB.find("beds", gpBed.id)))) < 0.05; });
+check("choosing a solid shape again clears the containers behind it", () => {
+  const b3 = w.DB.insert("beds", { name:"Temp group", shape:"rect", w_in:48, h_in:48, cell_in:12, cols:4, rows:4, sun_hours:8 });
+  w.Groups.apply(b3.id, { s:"circle", w:14, h:14, gap:4, cols:3, rows:1 });
+  w.Shape.pick(b3.id, "rect");
+  const bb = w.Geom.bed(w.DB.find("beds", b3.id));
+  return !w.Geom.isGroup(bb) && w.Geom.parts(bb).length === 1; });
+check("the editor previews the arrangement before anything is saved", () => {
+  w.Groups.open(gpBed.id);
+  const h = w.document.getElementById("sheet-body").innerHTML || "";
+  w.closeSheet();
+  return h.indexOf("<svg") >= 0 && /container/.test(h) && /Groups.save/.test(h); });
+check("watering and recommendations still answer for a group", () => {
+  const r = w.Recommend.water(gpBed.id, null);
+  return !!r && isFinite(num0(r.need)); });
+
+/* --- the camera has to fit on the phone it is held in --- */
+check("the live view is capped to a slice of the screen, so the shutter stays visible", () =>
+  /\.camstage\{[^}]*height:min\(/.test(w.document.documentElement.innerHTML));
+check("the survey shows the whole frame rather than cropping it to fill", () =>
+  /\.camstage video\{[^}]*object-fit:contain/.test(w.document.documentElement.innerHTML));
+check("the survey asks for the sensor's own framing, not a square crop", () =>
+  w.document.documentElement.innerHTML.indexOf("Cam.rear({ native: true })") >= 0);
+check("pinch zoom is bounded and the capture crops to match the preview", () => {
+  w.MicroUI.zoom = 1; w.MicroUI.setZoom(99);
+  const hi = w.MicroUI.zoom; w.MicroUI.setZoom(0.1);
+  const lo = w.MicroUI.zoom; w.MicroUI.zoom = 1;
+  return hi === w.MicroUI.MAXZOOM && lo === 1 &&
+    w.document.documentElement.innerHTML.indexOf("drawImage(v, sx, sy, sw, sh") >= 0; });
+check("a model that runs out of room is not reported as a bad photograph", () =>
+  w.Vision.explain(new Error("truncated")).indexOf("ran out of room") >= 0 &&
+  w.Vision.explain(new Error("no-json-survey")).indexOf("packet") < 0);
+
+/* --- sliders are draggable in whichever system is on --- */
+check("the size sliders step in centimetres when metric, and finer than before", () => {
+  w.DB.set("units", "metric");
+  const rad = w.Units.radiusStep(), size = w.Units.sizeStep();
+  w.DB.set("units", "imperial");
+  return rad === "1" && size === "5" && w.Units.radiusStep() === "0.5" && w.Units.sizeStep() === "3"; });
 
 /* --- the toolbar carries what it claims to --- */
 check("the snap toggle is on the bed toolbar, not buried in the shape sheet", () => {

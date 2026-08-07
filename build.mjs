@@ -97,7 +97,10 @@ const REQUIRED = [
   ["const CalSync",    "calendar export"],
   ["const Share",      "moving a garden between devices"],
   ["const Units",      "inches or centimetres"],
-  ["Units.chip",       "the units switch in the plot strip"]
+  ["Units.chip",       "the units switch in the plot strip"],
+  ["const Trays",      "seed trays"],
+  ["const TrayUI",     "the tray screen"],
+  ["const Groups",     "pots, planters and window boxes"]
 ];
 const lost = REQUIRED.filter(([marker]) => html.indexOf(marker) < 0);
 if (lost.length && process.argv.indexOf("--force") < 0) {

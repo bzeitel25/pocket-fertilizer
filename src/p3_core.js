@@ -225,9 +225,19 @@ const Blobs = (() => {
 const Cam = {
   supported(){ return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); },
 
+  /* `native:true` asks for the sensor's own framing.
+
+     The default here requests a 1280x1280 ideal, and a square ideal is a
+     request the hardware cannot satisfy — browsers meet it by cropping the
+     sensor, which arrives looking like the camera zoomed itself in. Fine for
+     a seed packet held close; wrong for a skyline, where the crop silently
+     removes the top of the very obstruction being measured. */
   async rear(extra){
     if(!Cam.supported()) throw new Error("no-camera");
-    const base = Object.assign({ width:{ ideal:1280 }, height:{ ideal:1280 } }, extra || {});
+    const opts = Object.assign({}, extra || {});
+    const native = !!opts.native; delete opts.native;
+    const base = native ? opts
+      : Object.assign({ width:{ ideal:1280 }, height:{ ideal:1280 } }, opts);
     const tries = [
       Object.assign({ facingMode:{ exact:"environment" } }, base),
       Object.assign({ facingMode:{ ideal:"environment" } }, base)

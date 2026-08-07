@@ -16,7 +16,7 @@ const SCHEMA = {
      gardener drew the bed north-up into an actual answer. 0 is north-up, so
      every bed made before it existed keeps behaving as it did. */
   beds:       ["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil","irrigation","notes","mx","my","rot","created",
-               "shape","w_in","h_in","poly","grid_on","snap_in","north_deg"],
+               "shape","w_in","h_in","poly","grid_on","snap_in","north_deg","parts"],
   /* px,py are the plant's centre in inches from the bed's top-left. rr is the
      root radius it needs to itself, rc the spread of its mature foliage; the
      two are drawn separately because overlapping leaves are fine and
@@ -35,6 +35,14 @@ const SCHEMA = {
   varieties:  ["id","crop_id","name","dtm","habit","resistance","spacing_in","notes","source","created"],
   maturity:   ["id","crop_id","variety","days","sown_on","harvested_on","planting_id","bed_id","note","created"],
   seeds:      ["id","crop_id","name","variety","brand","lot","qty","unit","packed_year","exp_date","germ_rate","cost","photo_id","source","notes","created"],
+  /* a seed tray, and one row per cell in it. Two real tables rather than a
+     JSON blob on the tray, because the whole point is asking questions across
+     them — what is still waiting to sprout, what is overdue to go out — and
+     because the .sqlite export and the SQL console should see them like
+     anything else. `cells` is the count; the grid is only how it is drawn. */
+  trays:      ["id","name","cols","rows","sown_on","location","medium","heat_mat","notes","status","created"],
+  traycells:  ["id","tray_id","idx","crop_id","variety","variety_id","seed_id","seeds_sown",
+               "sown_on","sprouted_on","sprouted","potted_on","out_on","planting_id","bed_id","notes","created"],
   events:     ["id","date","type","title","crop_id","seed_id","bed_id","planting_id","notes","done","auto","created"],
   journal:    ["id","date","type","bed_id","planting_id","crop_id","amount","unit","cost","minutes","product","notes","photo_id","created"],
   harvests:   ["id","date","planting_id","bed_id","crop_id","weight","unit","count","value","notes","created"],

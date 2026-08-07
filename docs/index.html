@@ -279,7 +279,20 @@ html[data-theme="dark"] .note.d{color:#f0a6a0}
 .empty{text-align:center;padding:32px 16px;color:var(--text-2)}
 .empty .e{font-size:2.6rem;opacity:.5;display:block;margin-bottom:8px}
 .photo{width:100%;border-radius:var(--radius);display:block;background:var(--surface-2)}
-video#camfeed{width:100%;border-radius:var(--radius);background:#000;display:block;aspect-ratio:3/4;object-fit:cover}
+/* A live camera has to fit on the phone with its shutter button visible without
+   scrolling — the sheet is capped at 92vh and the stage takes a fixed slice of it,
+   so the controls under it are always reachable. object-fit is CONTAIN, not cover:
+   the skyline survey measures the whole frame, and cropping to fill would both
+   look like an unasked-for zoom and quietly falsify the horizon angles. */
+.camstage{position:relative;background:#000;border-radius:var(--radius);overflow:hidden;
+  height:min(50vh,72vw);display:flex;align-items:center;justify-content:center;touch-action:none}
+.camstage video{width:100%;height:100%;object-fit:contain;display:block;transform-origin:50% 50%}
+.camstage .ztag{position:absolute;right:8px;top:8px;background:rgba(0,0,0,.55);color:#fff;
+  padding:2px 9px;border-radius:999px;font-size:.72rem;font-weight:700;pointer-events:none}
+.camstage .chint{position:absolute;left:0;right:0;bottom:6px;text-align:center;color:#fff;
+  font-size:.68rem;opacity:.8;pointer-events:none;text-shadow:0 1px 3px #000}
+video#camfeed{width:100%;border-radius:var(--radius);background:#000;display:block;
+  aspect-ratio:3/4;object-fit:cover;max-height:52vh}
 .spinner{width:18px;height:18px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--green-600);animation:spin .7s linear infinite;display:inline-block;vertical-align:-3px}
 @keyframes spin{to{transform:rotate(360deg)}}
 /* a field the app filled in from a photo — visibly the app's guess, still fully editable */
@@ -618,9 +631,19 @@ const Blobs = (() => {
 const Cam = {
   supported(){ return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); },
 
+  /* `native:true` asks for the sensor's own framing.
+
+     The default here requests a 1280x1280 ideal, and a square ideal is a
+     request the hardware cannot satisfy — browsers meet it by cropping the
+     sensor, which arrives looking like the camera zoomed itself in. Fine for
+     a seed packet held close; wrong for a skyline, where the crop silently
+     removes the top of the very obstruction being measured. */
   async rear(extra){
     if(!Cam.supported()) throw new Error("no-camera");
-    const base = Object.assign({ width:{ ideal:1280 }, height:{ ideal:1280 } }, extra || {});
+    const opts = Object.assign({}, extra || {});
+    const native = !!opts.native; delete opts.native;
+    const base = native ? opts
+      : Object.assign({ width:{ ideal:1280 }, height:{ ideal:1280 } }, opts);
     const tries = [
       Object.assign({ facingMode:{ exact:"environment" } }, base),
       Object.assign({ facingMode:{ ideal:"environment" } }, base)
@@ -669,7 +692,7 @@ const SCHEMA = {
      gardener drew the bed north-up into an actual answer. 0 is north-up, so
      every bed made before it existed keeps behaving as it did. */
   beds:       ["id","plot_id","name","cols","rows","cell_in","sun_hours","sun_exposure","soil","irrigation","notes","mx","my","rot","created",
-               "shape","w_in","h_in","poly","grid_on","snap_in","north_deg"],
+               "shape","w_in","h_in","poly","grid_on","snap_in","north_deg","parts"],
   /* px,py are the plant's centre in inches from the bed's top-left. rr is the
      root radius it needs to itself, rc the spread of its mature foliage; the
      two are drawn separately because overlapping leaves are fine and
@@ -688,6 +711,14 @@ const SCHEMA = {
   varieties:  ["id","crop_id","name","dtm","habit","resistance","spacing_in","notes","source","created"],
   maturity:   ["id","crop_id","variety","days","sown_on","harvested_on","planting_id","bed_id","note","created"],
   seeds:      ["id","crop_id","name","variety","brand","lot","qty","unit","packed_year","exp_date","germ_rate","cost","photo_id","source","notes","created"],
+  /* a seed tray, and one row per cell in it. Two real tables rather than a
+     JSON blob on the tray, because the whole point is asking questions across
+     them — what is still waiting to sprout, what is overdue to go out — and
+     because the .sqlite export and the SQL console should see them like
+     anything else. `cells` is the count; the grid is only how it is drawn. */
+  trays:      ["id","name","cols","rows","sown_on","location","medium","heat_mat","notes","status","created"],
+  traycells:  ["id","tray_id","idx","crop_id","variety","variety_id","seed_id","seeds_sown",
+               "sown_on","sprouted_on","sprouted","potted_on","out_on","planting_id","bed_id","notes","created"],
   events:     ["id","date","type","title","crop_id","seed_id","bed_id","planting_id","notes","done","auto","created"],
   journal:    ["id","date","type","bed_id","planting_id","crop_id","amount","unit","cost","minutes","product","notes","photo_id","created"],
   harvests:   ["id","date","planting_id","bed_id","crop_id","weight","unit","count","value","notes","created"],
@@ -1140,6 +1171,12 @@ const Units = (() => {
     /* a step size that makes sense for the unit on show */
     lenStep(){ return api.metric ? "0.5" : "0.25"; },
     bigStep(){ return api.metric ? "1" : "0.5"; },
+    /* Slider granularity. Metric gets whole centimetres, which is FINER than
+       the half inch it replaced (1cm vs 1.27cm) as well as being a number the
+       gardener can actually aim at. Bed sizing was stepping 3 inches; 5cm is
+       the nearest round equivalent and again slightly finer. */
+    radiusStep(){ return api.metric ? "1" : "0.5"; },
+    sizeStep(){ return api.metric ? "5" : "3"; },
     waterStep(){ return api.metric ? "0.5" : "0.25"; },
     weightStep(){ return api.metric ? "0.1" : "0.1"; },
 
@@ -4449,7 +4486,8 @@ const Geom = (() => {
     trap:    { n:"Trapezoid",  e:"⏢", d:"Tapered ends, keyhole beds" },
     hex:     { n:"Hexagon",    e:"⬡", d:"Tiles against its neighbours with no waste" },
     ell:     { n:"L-shape",    e:"⌐", d:"Wraps a corner" },
-    poly:    { n:"Draw it",    e:"✎", d:"Trace your own outline, corner by corner" }
+    poly:    { n:"Draw it",    e:"✎", d:"Trace your own outline, corner by corner" },
+    group:   { n:"Pots & planters", e:"⁙", d:"Several separate containers treated as one space" }
   };
 
   /* every preset is a normalised outline, 0..1, y downward */
@@ -4506,6 +4544,61 @@ const Geom = (() => {
     polyMemo = { src: null, val: null };
   }
 
+  /* ============================================================
+     A BED MADE OF SEVERAL SHAPES
+
+     Plenty of gardens are not one outline. A row of pots along a
+     wall, three half-barrels, a shelf of window boxes — each is its
+     own pocket of soil, and asking someone to create fifteen beds
+     called "Pot 1".."Pot 15" is a filing system, not a garden.
+
+     So a bed may carry `parts`: a list of sub-shapes in inches,
+     each an independent container. Everything that used to ask
+     "is this point in the bed" now asks "is it in ANY part", and
+     everything that measured the bed sums the parts. A normal bed
+     is simply a bed with one part, so there is a single code path
+     rather than two models to keep in agreement.
+
+     Stored as a JSON string, parsed on demand and memoised against
+     the raw string, NEVER written back onto the row — the same
+     hazard polyOf warns about. */
+  let partMemo = { src: null, val: null };
+  function partsOf(b){
+    const raw = b && b.parts;
+    if(!raw) return null;
+    if(Array.isArray(raw)) return raw;
+    if(partMemo.src === raw) return partMemo.val;
+    let val = null;
+    try{ val = JSON.parse(raw); }catch(e){ val = null; }
+    if(!Array.isArray(val) || !val.length) val = null;
+    partMemo = { src: raw, val: val };
+    return val;
+  }
+  function saveParts(bedId, list, wIn, hIn){
+    DB.update("beds", bedId, {
+      parts: JSON.stringify(list), shape: "group",
+      w_in: Math.max(6, Math.round(wIn)), h_in: Math.max(6, Math.round(hIn))
+    });
+    partMemo = { src: null, val: null };
+  }
+  const isGroup = b => (bed(b) || {}).shape === "group" && !!partsOf(bed(b));
+
+  /* one sub-shape as an absolute polygon in inches */
+  function partPoly(p){
+    const x = num(p.x, 0), y = num(p.y, 0);
+    const w = Math.max(1, num(p.w, 12)), h = Math.max(1, num(p.h, 12));
+    const s = p.s || "rect";
+    if(s === "circle" || s === "ellipse"){
+      const out = [];
+      for(let i = 0; i < 40; i++){
+        const t = i / 40 * Math.PI * 2;
+        out.push([x + w/2 + w/2 * Math.cos(t), y + h/2 + h/2 * Math.sin(t)]);
+      }
+      return out;
+    }
+    return outline(s).map(q => [x + q[0] * w, y + q[1] * h]);
+  }
+
   const W = b => Math.max(6, num(bed(b).w_in, 48));
   const H = b => Math.max(6, num(bed(b).h_in, 48));
   const shape = b => bed(b).shape || "rect";
@@ -4530,6 +4623,15 @@ const Geom = (() => {
     return outline(s).map(p => [p[0] * w, p[1] * h]);
   }
 
+  /* every outline this bed is made of. A normal bed has exactly one. */
+  function parts(b){
+    const bb = bed(b);
+    if(!isGroup(bb)) return [pts(bb)];
+    return partsOf(bb).map(partPoly);
+  }
+  /* the raw sub-shape records, for the editor */
+  function partList(b){ const bb = bed(b); return isGroup(bb) ? partsOf(bb) : null; }
+
   /* ---------- containment ---------- */
   function inPoly(poly, x, y){
     let inside = false;
@@ -4553,26 +4655,46 @@ const Geom = (() => {
       m = Math.min(m, segDist(x, y, poly[j][0], poly[j][1], poly[i][0], poly[i][1]));
     return m;
   }
-  /* inside, and at least `margin` inches clear of every edge */
+  /* inside ANY part, and at least `margin` inches clear of that part's edges.
+     A pot is a pot: a plant may not straddle the gap between two of them. */
   function inside(b, x, y, margin){
-    const P = pts(b);
-    if(!inPoly(P, x, y)) return false;
-    return !margin || edgeDist(P, x, y) >= margin;
+    return parts(b).some(P => inPoly(P, x, y) && (!margin || edgeDist(P, x, y) >= margin));
   }
-  function centroid(b){
-    const P = pts(b);
+  function polyCentroid(P){
     let a = 0, cx = 0, cy = 0;
     for(let i = 0, j = P.length - 1; i < P.length; j = i++){
       const f = P[j][0]*P[i][1] - P[i][0]*P[j][1];
       a += f; cx += (P[j][0] + P[i][0]) * f; cy += (P[j][1] + P[i][1]) * f;
     }
-    if(Math.abs(a) < 1e-6) return { x: W(b)/2, y: H(b)/2 };
-    return { x: cx / (3*a), y: cy / (3*a) };
+    if(Math.abs(a) < 1e-6) return null;
+    return { x: cx / (3*a), y: cy / (3*a), a: Math.abs(a / 2) };
+  }
+  function centroid(b){
+    /* the biggest part, so "the middle of the bed" is somewhere a plant can
+       actually go rather than the empty air between two pots */
+    let best = null;
+    parts(b).forEach(P => { const c = polyCentroid(P); if(c && (!best || c.a > best.a)) best = c; });
+    return best || { x: W(b)/2, y: H(b)/2 };
+  }
+  /* the part a point belongs to, or the nearest one to fall back into */
+  function nearestPart(b, x, y, margin){
+    const ps = parts(b);
+    let hit = null, best = null, bd = Infinity;
+    ps.forEach(P => {
+      if(inPoly(P, x, y) && (!margin || edgeDist(P, x, y) >= margin)) hit = hit || P;
+      const c = polyCentroid(P); if(!c) return;
+      const d = Math.hypot(c.x - x, c.y - y);
+      if(d < bd){ bd = d; best = P; }
+    });
+    return hit || best || ps[0];
   }
   /* pull a point back inside — walk it toward the centre until it fits */
   function clampInto(b, x, y, margin){
     if(inside(b, x, y, margin)) return { x: x, y: y };
-    const c = centroid(b);
+    /* pull it into the container it was dropped nearest, not toward the bed's
+       overall middle — on a row of pots that middle is usually bare bench */
+    const pc = polyCentroid(nearestPart(b, x, y, margin));
+    const c = pc || centroid(b);
     let lo = 0, hi = 1;
     if(!inside(b, c.x, c.y, margin)){
       /* the bed is too small for this plant at all — centre it and let the
@@ -4587,21 +4709,25 @@ const Geom = (() => {
     return { x: c.x + (x - c.x) * lo, y: c.y + (y - c.y) * lo, clamped: true };
   }
 
+  /* growing space is the sum of the containers, not the rectangle they sit in */
   function areaSqIn(b){
-    const P = pts(b);
-    let a = 0;
-    for(let i = 0, j = P.length - 1; i < P.length; j = i++)
-      a += P[j][0]*P[i][1] - P[i][0]*P[j][1];
-    return Math.abs(a / 2);
+    return parts(b).reduce((sum, P) => {
+      let a = 0;
+      for(let i = 0, j = P.length - 1; i < P.length; j = i++)
+        a += P[j][0]*P[i][1] - P[i][0]*P[j][1];
+      return sum + Math.abs(a / 2);
+    }, 0);
   }
   const areaSqFt = b => Math.round(areaSqIn(b) / 144 * 10) / 10;
 
   function svgPath(b){
-    const s = shape(b), w = W(b), h = H(b);
+    const s = shape(b);
     if(isRound(s)) return null;                       /* drawn as an <ellipse> */
-    const P = pts(b);
-    let d = "M" + P.map(p => (Math.round(p[0]*10)/10) + " " + (Math.round(p[1]*10)/10)).join("L") + "Z";
-    return d;
+    /* a group is one compound path of disjoint subpaths, so a single element
+       still carries the whole bed and every clip and fill keeps working */
+    return parts(b).map(P =>
+      "M" + P.map(p => (Math.round(p[0]*10)/10) + " " + (Math.round(p[1]*10)/10)).join("L") + "Z"
+    ).join(" ");
   }
 
   /* ============================================================
@@ -4763,6 +4889,8 @@ const Geom = (() => {
   return {
     SHAPES: SHAPES, SPREAD: SPREAD, HEIGHT: HEIGHT,
     outline: outline, isRound: isRound, bed: bed, savePoly: savePoly, polyOf: polyOf,
+    parts: parts, partList: partList, partsOf: partsOf, saveParts: saveParts,
+    isGroup: isGroup, partPoly: partPoly, nearestPart: nearestPart, polyCentroid: polyCentroid,
     W: W, H: H, shape: shape, pts: pts, svgPath: svgPath,
     inPoly: inPoly, inside: inside, centroid: centroid, clampInto: clampInto,
     edgeDist: edgeDist, segDist: segDist,
@@ -5242,7 +5370,9 @@ const Canvas = {
 
   bedShapeSVG(bed, attrs){
     const s = Geom.shape(bed), w = Geom.W(bed), h = Geom.H(bed);
-    if(Geom.isRound(s))
+    /* a group is always a compound path, never a single ellipse, even when
+       every container in it happens to be round */
+    if(Geom.isRound(s) && !Geom.isGroup(bed))
       return '<ellipse cx="' + (w/2) + '" cy="' + (h/2) + '" rx="' + (w/2) + '" ry="' + (h/2) + '" ' + attrs + '/>';
     if(s === "round")
       return '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="' +
@@ -5995,13 +6125,17 @@ Garden.plantingSheet = function(p){
 
   /* ---- footprint ---- */
   h += '<div class="card"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Footprint</div>';
+  /* the slider itself runs in whatever unit is on show, so a metric gardener
+     drags in whole centimetres rather than in half-inch jumps she cannot see */
   h += '<div class="field"><label class="f">Root zone — keep this clear · <b id="rr-v">' + Units.len(rr) + '</b> radius</label>' +
-    '<input type="range" id="pl-rr" min="1" max="' + Math.max(24, Math.ceil(rc)) + '" step="0.5" value="' + rr +
-    '" oninput="Garden.liveRadius(\'' + p.id + '\',null,this.value)"></div>';
+    '<input type="range" id="pl-rr" min="' + Units.outLen(1) + '" max="' + Units.outLen(Math.max(24, Math.ceil(rc))) +
+    '" step="' + Units.radiusStep() + '" value="' + Units.outLen(rr) +
+    '" oninput="Garden.liveRadius(\'' + p.id + '\',null,Units.inLen(this.value))"></div>';
   h += '<div class="field" style="margin-top:8px"><label class="f">Mature canopy · <b id="rc-v">' + Units.len(rc) + '</b> radius, ' +
     Units.len(Math.round(rc*2)) + ' across</label>' +
-    '<input type="range" id="pl-rc" min="1.5" max="' + Math.max(36, Math.ceil(rc * 1.6)) + '" step="0.5" value="' + rc +
-    '" oninput="Garden.liveRadius(\'' + p.id + '\',this.value,null)"></div>';
+    '<input type="range" id="pl-rc" min="' + Units.outLen(1.5) + '" max="' + Units.outLen(Math.max(36, Math.ceil(rc * 1.6))) +
+    '" step="' + Units.radiusStep() + '" value="' + Units.outLen(rc) +
+    '" oninput="Garden.liveRadius(\'' + p.id + '\',Units.inLen(this.value),null)"></div>';
   h += '<div class="row between" style="margin-top:10px;gap:14px">' +
     '<div><div class="tiny muted">Nudge</div><div class="stepper">' +
       '<button onclick="Garden.resizeBy(\'' + p.id + '\',-1,0)">−</button><span class="v">' + Units.len(Math.round(rc*2)) + '</span>' +
@@ -6109,7 +6243,7 @@ Garden.liveRadius = function(id, rc, rr){
   const q = DB.find("plantings", id);
   const a = $("#rr-v"); if(a) a.textContent = Units.len(Geom.RR(q));
   const b = $("#rc-v"); if(b) b.textContent = Units.len(Geom.RC(q));
-  const rrEl = $("#pl-rr"); if(rrEl) rrEl.value = Geom.RR(q);
+  const rrEl = $("#pl-rr"); if(rrEl) rrEl.value = Units.outLen(Geom.RR(q));
   Garden.repaint();
 };
 /* repaint the canvas in place, without rebuilding the whole screen */
@@ -6561,10 +6695,12 @@ const Shape = {
 
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Width · <b id="sh-wv">' + Shape.ft(Geom.W(bed)) + '</b></label>' +
-        '<input type="range" id="sh-w" min="12" max="480" step="3" value="' + Geom.W(bed) +
+        '<input type="range" id="sh-w" min="' + Units.outLen(12) + '" max="' + Units.outLen(480) +
+        '" step="' + Units.sizeStep() + '" value="' + Units.outLen(Geom.W(bed)) +
         '" oninput="Shape.size(\'' + bed.id + '\')"></div>' +
       '<div><label class="f">Depth · <b id="sh-hv">' + Shape.ft(Geom.H(bed)) + '</b></label>' +
-        '<input type="range" id="sh-h" min="12" max="480" step="3" value="' + Geom.H(bed) +
+        '<input type="range" id="sh-h" min="' + Units.outLen(12) + '" max="' + Units.outLen(480) +
+        '" step="' + Units.sizeStep() + '" value="' + Units.outLen(Geom.H(bed)) +
         '" oninput="Shape.size(\'' + bed.id + '\')"></div></div>';
     h += '<div class="tiny muted" id="sh-area" style="margin-top:6px">' + Units.area(Geom.areaSqFt(bed)) + ' of growing space</div>';
 
@@ -6603,8 +6739,9 @@ const Shape = {
   },
 
   size(bedId){
-    const w = clamp(num(($("#sh-w") || {}).value, 48), 12, 480);
-    const h = clamp(num(($("#sh-h") || {}).value, 48), 12, 480);
+    /* the sliders run in display units; the bed is stored in inches */
+    const w = clamp(Units.inLen(num(($("#sh-w") || {}).value, Units.outLen(48))), 12, 480);
+    const h = clamp(Units.inLen(num(($("#sh-h") || {}).value, Units.outLen(48))), 12, 480);
     DB.update("beds", bedId, { w_in: w, h_in: h });
     const bed = DB.find("beds", bedId);
     const wv = $("#sh-wv"); if(wv) wv.textContent = Shape.ft(w);
@@ -8366,6 +8503,307 @@ const Templates = {
 
 <script>
 /* ============================================================
+   POTS, PLANTERS AND WINDOW BOXES
+
+   Not every garden is a rectangle of soil. A row of half-barrels
+   along a fence, six terracotta pots on a step, three window
+   boxes — each is a separate pocket of soil, and each behaves
+   like a small bed: a plant in one of them cannot send roots into
+   the next, and the gap between them is not growing space.
+
+   The old model could describe this only as fifteen beds called
+   "Pot 1".."Pot 15", which is a filing system rather than a
+   garden, and it made the map unreadable.
+
+   So a bed may be a GROUP: one bed, one name, one micro-climate,
+   one place on the map — made of several containers. Geom.parts
+   does the work; this file is the editor that produces the list
+   and the arithmetic that lays it out in rows.
+
+   Two things it deliberately does NOT do:
+
+   · It does not let a plant straddle two containers. Geom.inside
+     asks each part separately, so dropping a courgette between
+     two pots pulls it into the nearer one rather than leaving it
+     rooted in mid-air.
+   · It does not count the gaps as growing space. Area is the sum
+     of the containers, which is what decides how much will fit
+     and what the yield-per-area figures divide by.
+   ============================================================ */
+
+const Groups = {
+
+  /* what people actually own, with sensible real sizes in inches */
+  PRESETS: [
+    { id:"pot",     n:"Round pots",    e:"◯", s:"circle", w:14, h:14, gap:4,  cols:4, rows:1 },
+    { id:"barrel",  n:"Half barrels",  e:"◯", s:"circle", w:26, h:26, gap:8,  cols:3, rows:1 },
+    { id:"window",  n:"Window boxes",  e:"▭", s:"rect",   w:30, h:8,  gap:4,  cols:1, rows:3 },
+    { id:"planter", n:"Planters",      e:"▢", s:"round",  w:24, h:12, gap:6,  cols:2, rows:2 },
+    { id:"grow",    n:"Grow bags",     e:"▢", s:"round",  w:16, h:16, gap:5,  cols:3, rows:2 },
+    { id:"square",  n:"Square pots",   e:"▭", s:"rect",   w:12, h:12, gap:3,  cols:4, rows:2 }
+  ],
+
+  /* ------------------------------------------------------------
+     Lay a grid of identical containers out and return both the
+     parts and the bounding box they need.
+     ------------------------------------------------------------ */
+  layout(o){
+    const cols = clamp(Math.round(num(o.cols, 3)), 1, 20);
+    const rows = clamp(Math.round(num(o.rows, 1)), 1, 20);
+    const w = clamp(num(o.w, 14), 2, 120), h = clamp(num(o.h, 14), 2, 120);
+    const gap = clamp(num(o.gap, 4), 0, 60);
+    const s = o.s || "circle";
+    const pad = 3;                        /* a little air so nothing touches the edge */
+    const parts = [];
+    for(let r = 0; r < rows; r++) for(let c = 0; c < cols; c++){
+      parts.push({ s: s, x: pad + c * (w + gap), y: pad + r * (h + gap), w: w, h: h });
+    }
+    return {
+      parts: parts,
+      w_in: pad * 2 + cols * w + (cols - 1) * gap,
+      h_in: pad * 2 + rows * h + (rows - 1) * gap,
+      count: cols * rows
+    };
+  },
+
+  /* growing space, which is the containers and not the bench they stand on */
+  areaOf(parts){
+    return (parts || []).reduce((a, p) => {
+      const w = num(p.w, 0), h = num(p.h, 0);
+      return a + ((p.s === "circle" || p.s === "ellipse") ? Math.PI * w / 2 * h / 2 : w * h);
+    }, 0) / 144;
+  },
+
+  apply(bedId, o){
+    const L = Groups.layout(o);
+    Geom.saveParts(bedId, L.parts, L.w_in, L.h_in);
+    /* keep cols/rows honest for the map, the recap and the assistant, which
+       still read them — but they describe the CONTAINERS now, not squares */
+    DB.update("beds", bedId, {
+      cols: clamp(Math.round(num(o.cols, 3)), 1, 20),
+      rows: clamp(Math.round(num(o.rows, 1)), 1, 20),
+      grid_on: 0, snap_in: 0
+    });
+    /* anything that now sits in a gap gets pulled into the nearest container */
+    let moved = 0;
+    const bed = Geom.bed(DB.find("beds", bedId));
+    Geom.live(bedId).forEach(p => {
+      const fit = Geom.clampInto(bed, Geom.PX(p), Geom.PY(p), Math.min(Geom.RR(p), 2));
+      if(fit.clamped || fit.tight){
+        DB.update("plantings", p.id, { px: Math.round(fit.x*10)/10, py: Math.round(fit.y*10)/10 });
+        moved++;
+      }
+    });
+    return { count: L.count, moved: moved };
+  },
+
+  /* ------------------------------------------------------------
+     THE EDITOR
+     ------------------------------------------------------------ */
+  draft: null,
+
+  open(bedId){
+    const bed = Geom.bed(DB.find("beds", bedId || APP.bedId)); if(!bed) return;
+    const cur = Geom.partList(bed);
+    const first = cur && cur[0];
+    Groups.draft = {
+      bedId: bed.id,
+      s: (first && first.s) || "circle",
+      w: first ? num(first.w, 14) : 14,
+      h: first ? num(first.h, 14) : 14,
+      gap: Groups.guessGap(cur),
+      cols: cur ? clamp(num(bed.cols, 3), 1, 20) : 4,
+      rows: cur ? clamp(num(bed.rows, 1), 1, 20) : 1
+    };
+    Groups.sheet();
+  },
+  guessGap(parts){
+    if(!parts || parts.length < 2) return 4;
+    const a = parts[0], b = parts[1];
+    const g = num(b.x, 0) - (num(a.x, 0) + num(a.w, 0));
+    return g > 0 ? Math.round(g) : 4;
+  },
+
+  sheet(){
+    const d = Groups.draft; if(!d) return;
+    let h = '<p class="muted sm" style="margin-top:0">One bed made of several containers. They keep their own soil — a plant in one cannot root into the next — and the growing space counted is the containers, not the bench they stand on.</p>';
+
+    h += '<div class="sec"><h2>Start from</h2></div><div class="row wrap" style="gap:6px">' +
+      Groups.PRESETS.map(p => '<button class="chip" onclick="Groups.preset(\'' + p.id + '\')">' +
+        p.e + ' ' + esc(p.n) + '</button>').join("") + '</div>';
+
+    h += '<div class="canvaswrap" id="gp-prev" style="margin-top:12px;padding:6px">' + Groups.preview() + '</div>';
+    h += '<div class="tiny muted center" id="gp-note" style="margin-top:6px">' + Groups.note() + '</div>';
+
+    h += '<div class="sec"><h2>Each container</h2></div>';
+    h += '<div class="row wrap" style="gap:6px">' +
+      [["circle","◯ Round"],["rect","▭ Square or oblong"],["round","▢ Soft corners"]].map(x =>
+        '<button class="chip ' + (d.s === x[0] ? "on" : "") + '" onclick="Groups.set(\'s\',\'' + x[0] + '\')">' +
+        esc(x[1]) + '</button>').join("") + '</div>';
+
+    h += '<div class="grid2" style="margin-top:12px">' +
+      '<div><label class="f">Across (' + Units.lenUnit() + ')</label>' +
+        '<input type="number" id="gp-w" step="' + Units.lenStep() + '" min="' + Units.outLen(2) + '" max="' + Units.outLen(120) +
+        '" value="' + Units.outLen(d.w) + '" oninput="Groups.read()"></div>' +
+      '<div><label class="f">Front to back (' + Units.lenUnit() + ')</label>' +
+        '<input type="number" id="gp-h" step="' + Units.lenStep() + '" min="' + Units.outLen(2) + '" max="' + Units.outLen(120) +
+        '" value="' + Units.outLen(d.h) + '" oninput="Groups.read()"></div></div>';
+
+    h += '<div class="sec"><h2>How they are arranged</h2></div>';
+    h += '<div class="row between" style="gap:14px">' +
+      '<div><div class="l tiny b muted" style="text-transform:uppercase">In a row</div><div class="stepper">' +
+        '<button onclick="Groups.bump(\'cols\',-1)">−</button><span class="v">' + d.cols + '</span>' +
+        '<button onclick="Groups.bump(\'cols\',1)">＋</button></div></div>' +
+      '<div><div class="l tiny b muted" style="text-transform:uppercase">Rows</div><div class="stepper">' +
+        '<button onclick="Groups.bump(\'rows\',-1)">−</button><span class="v">' + d.rows + '</span>' +
+        '<button onclick="Groups.bump(\'rows\',1)">＋</button></div></div>' +
+      '<div class="grow" style="text-align:right"><div class="tiny muted" id="gp-count">' +
+        (d.cols * d.rows) + ' containers</div></div></div>';
+
+    h += '<div class="field" style="margin-top:14px"><label class="f">Gap between them (' + Units.lenUnit() + ')</label>' +
+      '<input type="number" id="gp-gap" step="' + Units.lenStep() + '" min="0" max="' + Units.outLen(60) +
+      '" value="' + Units.outLen(d.gap) + '" oninput="Groups.read()"></div>';
+
+    h += '<button class="btn block" style="margin-top:16px" onclick="Groups.save()">' +
+      (Geom.isGroup(DB.find("beds", d.bedId)) ? "Save this arrangement" : "Turn this bed into a group") + '</button>';
+    if(Geom.isGroup(DB.find("beds", d.bedId)))
+      h += '<button class="btn ghost block" style="margin-top:8px" onclick="Groups.unGroup()">Back to one solid shape</button>';
+
+    openSheet("Pots and planters", h);
+  },
+
+  preview(){
+    const d = Groups.draft; if(!d) return "";
+    const L = Groups.layout(d);
+    const pad = 4, W = L.w_in, H = L.h_in;
+    const sc = 300 / Math.max(W, 1);
+    let s = '<svg viewBox="' + (-pad) + ' ' + (-pad) + ' ' + (W + pad*2) + ' ' + (H + pad*2) +
+      '" style="width:100%;height:auto;max-height:200px;display:block">';
+    L.parts.forEach(p => {
+      if(p.s === "circle")
+        s += '<ellipse cx="' + (p.x + p.w/2) + '" cy="' + (p.y + p.h/2) + '" rx="' + (p.w/2) + '" ry="' + (p.h/2) +
+          '" fill="#8a6a4f" stroke="#5d4634" stroke-width="' + Math.max(0.6, W/220) + '"/>';
+      else {
+        const r = p.s === "round" ? Math.min(p.w, p.h) * 0.18 : 0;
+        s += '<rect x="' + p.x + '" y="' + p.y + '" width="' + p.w + '" height="' + p.h + '" rx="' + r +
+          '" fill="#8a6a4f" stroke="#5d4634" stroke-width="' + Math.max(0.6, W/220) + '"/>';
+      }
+    });
+    return s + '</svg>';
+  },
+  note(){
+    const d = Groups.draft; if(!d) return "";
+    const L = Groups.layout(d);
+    return L.count + ' container' + (L.count === 1 ? "" : "s") + ' · ' +
+      Units.area(Groups.areaOf(L.parts)) + ' of soil · the whole thing takes up ' +
+      Units.dims(L.w_in, L.h_in);
+  },
+  repaint(){
+    const p = $("#gp-prev"); if(p) p.innerHTML = Groups.preview();
+    const n = $("#gp-note"); if(n) n.innerHTML = Groups.note();
+    const c = $("#gp-count"); if(c) c.textContent = (Groups.draft.cols * Groups.draft.rows) + " containers";
+  },
+
+  set(k, v){ Groups.draft[k] = v; Groups.sheet(); },
+  bump(k, n){
+    Groups.draft[k] = clamp(Groups.draft[k] + n, 1, 20);
+    const el = $$("#sheet-body .stepper .v")[k === "cols" ? 0 : 1];
+    if(el) el.textContent = Groups.draft[k];
+    Groups.repaint();
+  },
+  preset(id){
+    const p = Groups.PRESETS.find(x => x.id === id); if(!p) return;
+    Object.assign(Groups.draft, { s: p.s, w: p.w, h: p.h, gap: p.gap, cols: p.cols, rows: p.rows });
+    Groups.sheet();
+  },
+  read(){
+    const d = Groups.draft;
+    d.w = clamp(Units.inLen(num(($("#gp-w") || {}).value, Units.outLen(d.w))), 2, 120);
+    d.h = clamp(Units.inLen(num(($("#gp-h") || {}).value, Units.outLen(d.h))), 2, 120);
+    d.gap = clamp(Units.inLen(num(($("#gp-gap") || {}).value, Units.outLen(d.gap))), 0, 60);
+    Groups.repaint();
+  },
+
+  save(){
+    const d = Groups.draft; if(!d) return;
+    const r = Groups.apply(d.bedId, d);
+    closeSheet(); Garden.render();
+    toast(r.count + " container" + (r.count === 1 ? "" : "s") +
+      (r.moved ? " · " + r.moved + " plant" + (r.moved === 1 ? "" : "s") + " moved into one" : ""));
+  },
+
+  unGroup(){
+    const d = Groups.draft; if(!d) return;
+    const bed = Geom.bed(DB.find("beds", d.bedId));
+    confirmSheet("Back to one shape?",
+      "The bed becomes a single rectangle the size of the whole arrangement. Nothing planted is removed, but plants that were in separate pots will end up in one bed together.",
+      "Do it", () => {
+        DB.update("beds", d.bedId, { parts: null, shape: "rect" });
+        Geom.saveParts && (Geom.partsOf(DB.find("beds", d.bedId)));
+        Garden.render(); toast("Back to one shape");
+      });
+  }
+};
+
+/* ---------- ways in ---------- */
+(function wireGroups(){
+  /* the shape sheet: choosing "Pots & planters" opens the group editor */
+  const origPick = Shape.pick;
+  Shape.pick = function(bedId, shape){
+    if(shape === "group") return Groups.open(bedId);
+    /* leaving a group behind clears the parts, or the old containers would
+       keep drawing underneath the new outline */
+    const bed = DB.find("beds", bedId);
+    if(bed && bed.parts) DB.update("beds", bedId, { parts: null });
+    return origPick.call(Shape, bedId, shape);
+  };
+
+  /* the shape sheet hides the width/depth sliders for a group — the size is
+     decided by the containers, not by dragging a box around them */
+  const origOpen = Shape.open;
+  Shape.open = function(bedId){
+    origOpen.call(Shape, bedId);
+    const bed = Geom.bed(DB.find("beds", bedId || APP.bedId));
+    if(!bed || !Geom.isGroup(bed)) return;
+    const body = $("#sheet-body"); if(!body) return;
+    const w = body.querySelector("#sh-w");
+    const grid = w ? w.closest(".grid2") : null;
+    if(grid) grid.innerHTML = '<div class="note i" style="grid-column:1/-1;margin:0">' +
+      'This bed is ' + (Geom.partList(bed) || []).length + ' separate containers. Their size and spacing set how big it is.' +
+      '</div>';
+    body.insertAdjacentHTML("afterbegin",
+      '<button class="btn block" style="margin-bottom:12px" onclick="Groups.open(\'' + bed.id + '\')">⁙ Edit the containers</button>');
+  };
+
+  /* and from the bed menu, where the rest of the bed's settings live */
+  const origMenu = Garden.bedMenu;
+  Garden.bedMenu = function(){
+    origMenu.apply(Garden, arguments);
+    const body = $("#sheet-body"); if(!body || !APP.bedId) return;
+    const bed = Geom.bed(DB.find("beds", APP.bedId));
+    body.insertAdjacentHTML("beforeend",
+      '<button class="btn ghost block" style="margin-top:8px" onclick="closeSheet();setTimeout(function(){Groups.open(\'' +
+      APP.bedId + '\')},250)">⁙ ' + (Geom.isGroup(bed) ? "Edit the pots and planters" : "Make this a group of pots or planters") + '</button>');
+  };
+
+  /* the bed header should say what it is rather than calling a row of pots
+     a "rounded rectangle" */
+  const origBedView = Garden.bedView;
+  Garden.bedView = function(){
+    origBedView.call(Garden);
+    const bed = Geom.bed(DB.find("beds", APP.bedId));
+    if(!bed || !Geom.isGroup(bed)) return;
+    const box = $("#s-garden"); if(!box) return;
+    const sub = box.querySelector(".row .tiny.muted");
+    const n = (Geom.partList(bed) || []).length;
+    if(sub) sub.innerHTML = '⁙ ' + n + ' container' + (n === 1 ? "" : "s") + ' · ' +
+      Units.area(Geom.areaSqFt(bed)) + ' of soil · ' + esc(bed.sun_hours || "?") + 'h sun';
+  };
+})();
+</script>
+
+<script>
+/* ============================================================
    MICRO-CLIMATE — the engine
 
    A hardiness zone describes a county. It cannot tell you that the
@@ -9082,25 +9520,86 @@ const MicroUI = {
     openSheet("Survey · " + (c.i + 1) + " of 4", h, () => MicroUI.camStop());
   },
 
+  /* ---------- the live view ----------
+     Three things were wrong with this and all three had the same root: the
+     video was dropped into the sheet at whatever size the sensor felt like.
+     It ran taller than the phone so the shutter sat below the fold; the
+     square `ideal` in Cam.rear made the browser crop the sensor, which reads
+     as the camera zooming itself in; and there was no way to zoom on purpose.
+
+     Now the stage is a fixed slice of the screen, the frame is requested at
+     the sensor's native shape and letterboxed rather than cropped, and pinch
+     applies a digital zoom that the CAPTURE honours as well as the preview —
+     so what is framed is what is recorded. */
+  zoom: 1,
+  MAXZOOM: 4,
+
   async camStart(){
     const wrap = $("#mc-cam"); if(!wrap) return;
     if(!Cam.supported()){ toast("Live camera needs https — using your camera app"); return MicroUI.pick(true); }
     try{
       MicroUI.camStop();
-      MicroUI.stream = await Cam.rear();
-      wrap.innerHTML = '<video id="mcfeed" playsinline autoplay muted></video>' +
+      MicroUI.zoom = 1;
+      MicroUI.stream = await Cam.rear({ native: true });
+      wrap.innerHTML =
+        '<div class="camstage" id="mc-stage"><video id="mcfeed" playsinline autoplay muted></video>' +
+        '<span class="ztag" id="mc-ztag" style="display:none">1.0×</span>' +
+        '<span class="chint">Pinch to zoom · the whole frame is what gets measured</span></div>' +
         '<button class="btn block" style="margin-top:8px" onclick="MicroUI.snap()">◉ Capture</button>';
       const v = $("#mcfeed"); v.srcObject = MicroUI.stream; await v.play();
+      MicroUI.bindPinch();
     }catch(e){ toast("Camera blocked — using your photo library"); MicroUI.pick(true); }
   },
-  camStop(){ Cam.stop(MicroUI.stream); MicroUI.stream = null; },
+  camStop(){ Cam.stop(MicroUI.stream); MicroUI.stream = null; MicroUI.zoom = 1; },
+
+  bindPinch(){
+    const stage = $("#mc-stage"), v = $("#mcfeed");
+    if(!stage || !v) return;
+    let base = 1, start = 0;
+    const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    stage.ontouchstart = e => {
+      if(e.touches.length !== 2) return;
+      e.preventDefault(); base = MicroUI.zoom; start = dist(e.touches);
+    };
+    stage.ontouchmove = e => {
+      if(e.touches.length !== 2 || !start) return;
+      e.preventDefault();
+      MicroUI.setZoom(base * dist(e.touches) / start);
+    };
+    stage.ontouchend = () => { start = 0; };
+    /* a desktop browser gets the same control from the wheel */
+    stage.onwheel = e => { e.preventDefault(); MicroUI.setZoom(MicroUI.zoom * (e.deltaY < 0 ? 1.1 : 1/1.1)); };
+    /* double tap returns to the full frame, which is the one that measures */
+    let last = 0;
+    stage.onclick = () => {
+      const t = Date.now();
+      if(t - last < 320) MicroUI.setZoom(1);
+      last = t;
+    };
+  },
+  setZoom(z){
+    MicroUI.zoom = clamp(z, 1, MicroUI.MAXZOOM);
+    const v = $("#mcfeed"); if(v) v.style.transform = "scale(" + MicroUI.zoom + ")";
+    const tag = $("#mc-ztag");
+    if(tag){
+      tag.textContent = (Math.round(MicroUI.zoom * 10) / 10) + "×";
+      tag.style.display = MicroUI.zoom > 1.02 ? "" : "none";
+    }
+  },
 
   snap(){
     const v = $("#mcfeed"); if(!v) return;
-    const s = Math.min(1, 1400 / Math.max(v.videoWidth, v.videoHeight));
+    /* a stream that has not reported its size yet would produce a 0x0 canvas
+       and a data URL nothing can read — wait rather than save a broken shot */
+    if(!v.videoWidth || !v.videoHeight) return toast("Camera still starting — try again in a moment");
+    const z = clamp(num(MicroUI.zoom, 1), 1, MicroUI.MAXZOOM);
+    /* crop the same centre the preview is showing, so the photo is the frame */
+    const sw = v.videoWidth / z, sh = v.videoHeight / z;
+    const sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2;
+    const s = Math.min(1, 1400 / Math.max(sw, sh));
     const c = document.createElement("canvas");
-    c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
-    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+    c.width = Math.max(1, Math.round(sw * s)); c.height = Math.max(1, Math.round(sh * s));
+    c.getContext("2d").drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
     MicroUI.camStop();
     MicroUI.got(c.toDataURL("image/jpeg", 0.8), c);
   },
@@ -9284,7 +9783,12 @@ const MicroUI = {
       "bearing_offset_deg is relative to the direction the camera faces: negative left, positive right, roughly -40 to +40 for a phone frame. " +
       "Where you are unsure, say so with a conservative number rather than omitting the field. Do not describe plants or give growing advice.";
 
-    return Vision.json(p.reading, prompt);
+    /* A seed packet is a handful of fields; this asks for a nested object with
+        an obstruction array. Gemini 2.5 spends output tokens on reasoning before
+        it writes anything, so the 900-token default was being consumed entirely
+        by thinking and the answer came back empty — which surfaced to the
+        gardener as the seed-packet error message, mid-skyline-survey. */
+    return Vision.json(p.reading, prompt, { maxTokens: 2600, what: "survey" });
   },
 
   /* ---------- on-device light reading, so this works with no key ---------- */
@@ -10329,6 +10833,784 @@ const Cal = {
     closeSheet(); Cal.render(); toast("Task added");
   }
 };
+</script>
+
+<script>
+/* ============================================================
+   SEED TRAYS
+
+   The seed bank knows what you own. A tray is what you actually
+   did with it on a particular Sunday in February, and it is the
+   part of the season with the most to remember and the least to
+   look at: forty identical cells under a light, and no way to
+   tell which is which in three weeks except by having written it
+   down.
+
+   So a tray is a real object with real cells. Each cell carries a
+   crop, a variety, the packet it came from and how many seeds went
+   in. From the sowing date and the crop's own figures the app works
+   out three dates that matter and keeps them in front of you:
+
+     · when it should sprout        — the crop's germination range
+     · when to pot on / harden off  — a week before it goes out
+     · when it can go in the ground — the crop's own transplant
+                                      window, never before your
+                                      last frost for a tender crop
+
+   Then it asks what actually happened. A cell that sprouted, and
+   when. A cell that did not. That is the only honest source for
+   what a packet is really doing, and it is fed back as an OFFER to
+   update the packet's germination rate — never silently, because
+   the gardener may have drowned that tray and knows it.
+
+   Planting out is the payoff: pick a bed and the cell becomes a
+   planting that keeps the ORIGINAL SOWING DATE, so days-to-maturity
+   counts from the seed going into the tray rather than from the day
+   it reached the garden. Getting that wrong would quietly teach the
+   app that everything matures a month faster than it does.
+   ============================================================ */
+
+const Trays = {
+
+  /* ---------- reading ---------- */
+  all(){ return DB.all("trays").slice().sort((a, b) => String(b.sown_on || "").localeCompare(String(a.sown_on || ""))); },
+  cells(trayId){
+    return DB.where("traycells", c => c.tray_id === trayId)
+      .sort((a, b) => num(a.idx, 0) - num(b.idx, 0));
+  },
+  filled(trayId){ return Trays.cells(trayId).filter(c => c.crop_id); },
+  size(t){ return Math.max(1, num(t.cols, 6)) * Math.max(1, num(t.rows, 4)); },
+
+  /* ============================================================
+     THE THREE DATES
+
+     Everything here is derived, never stored, so a tray re-reads
+     correctly if the frost dates are later corrected.
+     ============================================================ */
+  plan(cell, tray){
+    const c = crop(cell.crop_id);
+    const sownISO = cell.sown_on || (tray && tray.sown_on) || null;
+    const sown = sownISO ? parseISO(sownISO) : null;
+    if(!c || !sown) return null;
+
+    const germLo = Math.max(1, num(c.germ[0], 7)), germHi = Math.max(germLo, num(c.germ[1], 14));
+    const sproutFrom = addDays(sown, germLo), sproutTo = addDays(sown, germHi);
+
+    /* How long this crop is meant to sit in a tray is the gap between its own
+       two published offsets — start indoors, then transplant out. Where a crop
+       has no indoor window (a carrot, a bean) there is no honest figure, so the
+       app says so instead of inventing six weeks. */
+    const st = c.start || {};
+    const weeks = (st.indoor !== null && st.indoor !== undefined && st.tp !== null && st.tp !== undefined)
+      ? Math.max(1, num(st.tp, 2) - num(st.indoor, -6)) : null;
+
+    let out = weeks ? addDays(sown, Math.round(weeks * 7)) : null;
+    /* never before the crop's own transplant window — a tomato started early
+       under a light is still a tomato that dies in a late frost */
+    const LF = Season.lastFrost();
+    if(LF && st.tp !== null && st.tp !== undefined){
+      const earliest = addDays(LF, Math.round(num(st.tp, 2) * 7));
+      if(!out || out < earliest) out = earliest;
+    }
+    const harden = out ? addDays(out, -7) : null;
+
+    return {
+      crop: c, sown: sown, sownISO: iso(sown),
+      sproutFrom: sproutFrom, sproutTo: sproutTo,
+      weeksInTray: weeks, harden: harden, out: out,
+      /* transplant-raised crops count maturity from sowing, which is why the
+         planting created at plant-out keeps this date and not today's */
+      harvest: Season.harvestFrom(cell.crop_id, iso(sown), "seed")
+    };
+  },
+
+  /* what this cell is waiting on, in one line */
+  state(cell, tray){
+    if(cell.out_on) return { k:"out", t:"Planted out " + fmt(cell.out_on) };
+    if(cell.sprouted === "0") return { k:"failed", t:"Did not come up" };
+    const p = Trays.plan(cell, tray);
+    const t = today();
+    if(cell.sprouted === "1"){
+      if(!p || !p.out) return { k:"growing", t:"Sprouted " + fmt(cell.sprouted_on || "") };
+      const d = diffDays(t, p.out);
+      if(d < 0) return { k:"due", t:"Overdue to plant out — " + Math.abs(d) + " days past" };
+      if(d <= 7) return { k:"due", t:"Ready to plant out " + relDay(p.out) };
+      return { k:"growing", t:"Plant out around " + fmt(p.out) };
+    }
+    if(!p) return { k:"waiting", t:"Sown" + (cell.sown_on ? " " + fmt(cell.sown_on) : "") };
+    if(t < p.sproutFrom) return { k:"waiting", t:"Should sprout " + fmt(p.sproutFrom) + "–" + fmt(p.sproutTo) };
+    if(t <= p.sproutTo) return { k:"check", t:"Due to sprout now — did it?" };
+    return { k:"late", t:"Overdue to sprout since " + fmt(p.sproutTo) };
+  },
+
+  /* the whole tray in one line, for the list */
+  summary(tray){
+    const cs = Trays.filled(tray.id);
+    const up = cs.filter(c => c.sprouted === "1").length;
+    const no = cs.filter(c => c.sprouted === "0").length;
+    const out = cs.filter(c => c.out_on).length;
+    return { n: cs.length, up: up, no: no, out: out, size: Trays.size(tray),
+             pending: cs.filter(c => !c.sprouted && !c.out_on).length };
+  },
+
+  /* observed germination, which is the only figure here that is a measurement */
+  rate(cs){
+    const judged = cs.filter(c => c.sprouted === "1" || c.sprouted === "0");
+    if(!judged.length) return null;
+    const sown = judged.reduce((a, c) => a + Math.max(1, num(c.seeds_sown, 1)), 0);
+    const up = judged.filter(c => c.sprouted === "1").reduce((a, c) => a + Math.max(1, num(c.seeds_sown, 1)), 0);
+    return { cells: judged.length, sown: sown, up: up, pct: Math.round(up / sown * 100) };
+  },
+
+  /* ---------- writing ---------- */
+  create(o){
+    const t = DB.insert("trays", {
+      name: (o.name || "Tray").trim(), cols: clamp(num(o.cols, 6), 1, 12), rows: clamp(num(o.rows, 4), 1, 12),
+      sown_on: o.sown_on || iso(today()), location: o.location || null, medium: o.medium || null,
+      heat_mat: o.heat_mat ? "1" : "0", status: "active", notes: o.notes || null
+    });
+    const n = Trays.size(t);
+    for(let i = 0; i < n; i++) DB.insert("traycells", { tray_id: t.id, idx: i });
+    Cal.rebuild();
+    return t;
+  },
+  resize(trayId, cols, rows){
+    const t = DB.find("trays", trayId); if(!t) return;
+    cols = clamp(num(cols, 6), 1, 12); rows = clamp(num(rows, 4), 1, 12);
+    const want = cols * rows;
+    const have = Trays.cells(trayId);
+    /* shrinking only ever drops EMPTY cells from the end; a sown cell is a
+       record of something that happened and is not thrown away to fit a grid */
+    if(want < have.length){
+      const droppable = have.slice(want).filter(c => !c.crop_id);
+      if(have.slice(want).length !== droppable.length) return toast("Empty the cells at the end first");
+      droppable.forEach(c => DB.remove("traycells", c.id));
+    } else {
+      for(let i = have.length; i < want; i++) DB.insert("traycells", { tray_id: trayId, idx: i });
+    }
+    DB.update("trays", trayId, { cols: cols, rows: rows });
+  },
+  remove(trayId){
+    DB.bulkRemove("traycells", c => c.tray_id === trayId);
+    DB.remove("trays", trayId);
+    Cal.rebuild();
+  },
+
+  sow(cellId, patch){
+    const c = DB.find("traycells", cellId); if(!c) return null;
+    const t = DB.find("trays", c.tray_id);
+    const row = DB.update("traycells", cellId, Object.assign({
+      sown_on: c.sown_on || (t ? t.sown_on : iso(today()))
+    }, patch));
+    Cal.rebuild();
+    return row;
+  },
+  clear(cellId){
+    const c = DB.find("traycells", cellId); if(!c) return;
+    DB.update("traycells", cellId, { crop_id:null, variety:null, variety_id:null, seed_id:null,
+      seeds_sown:null, sprouted:null, sprouted_on:null, potted_on:null, notes:null });
+    Cal.rebuild();
+  },
+  mark(cellId, up){
+    const c = DB.find("traycells", cellId); if(!c) return;
+    DB.update("traycells", cellId, {
+      sprouted: up ? "1" : "0",
+      sprouted_on: up ? (c.sprouted_on || iso(today())) : null
+    });
+    Cal.rebuild();
+  },
+
+  /* ============================================================
+     INTO THE GROUND
+
+     The planting keeps the tray's sowing date. Days to maturity is
+     the figure this whole app defers to, and it is counted from
+     seed — dating the planting today would teach it that every
+     transplanted crop matures six weeks faster than it does.
+     ============================================================ */
+  plantOut(cellId, bedId, x, y){
+    const c = DB.find("traycells", cellId); if(!c || !c.crop_id) return null;
+    const bed = Geom.bed(DB.find("beds", bedId)); if(!bed) return null;
+    const t = DB.find("trays", c.tray_id);
+    const p = Trays.plan(c, t);
+
+    const rr = Geom.rootR(c.crop_id, 1), rc = Geom.canopyR(c.crop_id, 1);
+    const spot = Garden.openSpot(bed, rr, num(x, Geom.W(bed) / 2), num(y, Geom.H(bed) / 2));
+    if(!spot) return { error: "No free ground that size in " + bed.name };
+
+    const row = DB.insert("plantings", {
+      bed_id: bed.id, crop_id: c.crop_id, variety: c.variety || null, variety_id: c.variety_id || null,
+      seed_id: c.seed_id || null, qty: 1, span_mode: "single", status: "growing",
+      /* the date the seed went into the tray, not today */
+      sown_on: p ? p.sownISO : (c.sown_on || iso(today())),
+      transplant_on: iso(today()),
+      notes: "From " + ((t && t.name) || "a seed tray"),
+      px: Math.round(spot.x * 10) / 10, py: Math.round(spot.y * 10) / 10,
+      rr: rr, rc: rc,
+      rot: Math.round(Math.random() * 40 - 20), sv: Math.floor(Math.random() * 100000),
+      x: Math.floor(spot.x / Garden.cell(bed)), y: Math.floor(spot.y / Garden.cell(bed)), w: 1, h: 1
+    });
+    DB.update("traycells", cellId, { out_on: iso(today()), planting_id: row.id, bed_id: bed.id,
+      sprouted: c.sprouted || "1", sprouted_on: c.sprouted_on || null });
+    Cal.rebuild();
+    return { planting: row, bed: bed };
+  },
+
+  /* everything in this tray that is ready, in one go */
+  plantAllOut(trayId, bedId){
+    const ready = Trays.filled(trayId).filter(c => !c.out_on && c.sprouted !== "0");
+    const made = [];
+    for(const c of ready){
+      const r = Trays.plantOut(c.id, bedId);
+      if(r && r.planting) made.push(r.planting);
+    }
+    if(made.length) Undo.push("trayout", "Planted out " + made.length + " seedling" + (made.length === 1 ? "" : "s"),
+      made.map(m => ({ id: m.id, created: true })));
+    return made;
+  }
+};
+
+/* ============================================================
+   CALENDAR — a tray puts its own dates on the grid
+   ============================================================ */
+(function trayCalendar(){
+  const orig = Cal.rebuild;
+  Cal.rebuild = function(){
+    orig.call(Cal);
+    if(!Season.lastFrost() || !Season.firstFrost()) return;
+    const keep = {};
+    const put = (key, o) => {
+      keep[key] = 1;
+      const ex = DB.all("events").find(e => e.auto === key);
+      if(ex) return DB.update("events", ex.id, o);
+      return DB.insert("events", Object.assign({ auto: key, done: "0" }, o));
+    };
+    DB.all("trays").forEach(t => {
+      Trays.filled(t.id).forEach(c => {
+        if(c.out_on) return;                       /* already in the ground */
+        const p = Trays.plan(c, t);
+        if(!p) return;
+        const label = cropName(c.crop_id) + (c.variety ? " · " + c.variety : "");
+        if(!c.sprouted)
+          put("tray:germ:" + c.id, { date: iso(p.sproutTo), type:"seed", crop_id: c.crop_id, seed_id: c.seed_id || null,
+            title: "Check " + label + " has sprouted", notes: t.name + " — sown " + fmt(p.sownISO) +
+              ", expected " + fmt(p.sproutFrom) + " to " + fmt(p.sproutTo) + "." });
+        if(p.harden && c.sprouted !== "0")
+          put("tray:harden:" + c.id, { date: iso(p.harden), type:"transplant", crop_id: c.crop_id,
+            title: "Start hardening off " + label, notes: t.name + " — a week outside in the day before it goes in the ground." });
+        if(p.out && c.sprouted !== "0")
+          put("tray:out:" + c.id, { date: iso(p.out), type:"transplant", crop_id: c.crop_id,
+            title: "Plant out " + label, notes: t.name + " — " + (p.weeksInTray ? p.weeksInTray + " weeks in the tray. " : "") +
+              "Maturity is counted from the sowing date, not from today." });
+      });
+    });
+    DB.bulkRemove("events", e => e.auto && /^tray:/.test(e.auto) && !keep[e.auto] && e.done !== "1");
+  };
+})();
+</script>
+
+<script>
+/* ============================================================
+   THE TRAY SCREEN
+
+   Lives on the Seeds tab behind a segmented control, because a
+   tray is what you do with a packet and looking for it anywhere
+   else would be odd. The tray itself is drawn as the grid it is,
+   so the cell you are tapping is the cell in front of you.
+   ============================================================ */
+
+const TrayUI = {
+  view: "packets",         /* packets | trays */
+  open: null,              /* the tray being looked at */
+  brush: null,             /* a crop armed for tapping across cells */
+
+  setView(v){ TrayUI.view = v; TrayUI.open = null; Seeds.render(); },
+
+  tabs(){
+    const n = DB.count("trays");
+    return '<div class="seg" style="margin-bottom:12px">' +
+      '<button class="' + (TrayUI.view === "packets" ? "on" : "") + '" onclick="TrayUI.setView(\'packets\')">🌰 Packets</button>' +
+      '<button class="' + (TrayUI.view === "trays" ? "on" : "") + '" onclick="TrayUI.setView(\'trays\')">🌱 Trays' +
+        (n ? ' <span class="tiny">(' + n + ')</span>' : '') + '</button></div>';
+  },
+
+  /* ============================================================
+     THE LIST
+     ============================================================ */
+  list(){
+    const trays = Trays.all();
+    let h = '';
+
+    if(!trays.length){
+      h += '<div class="card"><div class="empty"><span class="e">🌱</span><div class="b">No trays yet</div>' +
+        '<div class="tiny">A tray records what went into which cell, works out when each one should sprout and when it can go outside, ' +
+        'and plants it straight into a bed when it is ready — keeping the original sowing date so your harvest dates stay honest.</div></div>' +
+        '<button class="btn block" onclick="TrayUI.newTray()">Start a tray</button></div>';
+      return h;
+    }
+
+    const cells = DB.all("traycells").filter(c => c.crop_id && !c.out_on);
+    const due = cells.filter(c => {
+      const t = DB.find("trays", c.tray_id);
+      const s = Trays.state(c, t);
+      return s.k === "due" || s.k === "check" || s.k === "late";
+    });
+    h += '<div class="card"><div class="grid3">' +
+      '<div class="stat"><span class="n">' + trays.length + '</span><span class="l">trays</span></div>' +
+      '<div class="stat"><span class="n">' + cells.length + '</span><span class="l">growing</span></div>' +
+      '<div class="stat"><span class="n">' + due.length + '</span><span class="l">need you</span></div>' +
+      '</div></div>';
+
+    if(due.length){
+      h += '<div class="sec"><h2>Needs a look</h2></div><div class="card pad0"><div class="list">';
+      due.slice(0, 8).forEach(c => {
+        const t = DB.find("trays", c.tray_id);
+        const s = Trays.state(c, t);
+        h += '<button class="item" onclick="TrayUI.cell(\'' + c.id + '\')">' +
+          '<div class="av">' + cropEmoji(c.crop_id) + '</div>' +
+          '<div class="grow"><div class="b">' + esc(cropName(c.crop_id)) +
+            (c.variety ? ' <span class="tiny muted">' + esc(c.variety) + '</span>' : '') + '</div>' +
+          '<div class="tiny ' + (s.k === "late" ? '" style="color:var(--warn)' : 'muted') + '">' + esc(s.t) + '</div>' +
+          '<div class="tiny muted">' + esc(t ? t.name : "") + ' · cell ' + (num(c.idx, 0) + 1) + '</div></div>' +
+          '<span class="go">›</span></button>';
+      });
+      h += '</div></div>';
+    }
+
+    h += '<button class="btn block" style="margin-top:12px" onclick="TrayUI.newTray()">＋ New tray</button>';
+
+    trays.forEach(t => {
+      const s = Trays.summary(t);
+      const r = Trays.rate(Trays.filled(t.id));
+      h += '<div class="card" style="margin-top:12px"><div class="row between">' +
+        '<div class="grow"><div class="b">' + esc(t.name) + '</div>' +
+        '<div class="tiny muted">' + num(t.cols, 6) + '×' + num(t.rows, 4) + ' · sown ' + fmt(t.sown_on) +
+          (t.location ? ' · ' + esc(t.location) : '') + (num(t.heat_mat) ? ' · heat mat' : '') + '</div>' +
+        '<div class="tiny muted">' + s.n + ' of ' + s.size + ' sown · ' + s.up + ' up' +
+          (s.no ? ' · ' + s.no + ' failed' : '') + (s.out ? ' · ' + s.out + ' planted out' : '') +
+          (r ? ' · ' + r.pct + '% germination' : '') + '</div></div>' +
+        '<button class="btn sm" onclick="TrayUI.show(\'' + t.id + '\')">Open</button></div>' +
+        TrayUI.mini(t) + '</div>';
+    });
+    return h;
+  },
+
+  /* the tray drawn small, for the list */
+  mini(t){
+    const cells = Trays.cells(t.id), cols = Math.max(1, num(t.cols, 6));
+    const cs = clamp(Math.floor(250 / cols), 9, 22);
+    let h = '<div class="bedwrap" style="padding:4px;margin-top:8px"><div class="bed" style="grid-template-columns:repeat(' +
+      cols + ',' + cs + 'px);gap:2px">';
+    cells.forEach(c => {
+      const st = c.crop_id ? Trays.state(c, t) : null;
+      const bg = !c.crop_id ? "" : c.out_on ? "background:var(--green-300)"
+        : c.sprouted === "0" ? "opacity:.4"
+        : (st && (st.k === "late" || st.k === "check")) ? "outline:2px solid var(--warn)" : "";
+      h += '<div class="cell ' + (c.crop_id ? "filled" : "") + '" style="width:' + cs + 'px;height:' + cs +
+        'px;font-size:' + Math.round(cs * 0.6) + 'px;' + bg + '">' + (c.crop_id ? cropEmoji(c.crop_id) : "") + '</div>';
+    });
+    return h + '</div></div>';
+  },
+
+  /* ============================================================
+     ONE TRAY
+     ============================================================ */
+  show(id){ TrayUI.open = id; TrayUI.brush = null; Seeds.render(); },
+  back(){ TrayUI.open = null; TrayUI.brush = null; Seeds.render(); },
+
+  detail(){
+    const t = DB.find("trays", TrayUI.open);
+    if(!t){ TrayUI.open = null; return TrayUI.list(); }
+    const cells = Trays.cells(t.id);
+    const cols = Math.max(1, num(t.cols, 6));
+    const s = Trays.summary(t), r = Trays.rate(Trays.filled(t.id));
+
+    let h = '<div class="row" style="margin-bottom:10px"><button class="iconbtn" onclick="TrayUI.back()">‹</button>' +
+      '<div class="grow"><div class="b">' + esc(t.name) + '</div>' +
+      '<div class="tiny muted">Sown ' + fmt(t.sown_on) + ' · ' + s.n + ' of ' + s.size + ' cells' +
+        (r ? ' · ' + r.pct + '% up' : '') + '</div></div>' +
+      '<button class="iconbtn" onclick="TrayUI.menu()">⋯</button></div>';
+
+    h += '<div class="cvbar">';
+    if(TrayUI.brush){
+      h += '<span class="chip on">' + cropEmoji(TrayUI.brush.crop_id) + ' Tap cells to sow ' + esc(cropName(TrayUI.brush.crop_id)) + '</span>' +
+        '<button class="chip" onclick="TrayUI.brush=null;Seeds.render()">Done</button>';
+    } else {
+      h += '<button class="chip" onclick="TrayUI.pickBrush()">🌱 Sow into cells</button>' +
+        '<button class="chip" onclick="TrayUI.sproutSheet()">✓ Record what came up</button>' +
+        '<button class="chip" onclick="TrayUI.outSheet()">🪴 Plant out</button>';
+    }
+    h += '</div>';
+
+    const cs = clamp(Math.floor((Math.min(window.innerWidth, 520) - 60) / cols), 26, 64);
+    h += '<div class="bedwrap" style="margin-top:10px"><div class="bed" style="grid-template-columns:repeat(' +
+      cols + ',' + cs + 'px);gap:3px">';
+    cells.forEach(c => {
+      const st = c.crop_id ? Trays.state(c, t) : null;
+      let extra = "";
+      if(c.out_on) extra = "background:var(--green-300)";
+      else if(c.sprouted === "0") extra = "opacity:.42";
+      else if(st && (st.k === "late" || st.k === "check")) extra = "outline:2px solid var(--warn)";
+      else if(st && st.k === "due") extra = "outline:2px solid var(--green-600)";
+      h += '<button class="cell ' + (c.crop_id ? "filled" : "") + '" onclick="TrayUI.tap(\'' + c.id + '\')" ' +
+        'style="width:' + cs + 'px;height:' + cs + 'px;font-size:' + Math.round(cs * 0.55) + 'px;' + extra + '">' +
+        (c.crop_id ? cropEmoji(c.crop_id) : '<span style="opacity:.35;font-size:.7em">+</span>') +
+        (c.sprouted === "1" && !c.out_on ? '<span style="position:absolute;right:1px;bottom:0;font-size:.44em">🌿</span>' : '') +
+        '</button>';
+    });
+    h += '</div></div>';
+    h += '<div class="row center tiny muted" style="gap:10px;margin-top:8px;justify-content:center;flex-wrap:wrap">' +
+      '<span>🌿 up</span><span>▢ outlined = wants a decision</span><span>green = planted out</span></div>';
+
+    /* what is coming, grouped by what the app wants you to do */
+    const groups = { check:[], late:[], due:[], waiting:[], growing:[], out:[], failed:[] };
+    Trays.filled(t.id).forEach(c => { const st = Trays.state(c, t); (groups[st.k] = groups[st.k] || []).push([c, st]); });
+    const order = [["late","Overdue to sprout"],["check","Due to sprout — did they?"],["due","Ready for the garden"],
+                   ["waiting","Still coming"],["growing","Growing on"],["out","In the garden"],["failed","Did not come up"]];
+    order.forEach(g => {
+      const arr = groups[g[0]] || []; if(!arr.length) return;
+      h += '<div class="sec"><h2>' + g[1] + '</h2><span class="tiny muted">' + arr.length + '</span></div>' +
+        '<div class="card pad0"><div class="list">';
+      arr.forEach(pair => {
+        const c = pair[0], st = pair[1], p = Trays.plan(c, t);
+        h += '<button class="item" onclick="TrayUI.cell(\'' + c.id + '\')"><div class="av">' + cropEmoji(c.crop_id) + '</div>' +
+          '<div class="grow"><div class="b">' + esc(cropName(c.crop_id)) +
+            (c.variety ? ' · <span class="tiny">' + esc(c.variety) + '</span>' : '') +
+            ' <span class="tiny muted">cell ' + (num(c.idx, 0) + 1) + '</span></div>' +
+          '<div class="tiny muted">' + esc(st.t) + '</div>' +
+          (p && p.harvest && !c.out_on ? '<div class="tiny muted">First harvest around ' + fmtY(p.harvest) + '</div>' : '') +
+          '</div><span class="go">›</span></button>';
+      });
+      h += '</div></div>';
+    });
+
+    if(r) h += '<div class="note ' + (r.pct >= 70 ? "g" : r.pct >= 40 ? "w" : "d") + '" style="margin-top:12px">🧪 <b>' +
+      r.pct + '% germination</b> across ' + r.cells + ' cell' + (r.cells === 1 ? "" : "s") + ' you have judged. ' +
+      'That is a real measurement of the seed you actually own — better than anything printed on the packet.' +
+      '</div>';
+
+    return h;
+  },
+
+  /* ============================================================
+     TAPPING A CELL
+     ============================================================ */
+  tap(cellId){
+    const c = DB.find("traycells", cellId); if(!c) return;
+    haptic();
+    if(TrayUI.brush && !c.out_on){
+      Trays.sow(cellId, {
+        crop_id: TrayUI.brush.crop_id, variety: TrayUI.brush.variety || null,
+        variety_id: TrayUI.brush.variety_id || null, seed_id: TrayUI.brush.seed_id || null,
+        seeds_sown: TrayUI.brush.seeds_sown || 2
+      });
+      return Seeds.render();
+    }
+    if(!c.crop_id) return TrayUI.sowSheet(cellId);
+    TrayUI.cell(cellId);
+  },
+
+  cell(cellId){
+    const c = DB.find("traycells", cellId); if(!c) return;
+    const t = DB.find("trays", c.tray_id);
+    const p = Trays.plan(c, t), st = Trays.state(c, t);
+    const sd = c.seed_id ? DB.find("seeds", c.seed_id) : null;
+
+    let h = '<div class="row" style="gap:12px;margin-bottom:12px"><div style="font-size:2.4rem">' + cropEmoji(c.crop_id) + '</div>' +
+      '<div class="grow"><div class="b" style="font-size:1.1rem">' + esc(cropName(c.crop_id)) + '</div>' +
+      '<div class="tiny muted">' + esc(t ? t.name : "") + ' · cell ' + (num(c.idx, 0) + 1) +
+        (c.variety ? ' · ' + esc(c.variety) : '') + '</div>' +
+      '<div class="tiny muted">' + esc(st.t) + '</div></div></div>';
+
+    if(p){
+      h += '<div class="card"><table class="mini">' +
+        '<tr><th>Sown</th><td>' + fmtY(p.sownISO) + '</td></tr>' +
+        '<tr><th>Should sprout</th><td>' + fmt(p.sproutFrom) + ' – ' + fmt(p.sproutTo) +
+          ' <span class="tiny muted">(' + p.crop.germ[0] + '–' + p.crop.germ[1] + ' days)</span></td></tr>' +
+        (p.harden ? '<tr><th>Harden off</th><td>' + fmtY(p.harden) + '</td></tr>' : '') +
+        (p.out ? '<tr><th>Plant out</th><td>' + fmtY(p.out) +
+          (p.weeksInTray ? ' <span class="tiny muted">(' + p.weeksInTray + ' weeks in the tray)</span>' : '') + '</td></tr>'
+          : '<tr><th>Plant out</th><td class="muted">This crop has no published indoor window — it is usually sown where it grows.</td></tr>') +
+        (p.harvest ? '<tr><th>First harvest</th><td>' + fmtY(p.harvest) + '</td></tr>' : '') +
+        (sd ? '<tr><th>From packet</th><td>' + esc(sd.name) + (sd.brand ? ' · ' + esc(sd.brand) : '') + '</td></tr>' : '') +
+        '<tr><th>Seeds in this cell</th><td>' + num(c.seeds_sown, 1) + '</td></tr>' +
+        '</table></div>';
+      h += '<div class="tiny muted" style="margin-top:8px">Planting it out keeps the sowing date above, so the harvest projection counts from the seed rather than from the day it reached the bed.</div>';
+    }
+
+    if(c.out_on){
+      h += '<div class="note g" style="margin-top:12px">🪴 Planted out ' + fmtY(c.out_on) +
+        (c.bed_id && DB.find("beds", c.bed_id) ? ' into <b>' + esc(DB.find("beds", c.bed_id).name) + '</b>' : '') + '.</div>';
+      if(c.planting_id && DB.find("plantings", c.planting_id))
+        h += '<button class="btn ghost block" style="margin-top:10px" onclick="closeSheet();setTimeout(function(){Garden.open(\'' +
+          c.bed_id + '\')},250)">Open that bed →</button>';
+    } else {
+      h += '<div class="sec"><h2>Did it come up?</h2></div><div class="row" style="gap:8px">' +
+        '<button class="btn ' + (c.sprouted === "1" ? "" : "ghost") + ' grow" onclick="TrayUI.mark(\'' + c.id + '\',true)">🌿 Yes</button>' +
+        '<button class="btn ' + (c.sprouted === "0" ? "danger" : "ghost") + ' grow" onclick="TrayUI.mark(\'' + c.id + '\',false)">✕ No</button></div>';
+      if(c.sprouted === "1" && c.sprouted_on)
+        h += '<div class="tiny muted" style="margin-top:6px">Recorded as sprouting on ' + fmtY(c.sprouted_on) + '.</div>';
+
+      if(c.sprouted !== "0")
+        h += '<button class="btn block" style="margin-top:12px" onclick="TrayUI.outOne(\'' + c.id + '\')">🪴 Plant this out →</button>';
+      h += '<div class="row" style="gap:8px;margin-top:8px">' +
+        '<button class="btn ghost grow" onclick="TrayUI.sowSheet(\'' + c.id + '\')">Edit what is sown here</button>' +
+        '<button class="btn ghost" onclick="TrayUI.clear(\'' + c.id + '\')">Empty</button></div>';
+    }
+    openSheet("Cell " + (num(c.idx, 0) + 1), h);
+  },
+
+  mark(cellId, up){
+    Trays.mark(cellId, up);
+    closeSheet(); Seeds.render();
+    toast(up ? "Recorded as up 🌿" : "Recorded as a miss");
+    if(!up) return;
+    /* a tray is real evidence about a packet, and the packet's printed rate is
+       a claim. Offer the swap; never make it silently — she may have let it dry out. */
+    const c = DB.find("traycells", cellId);
+    if(!c || !c.seed_id) return;
+    const sd = DB.find("seeds", c.seed_id); if(!sd) return;
+    const sibs = DB.where("traycells", x => x.seed_id === c.seed_id);
+    const r = Trays.rate(sibs);
+    if(!r || r.cells < 6) return;
+    if(sd.germ_rate && Math.abs(num(sd.germ_rate) - r.pct) < 12) return;
+    setTimeout(() => confirmSheet("Update this packet's germination?",
+      "Across " + r.cells + " cells of " + sd.name + " you have had " + r.pct + "% come up" +
+      (sd.germ_rate ? ", against the " + sd.germ_rate + "% currently recorded" : "") +
+      ". Your own tray is better evidence than the packet. The app uses this figure to work out how much to sow.",
+      "Use " + r.pct + "%", () => { DB.update("seeds", sd.id, { germ_rate: r.pct }); Seeds.render(); toast("Packet updated"); }), 260);
+  },
+
+  clear(cellId){
+    Trays.clear(cellId); closeSheet(); Seeds.render(); toast("Cell emptied");
+  },
+
+  /* ============================================================
+     SOWING
+     ============================================================ */
+  pickBrush(){
+    TrayUI.chooseSeed("Sow into cells", pick => {
+      TrayUI.brush = pick; closeSheet(); Seeds.render();
+      toast("Tap cells to sow " + cropName(pick.crop_id));
+    });
+  },
+  sowSheet(cellId){
+    TrayUI.chooseSeed("What is in this cell?", pick => {
+      Trays.sow(cellId, { crop_id: pick.crop_id, variety: pick.variety || null,
+        variety_id: pick.variety_id || null, seed_id: pick.seed_id || null,
+        seeds_sown: pick.seeds_sown || 2 });
+      closeSheet(); Seeds.render(); toast("Sown");
+    });
+  },
+
+  /* your own packets first — a tray is nearly always sown from one */
+  chooseSeed(title, onPick){
+    const packets = DB.all("seeds").slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    let h = '<p class="muted sm" style="margin-top:0">Pick the packet it came from where you can — the tray then knows the variety, ' +
+      'and what actually sprouts feeds back into that packet\'s germination rate.</p>';
+    h += '<div class="field"><label class="f">Seeds per cell</label>' +
+      '<input type="number" id="tr-n" min="1" max="20" value="2"></div>';
+    if(packets.length){
+      h += '<div class="sec"><h2>Your packets</h2></div><div class="card pad0"><div class="list">';
+      packets.forEach(s => {
+        const v = Seeds.viability(s);
+        h += '<button class="item" data-seed="' + s.id + '"><div class="av">' + cropEmoji(s.crop_id) + '</div>' +
+          '<div class="grow"><div class="b">' + esc(s.name) + (s.variety ? ' · ' + esc(s.variety) : '') + '</div>' +
+          '<div class="tiny muted">' + esc(cropName(s.crop_id)) + (s.brand ? ' · ' + esc(s.brand) : '') +
+            (s.germ_rate ? ' · ' + esc(s.germ_rate) + '% germination' : '') + '</div>' +
+          (v && v.level === "expired" ? '<div class="tiny" style="color:var(--warn)">Past its typical viability — sow it thicker</div>' : '') +
+          '</div><span class="go">›</span></button>';
+      });
+      h += '</div></div>';
+    }
+    h += '<button class="btn ghost block" style="margin-top:12px" id="tr-nocrop">Pick a crop instead (no packet)</button>';
+    openSheet(title, h);
+
+    const seedsPer = () => clamp(num(($("#tr-n") || {}).value, 2), 1, 20);
+    $$("#sheet-body .item[data-seed]").forEach(el => el.onclick = () => {
+      const s = DB.find("seeds", el.dataset.seed); if(!s) return;
+      onPick({ crop_id: s.crop_id, variety: s.variety || null, seed_id: s.id, seeds_sown: seedsPer() });
+    });
+    $("#tr-nocrop").onclick = () => {
+      const n = seedsPer();
+      Garden.cropPicker("Sow which crop?", id => onPick({ crop_id: id, seeds_sown: n }));
+    };
+  },
+
+  /* ============================================================
+     RECORDING RESULTS IN BULK — the realistic way it happens
+     ============================================================ */
+  sproutSheet(){
+    const t = DB.find("trays", TrayUI.open); if(!t) return;
+    const pending = Trays.filled(t.id).filter(c => !c.sprouted && !c.out_on);
+    if(!pending.length) return toast("Nothing waiting on an answer");
+    let h = '<p class="muted sm" style="margin-top:0">Walk the tray and tap what is up. Anything you leave alone stays undecided.</p>';
+    h += '<div class="card pad0"><div class="list">';
+    pending.forEach(c => {
+      h += '<div class="item"><div class="av">' + cropEmoji(c.crop_id) + '</div>' +
+        '<div class="grow"><div class="b">' + esc(cropName(c.crop_id)) + ' <span class="tiny muted">cell ' + (num(c.idx, 0) + 1) + '</span></div>' +
+        '<div class="tiny muted">' + esc(Trays.state(c, t).t) + '</div></div>' +
+        '<div class="row" style="gap:6px">' +
+        '<button class="chip good" onclick="TrayUI.quick(\'' + c.id + '\',true)">🌿</button>' +
+        '<button class="chip bad" onclick="TrayUI.quick(\'' + c.id + '\',false)">✕</button></div></div>';
+    });
+    h += '</div></div>';
+    openSheet("What came up?", h);
+  },
+  quick(cellId, up){
+    Trays.mark(cellId, up);
+    Seeds.render();
+    TrayUI.sproutSheet();
+  },
+
+  /* ============================================================
+     OUT INTO THE GARDEN
+     ============================================================ */
+  outOne(cellId){
+    const c = DB.find("traycells", cellId); if(!c) return;
+    TrayUI.pickBed("Plant it where?", bedId => {
+      const r = Trays.plantOut(cellId, bedId);
+      closeSheet();
+      if(!r || r.error) return toast(r && r.error ? r.error : "Could not plant that out");
+      Seeds.render();
+      toast(cropName(c.crop_id) + " planted into " + r.bed.name);
+    });
+  },
+  outSheet(){
+    const t = DB.find("trays", TrayUI.open); if(!t) return;
+    const ready = Trays.filled(t.id).filter(c => !c.out_on && c.sprouted !== "0");
+    if(!ready.length) return toast("Nothing ready to go out");
+    const now = ready.filter(c => Trays.state(c, t).k === "due");
+    let h = '<p class="muted sm" style="margin-top:0">' + ready.length + ' seedling' + (ready.length === 1 ? "" : "s") +
+      ' could go out' + (now.length ? ', ' + now.length + ' of which the app thinks ' + (now.length === 1 ? "is" : "are") + ' ready now' : '') +
+      '. Each becomes a planting that keeps its original sowing date.</p>';
+    h += '<div class="note w">Check your own frost dates before moving anything tender outside — the app works from ten-year medians, and a late frost does not read them.</div>';
+    h += '<div class="card pad0" style="margin-top:12px"><div class="list">';
+    ready.forEach(c => {
+      const st = Trays.state(c, t);
+      h += '<button class="item" onclick="closeSheet();setTimeout(function(){TrayUI.outOne(\'' + c.id + '\')},220)">' +
+        '<div class="av">' + cropEmoji(c.crop_id) + '</div><div class="grow">' +
+        '<div class="b">' + esc(cropName(c.crop_id)) + (c.variety ? ' · ' + esc(c.variety) : '') + '</div>' +
+        '<div class="tiny ' + (st.k === "due" ? '" style="color:var(--green-600)' : 'muted') + '">' + esc(st.t) + '</div></div>' +
+        '<span class="go">›</span></button>';
+    });
+    h += '</div></div>';
+    h += '<button class="btn block" style="margin-top:12px" onclick="TrayUI.outAll()">🪴 Plant all ' + ready.length + ' into one bed</button>';
+    openSheet("Plant out", h);
+  },
+  outAll(){
+    const t = DB.find("trays", TrayUI.open); if(!t) return;
+    TrayUI.pickBed("Plant them all where?", bedId => {
+      const made = Trays.plantAllOut(t.id, bedId);
+      closeSheet(); Seeds.render();
+      const bed = DB.find("beds", bedId);
+      toast(made.length ? made.length + " planted into " + bed.name : "No room in that bed");
+    });
+  },
+
+  pickBed(title, onPick){
+    const beds = DB.all("beds");
+    if(!beds.length) return toast("Make a bed on the Garden tab first");
+    let h = '<div class="card pad0"><div class="list">';
+    beds.forEach(b => {
+      const bb = Geom.bed(b);
+      const n = Geom.live(b.id).length;
+      h += '<button class="item" data-bed="' + b.id + '"><div class="av">🪴</div>' +
+        '<div class="grow"><div class="b">' + esc(b.name) + '</div>' +
+        '<div class="tiny muted">' + Units.dims(Geom.W(bb), Geom.H(bb)) + ' · ' + Units.area(Geom.areaSqFt(bb)) +
+          ' · ' + n + ' planted' + (b.plot_id && DB.find("plots", b.plot_id) ? ' · ' + esc(DB.find("plots", b.plot_id).name) : '') +
+        '</div></div><span class="go">›</span></button>';
+    });
+    h += '</div></div>';
+    openSheet(title, h);
+    $$("#sheet-body .item[data-bed]").forEach(el => el.onclick = () => onPick(el.dataset.bed));
+  },
+
+  /* ============================================================
+     MAKING AND EDITING A TRAY
+     ============================================================ */
+  newTray(){
+    openSheet("New tray",
+      '<div class="field"><label class="f">Name</label><input type="text" id="tn-name" placeholder="Tomatoes and peppers"></div>' +
+      '<div class="grid2" style="margin-top:12px">' +
+        '<div><label class="f">Cells across</label><input type="number" id="tn-c" value="6" min="1" max="12"></div>' +
+        '<div><label class="f">Cells down</label><input type="number" id="tn-r" value="4" min="1" max="12"></div></div>' +
+      '<div class="grid2" style="margin-top:12px">' +
+        '<div><label class="f">Sown on</label><input type="date" id="tn-d" value="' + iso(today()) + '"></div>' +
+        '<div><label class="f">Where it lives</label><input type="text" id="tn-loc" placeholder="Windowsill, under lights"></div></div>' +
+      '<div class="row between" style="margin-top:14px"><div><div class="b sm">On a heat mat</div>' +
+        '<div class="tiny muted">Worth noting — it changes what germinates and how fast.</div></div>' +
+        '<button class="switch" id="tn-heat"></button></div>' +
+      '<button class="btn block" style="margin-top:16px" onclick="TrayUI.saveNew()">Create tray</button>');
+    const g = $("#tn-heat"); if(g) g.onclick = () => g.classList.toggle("on");
+    setTimeout(() => { const el = $("#tn-name"); if(el) el.focus(); }, 300);
+  },
+  saveNew(){
+    const t = Trays.create({
+      name: ($("#tn-name").value || "").trim() || ("Tray " + (DB.count("trays") + 1)),
+      cols: num($("#tn-c").value, 6), rows: num($("#tn-r").value, 4),
+      sown_on: $("#tn-d").value || iso(today()),
+      location: ($("#tn-loc").value || "").trim(),
+      heat_mat: $("#tn-heat").classList.contains("on")
+    });
+    closeSheet(); TrayUI.view = "trays"; TrayUI.show(t.id);
+    toast("Tray created — tap a cell to sow it");
+  },
+
+  menu(){
+    const t = DB.find("trays", TrayUI.open); if(!t) return;
+    openSheet("Tray settings",
+      '<div class="field"><label class="f">Name</label><input type="text" id="te-name" value="' + esc(t.name) + '"></div>' +
+      '<div class="grid2" style="margin-top:12px">' +
+        '<div><label class="f">Cells across</label><input type="number" id="te-c" value="' + num(t.cols, 6) + '" min="1" max="12"></div>' +
+        '<div><label class="f">Cells down</label><input type="number" id="te-r" value="' + num(t.rows, 4) + '" min="1" max="12"></div></div>' +
+      '<div class="grid2" style="margin-top:12px">' +
+        '<div><label class="f">Sown on</label><input type="date" id="te-d" value="' + esc(t.sown_on || "") + '"></div>' +
+        '<div><label class="f">Where it lives</label><input type="text" id="te-loc" value="' + esc(t.location || "") + '"></div></div>' +
+      '<div class="field"><label class="f">Notes</label><textarea id="te-notes">' + esc(t.notes || "") + '</textarea></div>' +
+      '<div class="tiny muted">Shrinking the grid only drops empty cells — a cell you have sown is a record and is never thrown away to fit.</div>' +
+      '<button class="btn block" style="margin-top:14px" onclick="TrayUI.saveEdit()">Save</button>' +
+      '<button class="btn danger block" style="margin-top:8px" onclick="TrayUI.del()">Delete this tray</button>');
+  },
+  saveEdit(){
+    const t = DB.find("trays", TrayUI.open); if(!t) return;
+    Trays.resize(t.id, num($("#te-c").value, 6), num($("#te-r").value, 4));
+    DB.update("trays", t.id, {
+      name: ($("#te-name").value || "").trim() || t.name,
+      sown_on: $("#te-d").value || t.sown_on,
+      location: ($("#te-loc").value || "").trim(),
+      notes: ($("#te-notes").value || "").trim()
+    });
+    Cal.rebuild();
+    closeSheet(); Seeds.render(); toast("Tray saved");
+  },
+  del(){
+    const t = DB.find("trays", TrayUI.open); if(!t) return;
+    const s = Trays.summary(t);
+    confirmSheet("Delete " + t.name + "?",
+      s.out ? s.out + " seedling" + (s.out === 1 ? " has" : "s have") + " already been planted out. Those plantings stay in the garden; only the tray record goes."
+            : "The tray and everything recorded in it goes. Seed packets are not touched.",
+      "Delete", () => { Trays.remove(t.id); TrayUI.back(); closeSheet(); toast("Tray deleted"); }, true);
+  }
+};
+
+/* ---------- fold it into the Seeds tab ---------- */
+(function wireTrays(){
+  const orig = Seeds.render;
+  Seeds.render = function(){
+    const box = $("#s-seeds");
+    if(TrayUI.view === "trays"){
+      box.innerHTML = TrayUI.tabs() + (TrayUI.open ? TrayUI.detail() : TrayUI.list());
+      return;
+    }
+    orig.call(Seeds);
+    box.innerHTML = TrayUI.tabs() + box.innerHTML;
+    /* the search box loses its handler when the markup is re-wrapped */
+    const qi = $("#sd-q");
+    if(qi) qi.oninput = e => { Seeds.q = e.target.value; Seeds.render();
+      setTimeout(() => { const n = $("#sd-q"); if(n){ n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }, 0); };
+  };
+})();
 </script>
 
 <script>
@@ -13717,15 +14999,23 @@ const Vision = {
       const blocked = ((j.promptFeedback || {}).blockReason) || "";
       throw new Error(blocked ? "The service refused that image (" + blocked + ")." : "The service returned nothing.");
     }
-    return (((cand.content || {}).parts) || []).map(p => p.text || "").join("").trim();
+    const out = (((cand.content || {}).parts) || []).map(p => p.text || "").join("").trim();
+    /* A thinking model can burn the whole output budget on reasoning and hand
+       back a candidate with no parts at all. That is not a bad photo and must
+       not be reported as one — it is this app asking for too little room. */
+    if(!out && cand.finishReason === "MAX_TOKENS") throw new Error("truncated");
+    if(!out && cand.finishReason === "SAFETY") throw new Error("The service refused that image.");
+    return out;
   },
 
   /* same, but insists on a JSON object and hands it back parsed */
-  async json(photo, prompt){
-    const txt = await Vision.ask(photo, prompt, { json:true, maxTokens: 900 });
+  async json(photo, prompt, opts){
+    opts = opts || {};
+    const txt = await Vision.ask(photo, prompt, { json:true, maxTokens: opts.maxTokens || 900 });
     const m = txt.match(/\{[\s\S]*\}/);
-    if(!m) throw new Error("no-json");
-    return JSON.parse(m[0]);
+    if(!m) throw new Error(opts.what === "survey" ? "no-json-survey" : "no-json");
+    try{ return JSON.parse(m[0]); }
+    catch(e){ throw new Error(opts.what === "survey" ? "no-json-survey" : "no-json"); }
   },
 
   /* plain-language failures — a gardener should never see a status code alone */
@@ -13733,6 +15023,8 @@ const Vision = {
     const m = String(e && e.message || e || "");
     if(m === "no-key")   return "No AI key connected yet. Settings → The assistant → Connect.";
     if(m === "no-photo") return "Take or choose a photo first.";
+    if(m === "truncated") return "The model ran out of room before it answered. Try again, or pick a lighter model in Settings.";
+    if(m === "no-json-survey") return "Could not read that photo of the site. The survey still works — your own answers are what it leans on most.";
     if(m === "no-json")  return "Could not make sense of the packet. Try a straighter, better-lit shot of the front.";
     if(/40[13]/.test(m)) return "The API key was rejected. Check it in Settings.";
     if(/404/.test(m))    return "That model is not available on your key. Settings → The assistant → Refresh models from my key.";
@@ -14478,7 +15770,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-07.2";
+const BUILD = "2026-08-07.3";
 
 const Updater = {
   prompt: null, installed: false,

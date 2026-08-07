@@ -136,25 +136,86 @@ const MicroUI = {
     openSheet("Survey · " + (c.i + 1) + " of 4", h, () => MicroUI.camStop());
   },
 
+  /* ---------- the live view ----------
+     Three things were wrong with this and all three had the same root: the
+     video was dropped into the sheet at whatever size the sensor felt like.
+     It ran taller than the phone so the shutter sat below the fold; the
+     square `ideal` in Cam.rear made the browser crop the sensor, which reads
+     as the camera zooming itself in; and there was no way to zoom on purpose.
+
+     Now the stage is a fixed slice of the screen, the frame is requested at
+     the sensor's native shape and letterboxed rather than cropped, and pinch
+     applies a digital zoom that the CAPTURE honours as well as the preview —
+     so what is framed is what is recorded. */
+  zoom: 1,
+  MAXZOOM: 4,
+
   async camStart(){
     const wrap = $("#mc-cam"); if(!wrap) return;
     if(!Cam.supported()){ toast("Live camera needs https — using your camera app"); return MicroUI.pick(true); }
     try{
       MicroUI.camStop();
-      MicroUI.stream = await Cam.rear();
-      wrap.innerHTML = '<video id="mcfeed" playsinline autoplay muted></video>' +
+      MicroUI.zoom = 1;
+      MicroUI.stream = await Cam.rear({ native: true });
+      wrap.innerHTML =
+        '<div class="camstage" id="mc-stage"><video id="mcfeed" playsinline autoplay muted></video>' +
+        '<span class="ztag" id="mc-ztag" style="display:none">1.0×</span>' +
+        '<span class="chint">Pinch to zoom · the whole frame is what gets measured</span></div>' +
         '<button class="btn block" style="margin-top:8px" onclick="MicroUI.snap()">◉ Capture</button>';
       const v = $("#mcfeed"); v.srcObject = MicroUI.stream; await v.play();
+      MicroUI.bindPinch();
     }catch(e){ toast("Camera blocked — using your photo library"); MicroUI.pick(true); }
   },
-  camStop(){ Cam.stop(MicroUI.stream); MicroUI.stream = null; },
+  camStop(){ Cam.stop(MicroUI.stream); MicroUI.stream = null; MicroUI.zoom = 1; },
+
+  bindPinch(){
+    const stage = $("#mc-stage"), v = $("#mcfeed");
+    if(!stage || !v) return;
+    let base = 1, start = 0;
+    const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    stage.ontouchstart = e => {
+      if(e.touches.length !== 2) return;
+      e.preventDefault(); base = MicroUI.zoom; start = dist(e.touches);
+    };
+    stage.ontouchmove = e => {
+      if(e.touches.length !== 2 || !start) return;
+      e.preventDefault();
+      MicroUI.setZoom(base * dist(e.touches) / start);
+    };
+    stage.ontouchend = () => { start = 0; };
+    /* a desktop browser gets the same control from the wheel */
+    stage.onwheel = e => { e.preventDefault(); MicroUI.setZoom(MicroUI.zoom * (e.deltaY < 0 ? 1.1 : 1/1.1)); };
+    /* double tap returns to the full frame, which is the one that measures */
+    let last = 0;
+    stage.onclick = () => {
+      const t = Date.now();
+      if(t - last < 320) MicroUI.setZoom(1);
+      last = t;
+    };
+  },
+  setZoom(z){
+    MicroUI.zoom = clamp(z, 1, MicroUI.MAXZOOM);
+    const v = $("#mcfeed"); if(v) v.style.transform = "scale(" + MicroUI.zoom + ")";
+    const tag = $("#mc-ztag");
+    if(tag){
+      tag.textContent = (Math.round(MicroUI.zoom * 10) / 10) + "×";
+      tag.style.display = MicroUI.zoom > 1.02 ? "" : "none";
+    }
+  },
 
   snap(){
     const v = $("#mcfeed"); if(!v) return;
-    const s = Math.min(1, 1400 / Math.max(v.videoWidth, v.videoHeight));
+    /* a stream that has not reported its size yet would produce a 0x0 canvas
+       and a data URL nothing can read — wait rather than save a broken shot */
+    if(!v.videoWidth || !v.videoHeight) return toast("Camera still starting — try again in a moment");
+    const z = clamp(num(MicroUI.zoom, 1), 1, MicroUI.MAXZOOM);
+    /* crop the same centre the preview is showing, so the photo is the frame */
+    const sw = v.videoWidth / z, sh = v.videoHeight / z;
+    const sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2;
+    const s = Math.min(1, 1400 / Math.max(sw, sh));
     const c = document.createElement("canvas");
-    c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
-    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+    c.width = Math.max(1, Math.round(sw * s)); c.height = Math.max(1, Math.round(sh * s));
+    c.getContext("2d").drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
     MicroUI.camStop();
     MicroUI.got(c.toDataURL("image/jpeg", 0.8), c);
   },
@@ -338,7 +399,12 @@ const MicroUI = {
       "bearing_offset_deg is relative to the direction the camera faces: negative left, positive right, roughly -40 to +40 for a phone frame. " +
       "Where you are unsure, say so with a conservative number rather than omitting the field. Do not describe plants or give growing advice.";
 
-    return Vision.json(p.reading, prompt);
+    /* A seed packet is a handful of fields; this asks for a nested object with
+        an obstruction array. Gemini 2.5 spends output tokens on reasoning before
+        it writes anything, so the 900-token default was being consumed entirely
+        by thinking and the answer came back empty — which surfaced to the
+        gardener as the seed-packet error message, mid-skyline-survey. */
+    return Vision.json(p.reading, prompt, { maxTokens: 2600, what: "survey" });
   },
 
   /* ---------- on-device light reading, so this works with no key ---------- */

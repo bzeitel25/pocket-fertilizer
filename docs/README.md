@@ -104,7 +104,21 @@ A tab in the bottom bar. Type, or hold the mic and talk. It's wired to the app's
 ### Journal and season recap
 Log watering, feeding, amendments, treatments, weeding, soil tests, purchases and harvests with weight, count, value, cost and time. The recap computes yield by crop, pounds per square foot by bed, cost per pound, spend breakdown, recurring problems, and written takeaways for next season. Exports to CSV.
 
+### Seed trays
+Alongside the packets, plan the trays you actually sow. Set out the cells, record what went into each one and from which packet, and the app works out the three dates that matter: when it should sprout, when to start hardening it off, and when it can go in the ground — the last never earlier than that crop's own transplant window after your last frost. All three land on the calendar.
+
+Then tell it what happened. Walk the tray and tap what came up. What did not is recorded too, because that is the only honest measurement of what a packet is really doing — and if enough cells have been judged, the app offers to update that packet's germination rate with your figure rather than the printed one.
+
+Planting out picks a bed and creates a real planting that **keeps the original sowing date**. Days to maturity counts from the seed, so a February tomato that reaches the garden in May still projects its harvest from February.
+
+### Pots, planters and window boxes
+A bed does not have to be one shape. A row of half-barrels, six pots on a step, three window boxes — set them up as a single bed made of several containers, with one name, one place on the map and one micro-climate.
+
+They behave like the separate pockets of soil they are: a plant cannot straddle the gap between two pots, and one dropped in a gap is pulled into the nearest container. Growing space counts the containers and not the bench they stand on, which is what the spacing and yield-per-area figures depend on.
+
 ### Inches or centimetres
+Sliders and typed fields both work in whichever system is on — dragging a bed's size in metric steps in whole centimetres, which is finer than the half-inch it replaced.
+
 A **⇄** button sits in the plot strip on the Garden tab, and beside the size line when a bed is open. Tap it and the whole app swaps: bed dimensions, spacing, sow depth, canopy spread, rainfall, watering calls, harvest weights, yield per bed, and temperatures. Settings has the same switch for setting it once and forgetting it.
 
 It changes how figures are shown, not what is recorded. Everything stays stored in one system and is converted where it is drawn, so you can flip back and forth as often as you like and your beds cannot drift a fraction of an inch either way. The growing notes convert too — "thin to 6–8 inches" reads as "thin to 15–20 cm" — and anything the app cannot confidently identify as a measurement is left exactly as written.

@@ -188,6 +188,12 @@ const Units = (() => {
     /* a step size that makes sense for the unit on show */
     lenStep(){ return api.metric ? "0.5" : "0.25"; },
     bigStep(){ return api.metric ? "1" : "0.5"; },
+    /* Slider granularity. Metric gets whole centimetres, which is FINER than
+       the half inch it replaced (1cm vs 1.27cm) as well as being a number the
+       gardener can actually aim at. Bed sizing was stepping 3 inches; 5cm is
+       the nearest round equivalent and again slightly finer. */
+    radiusStep(){ return api.metric ? "1" : "0.5"; },
+    sizeStep(){ return api.metric ? "5" : "3"; },
     waterStep(){ return api.metric ? "0.5" : "0.25"; },
     weightStep(){ return api.metric ? "0.1" : "0.1"; },
 

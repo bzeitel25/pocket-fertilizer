@@ -275,7 +275,20 @@ html[data-theme="dark"] .note.d{color:#f0a6a0}
 .empty{text-align:center;padding:32px 16px;color:var(--text-2)}
 .empty .e{font-size:2.6rem;opacity:.5;display:block;margin-bottom:8px}
 .photo{width:100%;border-radius:var(--radius);display:block;background:var(--surface-2)}
-video#camfeed{width:100%;border-radius:var(--radius);background:#000;display:block;aspect-ratio:3/4;object-fit:cover}
+/* A live camera has to fit on the phone with its shutter button visible without
+   scrolling — the sheet is capped at 92vh and the stage takes a fixed slice of it,
+   so the controls under it are always reachable. object-fit is CONTAIN, not cover:
+   the skyline survey measures the whole frame, and cropping to fill would both
+   look like an unasked-for zoom and quietly falsify the horizon angles. */
+.camstage{position:relative;background:#000;border-radius:var(--radius);overflow:hidden;
+  height:min(50vh,72vw);display:flex;align-items:center;justify-content:center;touch-action:none}
+.camstage video{width:100%;height:100%;object-fit:contain;display:block;transform-origin:50% 50%}
+.camstage .ztag{position:absolute;right:8px;top:8px;background:rgba(0,0,0,.55);color:#fff;
+  padding:2px 9px;border-radius:999px;font-size:.72rem;font-weight:700;pointer-events:none}
+.camstage .chint{position:absolute;left:0;right:0;bottom:6px;text-align:center;color:#fff;
+  font-size:.68rem;opacity:.8;pointer-events:none;text-shadow:0 1px 3px #000}
+video#camfeed{width:100%;border-radius:var(--radius);background:#000;display:block;
+  aspect-ratio:3/4;object-fit:cover;max-height:52vh}
 .spinner{width:18px;height:18px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--green-600);animation:spin .7s linear infinite;display:inline-block;vertical-align:-3px}
 @keyframes spin{to{transform:rotate(360deg)}}
 /* a field the app filled in from a photo — visibly the app's guess, still fully editable */

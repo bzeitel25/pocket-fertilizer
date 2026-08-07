@@ -265,13 +265,17 @@ Garden.plantingSheet = function(p){
 
   /* ---- footprint ---- */
   h += '<div class="card"><div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Footprint</div>';
+  /* the slider itself runs in whatever unit is on show, so a metric gardener
+     drags in whole centimetres rather than in half-inch jumps she cannot see */
   h += '<div class="field"><label class="f">Root zone — keep this clear · <b id="rr-v">' + Units.len(rr) + '</b> radius</label>' +
-    '<input type="range" id="pl-rr" min="1" max="' + Math.max(24, Math.ceil(rc)) + '" step="0.5" value="' + rr +
-    '" oninput="Garden.liveRadius(\'' + p.id + '\',null,this.value)"></div>';
+    '<input type="range" id="pl-rr" min="' + Units.outLen(1) + '" max="' + Units.outLen(Math.max(24, Math.ceil(rc))) +
+    '" step="' + Units.radiusStep() + '" value="' + Units.outLen(rr) +
+    '" oninput="Garden.liveRadius(\'' + p.id + '\',null,Units.inLen(this.value))"></div>';
   h += '<div class="field" style="margin-top:8px"><label class="f">Mature canopy · <b id="rc-v">' + Units.len(rc) + '</b> radius, ' +
     Units.len(Math.round(rc*2)) + ' across</label>' +
-    '<input type="range" id="pl-rc" min="1.5" max="' + Math.max(36, Math.ceil(rc * 1.6)) + '" step="0.5" value="' + rc +
-    '" oninput="Garden.liveRadius(\'' + p.id + '\',this.value,null)"></div>';
+    '<input type="range" id="pl-rc" min="' + Units.outLen(1.5) + '" max="' + Units.outLen(Math.max(36, Math.ceil(rc * 1.6))) +
+    '" step="' + Units.radiusStep() + '" value="' + Units.outLen(rc) +
+    '" oninput="Garden.liveRadius(\'' + p.id + '\',Units.inLen(this.value),null)"></div>';
   h += '<div class="row between" style="margin-top:10px;gap:14px">' +
     '<div><div class="tiny muted">Nudge</div><div class="stepper">' +
       '<button onclick="Garden.resizeBy(\'' + p.id + '\',-1,0)">−</button><span class="v">' + Units.len(Math.round(rc*2)) + '</span>' +
@@ -379,7 +383,7 @@ Garden.liveRadius = function(id, rc, rr){
   const q = DB.find("plantings", id);
   const a = $("#rr-v"); if(a) a.textContent = Units.len(Geom.RR(q));
   const b = $("#rc-v"); if(b) b.textContent = Units.len(Geom.RC(q));
-  const rrEl = $("#pl-rr"); if(rrEl) rrEl.value = Geom.RR(q);
+  const rrEl = $("#pl-rr"); if(rrEl) rrEl.value = Units.outLen(Geom.RR(q));
   Garden.repaint();
 };
 /* repaint the canvas in place, without rebuilding the whole screen */

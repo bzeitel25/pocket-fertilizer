@@ -350,15 +350,23 @@ const Vision = {
       const blocked = ((j.promptFeedback || {}).blockReason) || "";
       throw new Error(blocked ? "The service refused that image (" + blocked + ")." : "The service returned nothing.");
     }
-    return (((cand.content || {}).parts) || []).map(p => p.text || "").join("").trim();
+    const out = (((cand.content || {}).parts) || []).map(p => p.text || "").join("").trim();
+    /* A thinking model can burn the whole output budget on reasoning and hand
+       back a candidate with no parts at all. That is not a bad photo and must
+       not be reported as one — it is this app asking for too little room. */
+    if(!out && cand.finishReason === "MAX_TOKENS") throw new Error("truncated");
+    if(!out && cand.finishReason === "SAFETY") throw new Error("The service refused that image.");
+    return out;
   },
 
   /* same, but insists on a JSON object and hands it back parsed */
-  async json(photo, prompt){
-    const txt = await Vision.ask(photo, prompt, { json:true, maxTokens: 900 });
+  async json(photo, prompt, opts){
+    opts = opts || {};
+    const txt = await Vision.ask(photo, prompt, { json:true, maxTokens: opts.maxTokens || 900 });
     const m = txt.match(/\{[\s\S]*\}/);
-    if(!m) throw new Error("no-json");
-    return JSON.parse(m[0]);
+    if(!m) throw new Error(opts.what === "survey" ? "no-json-survey" : "no-json");
+    try{ return JSON.parse(m[0]); }
+    catch(e){ throw new Error(opts.what === "survey" ? "no-json-survey" : "no-json"); }
   },
 
   /* plain-language failures — a gardener should never see a status code alone */
@@ -366,6 +374,8 @@ const Vision = {
     const m = String(e && e.message || e || "");
     if(m === "no-key")   return "No AI key connected yet. Settings → The assistant → Connect.";
     if(m === "no-photo") return "Take or choose a photo first.";
+    if(m === "truncated") return "The model ran out of room before it answered. Try again, or pick a lighter model in Settings.";
+    if(m === "no-json-survey") return "Could not read that photo of the site. The survey still works — your own answers are what it leans on most.";
     if(m === "no-json")  return "Could not make sense of the packet. Try a straighter, better-lit shot of the front.";
     if(/40[13]/.test(m)) return "The API key was rejected. Check it in Settings.";
     if(/404/.test(m))    return "That model is not available on your key. Settings → The assistant → Refresh models from my key.";
