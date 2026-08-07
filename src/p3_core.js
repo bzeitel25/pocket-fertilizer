@@ -10,7 +10,19 @@ const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll
 const esc = s => String(s === null || s === undefined ? "" : s)
   .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
   .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+/* An id is a primary key, and DB.sqlWrite inserts with OR REPLACE — a
+   collision does not error, it overwrites whatever row already held that id.
+   The old form was a millisecond stamp plus six random base36 characters,
+   which is fine when rows arrive one tap at a time and much thinner than it
+   looks when several hundred are written inside the same millisecond, as an
+   imported garden is. The counter makes two ids from one session incapable
+   of colliding at all; the stamp keeps them from colliding across sessions.
+   Math.random().toString(36) is also allowed to come back short — "0.5" —
+   so the random tail is padded rather than trusted to be six characters. */
+let uidN = 0;
+const uid = () => Date.now().toString(36) +
+  (uidN = (uidN + 1) % 46656).toString(36).padStart(3, "0") +
+  Math.random().toString(36).slice(2, 8).padEnd(6, "0");
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const num = (v, d) => { const n = parseFloat(v); return isFinite(n) ? n : (d || 0); };
 

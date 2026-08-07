@@ -450,6 +450,31 @@ without owning a Mac. `dist/store/SUBMISSION.md` is the full runbook.
 - Contested claims (milk spray, marigolds/nematodes, beetle traps) carry explicit caveats in
   `CLAIM_NOTES`. Keep it that way.
 
+## Ids belong to the database
+
+`DB.insert` **takes** the id rather than defaulting it. Anything a caller passes is
+ignored and a `console.warn` names the table. This is not tidiness:
+
+- `sqlWrite` inserts with `INSERT OR REPLACE`, so an id arriving from outside does not
+  fail on a collision — it overwrites whichever row already held that id, with no error
+  and nothing in the UI to see. It is the one shape of data loss this app cannot detect
+  after the fact.
+- `Object.assign` copies a key even when its value is `undefined`, so the
+  `Object.assign({}, row, { id: undefined })` idiom used in `Garden.duplicateBed` to mean
+  "give this a new id" did the exact opposite: it produced a row whose primary key was
+  `undefined`, invisible to `DB.find` and written to SQLite as a NULL id. It also carried
+  the source row's `created`, so a bed duplicated today claimed it was built last spring.
+
+**To copy a row, use `DB.body(table, row)`** — real columns only, neither the identity nor
+the timestamp of the row it came from. `Share.apply` does the same thing on the import
+side and then rewrites every reference through its old→new map.
+
+`uid()` carries a per-session counter as well as the millisecond stamp. Rows used to
+arrive one tap at a time, where the stamp did most of the work; an imported garden writes
+several hundred inside the same millisecond, which left six random base36 characters
+carrying it alone — and `Math.random().toString(36)` is allowed to come back shorter than
+that. The counter makes two ids from one session incapable of colliding at all.
+
 ## Things that will bite you
 
 - Top-level `const` in a classic script is **not** a property of `window`. The smoke test reaches

@@ -421,11 +421,15 @@ const Garden = {
     });
     closeSheet(); Garden.render(); toast("Bed saved");
   },
+  /* DB.body, not Object.assign({}, row, {id: undefined}) — that idiom read as
+     "give this a new id" and did the reverse, because Object.assign copies a
+     key whose value is undefined. It also carried the original's `created`
+     stamp, so a bed duplicated today claimed to have been built last spring. */
   duplicateBed(){
-    const b = DB.find("beds", APP.bedId);
-    const nb = DB.insert("beds", Object.assign({}, b, { id: undefined, name: b.name + " (copy)" }));
+    const b = Geom.bed(DB.find("beds", APP.bedId)); if(!b) return;
+    const nb = DB.insert("beds", Object.assign(DB.body("beds", b), { name: b.name + " (copy)" }));
     DB.where("plantings", p => p.bed_id === b.id && p.status !== "removed").forEach(p =>
-      DB.insert("plantings", Object.assign({}, p, { id: undefined, bed_id: nb.id })));
+      DB.insert("plantings", Object.assign(DB.body("plantings", p), { bed_id: nb.id })));
     closeSheet(); Garden.open(nb.id); toast("Bed duplicated");
   },
   clearBed(){

@@ -153,6 +153,16 @@ const DB = (() => {
     loaded = true;
   }
 
+  /* uid() cannot repeat itself within a session, so this only ever has
+     anything to do against ids already loaded from the vault — including
+     any written by an older build with a shorter random tail, or after the
+     device clock has been wound back. */
+  function freshId(t){
+    let id = uid();
+    for(let i = 0; i < 12 && cache[t].some(r => r.id === id); i++) id = uid();
+    return id;
+  }
+
   /* ---- repository API ---- */
   const api = {
     get engine(){ return engine; },
@@ -163,11 +173,38 @@ const DB = (() => {
     where: (t, fn) => (cache[t] || []).filter(fn),
     count: t => (cache[t] || []).length,
 
+    /* The id belongs to the database, never to the caller.
+       Two reasons it is taken rather than defaulted:
+
+       · sqlWrite inserts with OR REPLACE, so an id arriving from outside —
+         a duplicated row, a row rebuilt from an imported file — does not
+         fail on a collision. It quietly overwrites whichever row already
+         held it, which is the one shape of data loss this app cannot see.
+       · Object.assign copies a key even when its value is undefined, so the
+         `{id: undefined}` idiom used for "give this a new id" did the exact
+         opposite: it produced a row with no primary key at all, invisible to
+         DB.find and written to SQLite as a NULL id.
+
+       Anything wanting to copy a row should use DB.body() below. */
     insert(t, obj){
-      const row = Object.assign({ id: uid(), created: new Date().toISOString() }, obj);
+      const row = Object.assign({ created: new Date().toISOString() }, obj);
+      if("id" in row && row.id) console.warn("DB.insert: ignoring a caller-supplied id on " + t + " — use DB.body() to copy a row");
+      row.id = freshId(t);
       SCHEMA[t].forEach(c => { if(!(c in row)) row[c] = null; });
       cache[t].push(row); sqlWrite("insert", t, row); save();
       return row;
+    },
+
+    /* a copy of a row ready to be inserted as a NEW one: real columns only,
+       carrying neither the identity nor the creation stamp of the row it came
+       from. A duplicate made today should not claim it was made last spring. */
+    body(t, row){
+      const out = {};
+      (SCHEMA[t] || []).forEach(c => {
+        if(c === "id" || c === "created") return;
+        out[c] = (row && row[c] !== undefined) ? row[c] : null;
+      });
+      return out;
     },
     update(t, id, patch){
       const row = api.find(t, id); if(!row) return null;

@@ -2029,7 +2029,11 @@ check("nothing is asked about a garden with no surveyed spots", () => {
   w.DB.bulkRemove("sites", () => true);
   w.Micro.invalidate();
   const n = w.MicroLog.pending().length;
-  keep.forEach(r => w.DB.insert("sites", r));
+  /* put the surveys back through the front door — DB.body, because an id is
+     the database's to give and re-inserting one verbatim is how a row gets
+     silently overwritten. Nothing looks a site up by id; Micro resolves them
+     by scope and ref_id, both of which come across. */
+  keep.forEach(r => w.DB.insert("sites", w.DB.body("sites", r)));
   w.Micro.invalidate();
   return n === 0; });
 
@@ -2772,6 +2776,67 @@ check("the sheet is honest that this is a file and not an account connection", (
   const h = w.document.getElementById("sheet-body").innerHTML || "";
   return /no server/i.test(h) && /import/i.test(h); });
 w.closeSheet();
+
+/* ============================================================
+   IDENTITY — every new row gets its own
+
+   sqlWrite inserts with OR REPLACE, so an id supplied from outside does
+   not fail on a collision: it overwrites the row already holding it.
+   That is the one shape of data loss the app cannot detect afterwards,
+   which is why the id is taken from the caller rather than defaulted.
+   ============================================================ */
+check("uid never repeats itself, even a thousand rows inside one millisecond", () => {
+  const seen = {}, ids = [];
+  for(let i = 0; i < 5000; i++) ids.push(w.eval("uid()"));
+  ids.forEach(i => seen[i] = (seen[i] || 0) + 1);
+  return Object.keys(seen).length === 5000 && ids.every(i => i.length >= 12); });
+check("an inserted row always has a real id", () => {
+  const r = w.DB.insert("plots", { name:"Identity test" });
+  return !!r.id && typeof r.id === "string" && w.DB.find("plots", r.id) === r; });
+check("an id passed in by a caller is ignored, not honoured", () => {
+  const first = w.DB.insert("plots", { name:"Original plot" });
+  const second = w.DB.insert("plots", Object.assign(w.DB.body("plots", first), { id: first.id, name:"Impostor" }));
+  return second.id !== first.id && w.DB.find("plots", first.id).name === "Original plot"; });
+check("the {id: undefined} idiom can no longer produce a row with no key", () => {
+  const r = w.DB.insert("plots", { id: undefined, name:"Undefined id test" });
+  return !!r.id && w.DB.all("plots").every(p => !!p.id); });
+check("DB.body copies the columns but neither the identity nor the age of the row", () => {
+  const src = w.DB.all("beds")[0];
+  const b = w.DB.body("beds", src);
+  return !("id" in b) && !("created" in b) && b.name === src.name &&
+    Object.keys(b).every(c => w.SCHEMA.beds.indexOf(c) >= 0); });
+const dupSrc = w.DB.insert("beds", { name:"Original bed", shape:"rect", w_in:48, h_in:96,
+  cell_in:12, cols:4, rows:8, sun_hours:8, soil:"loam" });
+w.DB.insert("plantings", { bed_id: dupSrc.id, crop_id:"lettuce", qty:4, status:"growing",
+  px: 12, py: 12, rr: 4, rc: 5, x:1, y:1, w:1, h:1 });
+w.DB.insert("plantings", { bed_id: dupSrc.id, crop_id:"carrot", qty:16, status:"growing",
+  px: 36, py: 60, rr: 1.5, rc: 2, x:3, y:5, w:1, h:1 });
+/* backdated, because a duplicate made in the same millisecond as its
+   original carries an identical timestamp whether it inherited one or not */
+w.DB.update("beds", dupSrc.id, { created: "2025-03-14T09:00:00.000Z" });
+check("duplicating a bed makes a genuinely separate bed", () => {
+  w.APP.bedId = dupSrc.id;
+  w.Garden.duplicateBed();
+  const copy = w.DB.all("beds").filter(b => b.name === "Original bed (copy)")[0];
+  return !!copy && !!copy.id && copy.id !== dupSrc.id &&
+    num0(copy.w_in) === 48 && num0(copy.h_in) === 96 && copy.soil === "loam"; });
+check("its plants are copies with their own ids, pointing at the copy", () => {
+  const copy = w.DB.all("beds").filter(b => b.name === "Original bed (copy)")[0];
+  const orig = w.DB.where("plantings", p => p.bed_id === dupSrc.id);
+  const made = w.DB.where("plantings", p => p.bed_id === copy.id);
+  return made.length === 2 && made.every(p => !!p.id && !orig.some(o => o.id === p.id)) &&
+    made.some(p => p.crop_id === "lettuce") && made.some(p => p.crop_id === "carrot") &&
+    orig.length === 2; });
+check("a duplicate does not inherit the original's creation stamp", () => {
+  const copy = w.DB.all("beds").filter(b => b.name === "Original bed (copy)")[0];
+  const src = w.DB.find("beds", dupSrc.id);
+  return src.created === "2025-03-14T09:00:00.000Z" && copy.created !== src.created &&
+    copy.created > src.created; });
+check("every row in every table has a unique id", () => {
+  return Object.keys(w.SCHEMA).filter(t => t !== "settings").every(t => {
+    const ids = w.DB.all(t).map(r => r.id);
+    return ids.every(Boolean) && new Set(ids).size === ids.length; }); });
+w.APP.bedId = null;
 
 /* ============================================================
    MOVING A GARDEN BETWEEN DEVICES
