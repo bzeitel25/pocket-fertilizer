@@ -528,40 +528,50 @@ check("something past its best is drawn faded", () => {
          !/opacity="0.75"/.test(w.PlantArt.svg(p, { growth:0.9 })); });
 
 /* --- the icon has to be readable, and has to sit inside BOTH circles --- */
-check("the icon sits inside the canopy rather than filling it", () => {
-  const bed = w.Geom.bed(w.DB.find("beds", sb.id));
-  const r = w.Canvas.iconR(bed, 15, 1);
-  return r < 15 && r > 5; });
+/* ============================================================
+   THE ICON IS IDENTIFICATION, NOT A SECOND MEASUREMENT
+
+   It used to be sized off the plant's own canopy, so an apple was
+   an enormous glyph and a carrot a speck — the same thing the two
+   circles already say, said twice and said worse. Every crop now
+   gets the same icon; the circles carry the size.
+   ============================================================ */
 check("PlantArt says how much of its unit circle it fills", () =>
   w.PlantArt.R > 0 && w.PlantArt.R <= 1);
-check("a small crop's icon never spills past its own root zone", () => {
-  /* a carrot on a long row: the bed-relative legibility floor used to win here
-     and drew an emoji wider than the root circle around it */
-  const big = w.DB.insert("beds", { name:"Long row", shape:"rect", w_in:48, h_in:240,
-    cell_in:12, sun_hours:8 });
-  const drawn = w.Canvas.iconR(w.Geom.bed(big), 1.8, 1, 1.5) * w.PlantArt.R;
-  return drawn <= 1.5 && drawn > 0; });
-check("a seedling's icon never spills past the canopy it has grown so far", () => {
+check("every crop on one bed is drawn at exactly the same icon size", () => {
   const bed = w.Geom.bed(w.DB.find("beds", sb.id));
-  const drawn = w.Canvas.iconR(bed, 15, 0.2, 12) * w.PlantArt.R;
-  return drawn <= 15 * 0.2; });
-check("every plant on a real bed is drawn inside its own smaller circle", () => {
+  const sizes = ["carrot","radish","onion","tomato","lettuce","wintersquash","basil"]
+    .filter(id => !!w.crop(id))
+    .map(id => w.Canvas.iconR(bed, w.Geom.canopyR(id, 1), 1, w.Geom.rootR(id, 1)));
+  return sizes.length >= 6 && sizes.every(v => v === sizes[0]) && sizes[0] > 0; });
+check("a sprawling crop no longer dwarfs a root crop", () => {
   const bed = w.Geom.bed(w.DB.find("beds", sb.id));
-  return w.Geom.live(bed.id).every(p => {
-    const rc = w.Geom.RC(p), rr = w.Geom.RR(p);
-    const grown = Math.max(0.18, w.PlantArt.sizeAt(w.PlantArt.growth(p, w.Canvas.date())));
-    const drawn = w.Canvas.iconR(bed, rc, grown, rr) * w.PlantArt.R;
-    return drawn <= Math.min(rr, rc * grown) + 0.01;
-  }); });
-check("the icon leaves a visible gap inside the circle it sits in", () => {
+  const squash = w.Canvas.iconR(bed, w.Geom.canopyR("wintersquash", 1), 1, w.Geom.rootR("wintersquash", 1));
+  const carrot = w.Canvas.iconR(bed, w.Geom.canopyR("carrot", 1), 1, w.Geom.rootR("carrot", 1));
+  return squash === carrot; });
+check("the icon does not depend on the plant's root radius at all", () => {
   const bed = w.Geom.bed(w.DB.find("beds", sb.id));
-  return w.Canvas.iconR(bed, 15, 1, 3) * w.PlantArt.R < 3 * 0.98; });
-check("a seedling icon is smaller than a mature one in the same bed", () => {
+  return w.Canvas.iconR(bed, 15, 1, 1) === w.Canvas.iconR(bed, 15, 1, 20); });
+check("a seedling icon is still smaller than a mature one — the scrubber's whole point", () => {
   const bed = w.Geom.bed(w.DB.find("beds", sb.id));
   return w.Canvas.iconR(bed, 15, 0.2, 12) < w.Canvas.iconR(bed, 15, 1, 12); });
-check("a bigger root zone lets the same plant show a bigger icon", () => {
+check("but never so small it becomes a speck", () => {
   const bed = w.Geom.bed(w.DB.find("beds", sb.id));
-  return w.Canvas.iconR(bed, 15, 1, 2) < w.Canvas.iconR(bed, 15, 1, 6); });
+  return w.Canvas.iconR(bed, 15, 0.02, 12) >= w.Canvas.iconR(bed, 15, 1, 12) * 0.6; });
+check("a bigger bed gets a bigger icon, within bounds, so it stays legible", () => {
+  const small = w.DB.insert("beds", { name:"Icon small", shape:"rect", w_in:24, h_in:24, cell_in:12, sun_hours:8 });
+  const big = w.DB.insert("beds", { name:"Icon big", shape:"rect", w_in:300, h_in:300, cell_in:12, sun_hours:8 });
+  const a = w.Canvas.iconR(w.Geom.bed(small), 15, 1, 6) * w.PlantArt.R;
+  const b = w.Canvas.iconR(w.Geom.bed(big), 15, 1, 6) * w.PlantArt.R;
+  return a >= w.Canvas.ICON_MIN_IN - 0.01 && b <= w.Canvas.ICON_MAX_IN + 0.01 && b > a; });
+check("the root ring is stroked after the icon, so a small plant's circle stays visible", () => {
+  const bed = w.Geom.bed(w.DB.find("beds", sb.id));
+  w.Canvas.showRoots = true;
+  const svg = w.Canvas.svg(bed, { interactive:true });
+  w.Canvas.showRoots = false;
+  const art = svg.indexOf('class="art"');
+  const ring = svg.indexOf('stroke-width="0.32"');
+  return art > 0 && ring > art; });
 check("the canvas draws the icon at the size the canvas decided", () => {
   const bed = w.Geom.bed(w.DB.find("beds", sb.id));
   const svg = w.Canvas.svg(bed, { interactive:true });

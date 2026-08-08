@@ -315,6 +315,21 @@ A tray is also the only honest measurement of what a packet is really doing, so 
 observed across its cells is offered back to the packet's `germ_rate` — as a confirm, never
 silently, because she may have let that tray dry out and knows it.
 
+## The plant icon is identification, not a second measurement
+
+`Canvas.iconR` gives **every crop the same icon size**, derived from the bed
+(`ICON_BASE` of its short side, clamped between `ICON_MIN_IN` and `ICON_MAX_IN`).
+Only growth moves it, because a seedling really is smaller and the scrubber exists to
+show that.
+
+It used to be sized off the plant's own canopy, capped by its root circle. That drew a
+squash as an enormous glyph and a carrot as a speck — the same thing the two circles
+already say, said twice and said worse. There is deliberately **no cap against the
+plant's own circles** now: that cap was solving a problem this app does not have, since
+a dense sowing is ONE planting carrying a quantity rather than sixteen separate points,
+so uniform icons do not pile up. The root ring is stroked **after** the icon, so where a
+small crop's icon covers its circle the measurement is still the thing on top.
+
 ## Moving a garden between devices
 
 `p21_share.js` exports one or more plots as a `.json` file that another copy of the app

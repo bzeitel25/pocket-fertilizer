@@ -61,34 +61,41 @@ const Canvas = {
   ICON_FIT: 0.9,
 
   /* How big to draw the icon. PlantArt draws in a unit circle, so this is a
-     scale factor, and `scale × PlantArt.R` is the radius the drawing actually
-     occupies in inches.
+     scale factor, and `scale × PlantArt.R` is the radius the drawing occupies
+     in inches.
 
-     THE RULE IS CONTAINMENT. Two circles are drawn around every plant — the
-     root zone it needs to itself, at full size whatever the season, and the
-     canopy at the size it has reached on the date being previewed. The icon
-     has to fit inside whichever of those is currently the smaller, or it hides
-     the very measurement the circle was drawn to show. Both failures were real:
-     a radish's emoji came out wider than the radish's own root zone, because a
-     legibility floor measured off the *bed* took no notice of how small the
-     plant was; and any icon sized off the mature canopy spilled past the canopy
-     a seedling had actually grown.
+     THE ICON IS IDENTIFICATION, NOT A SECOND MEASUREMENT. It used to be sized
+     off the plant's own canopy, which meant an apple was drawn as an enormous
+     glyph and a carrot as a speck — the same information the two circles were
+     already carrying, said twice, and said worse. A bed of mixed crops read as
+     a jumble of wildly different-sized stickers.
 
-     Inside that cap the icon still wants to be as large as it usefully can — a
-     fraction of the current canopy, with a floor so a long row of carrots is
-     not a line of specks. But the cap always wins over the floor. Zoom is the
-     answer to a genuinely tiny plant; drawing over its own root zone is not. */
+     So every crop now gets the SAME icon, sized off the bed rather than off the
+     plant. Only two things move it:
+
+       · growth — a seedling really is smaller than the mature plant, and the
+         season scrubber exists to show exactly that;
+       · the bed — a big bed gets a slightly bigger icon so it stays legible,
+         which keeps the whole thing readable at any bed size.
+
+     There is deliberately NO cap against the plant's own root circle. That cap
+     is what produced the disparity in the first place, and it was solving a
+     problem this app does not have: a dense sowing is ONE planting carrying a
+     quantity, not sixteen separate points, so uniform icons do not pile up.
+     The root ring is stroked AFTER the icon, so on a small crop whose icon
+     covers its circle the measurement is still the thing drawn on top. */
+  ICON_BASE: 0.075,       /* icon radius as a fraction of the bed's short side */
+  ICON_MIN_IN: 1.6,       /* never a speck, whatever the bed */
+  ICON_MAX_IN: 7,         /* never a billboard, whatever the bed */
+
   iconR(bed, rc, grown, rr){
-    const can = num(rc, 6) * num(grown, 1);
-    /* rr omitted (a preview with nothing but a canopy to go on) means the
-       canopy is the only circle there is to stay inside of */
-    const inner = (rr === undefined || rr === null) ? can : Math.min(num(rr, can), can);
-    const cap = inner * Canvas.ICON_FIT / PlantArt.R;
-    const floor = Math.min(Geom.W(bed), Geom.H(bed)) * 0.055;
-    const want = Math.max(can * 0.62, floor);
-    /* two places, not one: at a radish's size a tenth of an inch of rounding
-       is the difference between fitting and spilling */
-    return Math.round(Math.min(want, cap) * 100) / 100;
+    const short = Math.min(Geom.W(bed), Geom.H(bed));
+    /* one size for every crop in this bed */
+    const base = clamp(short * Canvas.ICON_BASE, Canvas.ICON_MIN_IN, Canvas.ICON_MAX_IN);
+    /* a seedling is smaller than the grown plant — but never below two-thirds,
+       or an early-season bed becomes unreadable */
+    const g = clamp(num(grown, 1), 0.66, 1);
+    return Math.round(base * g / PlantArt.R * 100) / 100;
   },
 
   /* How big a companion badge should be.
@@ -265,12 +272,14 @@ const Canvas = {
              (f.bad ? "#c9453c" : f.good ? "#2a8c5e" : "#ffffff") + '" stroke-opacity="' +
              (f.bad || f.good ? 0.55 : 0.28) + '" stroke-width="0.35" stroke-dasharray="1.6 1.2"/>';
 
+      h += '<g class="art" transform="scale(' + Canvas.iconR(bed, rc, grown, rr) + ')">' +
+           PlantArt.svg(p, { growth: g }) + '</g>';
+
+      /* after the icon, not before: at a carrot's size the icon is wider than
+         the root circle, and the circle is the part that means something */
       if(Canvas.showRoots || sel)
         h += '<circle r="' + (Math.round(rr*10)/10) + '" fill="none" stroke="' +
              (f.crowded ? "#d98324" : "#f7f3ea") + '" stroke-opacity="0.7" stroke-width="0.32"/>';
-
-      h += '<g class="art" transform="scale(' + Canvas.iconR(bed, rc, grown, rr) + ')">' +
-           PlantArt.svg(p, { growth: g }) + '</g>';
 
       if(num(p.qty, 1) > 1 && rc >= 4)
         h += '<text x="0" y="' + (Math.round((rc * grown + 2.4) * 10) / 10) +
