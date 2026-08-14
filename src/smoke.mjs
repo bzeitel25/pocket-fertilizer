@@ -2342,6 +2342,58 @@ check("it appears in the library, the picker and search", () => {
   w.Library.render();
   const h = w.document.getElementById("s-library").innerHTML;
   return h.indexOf("Lemongrass") > 0 && h.indexOf("UserCrops.open()") > 0; });
+/* ---- the door out of the crop picker ---- */
+let ucPicked = null;
+check("the crop picker offers a way to add one that is not on the list", () => {
+  w.Garden.cropPicker("Which crop is this?", id => { ucPicked = id; });
+  return !!w.document.getElementById("cp-own"); });
+check("what she searched for arrives in the name field", () => {
+  w.document.getElementById("cp-q").value = "Fiddlehead Fern";
+  w.document.getElementById("cp-own").onclick();
+  const n = w.document.getElementById("uc-name");
+  return !!n && n.value === "Fiddlehead Fern"; });
+check("she can back out without losing the picker", () => {
+  const bk = w.document.getElementById("uc-back");
+  if(!bk) return false;
+  bk.onclick();
+  return !!w.document.getElementById("cp-list") && !!w.document.getElementById("cp-own"); });
+w.document.getElementById("cp-q").value = "Fiddlehead Fern";
+w.document.getElementById("cp-own").onclick();
+w.UserCrops.saveForm(null);
+await sleep(140);
+check("saving it hands the crop straight back to whatever asked for one", () =>
+  ucPicked === "my-fiddlehead-fern" && !!w.crop("my-fiddlehead-fern"));
+check("a crop made this way is still hers, never sourced", () =>
+  w.UserCrops.isMine("my-fiddlehead-fern") && w.crop("my-fiddlehead-fern").verified === false);
+check("the library route still lands on the new crop page", () => {
+  /* no onDone, so it behaves as it always did */
+  return w.UserCrops._opts === null || w.UserCrops._opts === undefined; });
+/* the whole point: she is halfway through a packet when she finds the crop
+   is not there, and she must not lose the packet to go and add it */
+w.Seeds.form(null);
+w.document.getElementById("sd-name").value = "Grandma's tea";
+w.document.getElementById("sd-brand").value = "Seed swap";
+w.Seeds.pickCrop();
+w.document.getElementById("cp-q").value = "Sea Kale";
+w.document.getElementById("cp-own").onclick();
+w.UserCrops.saveForm(null);
+await sleep(500);
+check("adding a crop mid-packet returns to the packet with it chosen", () =>
+  val("sd-crop") === "my-sea-kale" && val("sd-cropname") === "Sea Kale");
+check("and nothing she had already typed is lost", () =>
+  val("sd-name") === "Grandma's tea" && val("sd-brand") === "Seed swap");
+check("the packet then saves against her own crop", () => {
+  w.Seeds.save();
+  const s = w.DB.all("seeds").find(x => x.name === "Grandma's tea");
+  return !!s && s.crop_id === "my-sea-kale"; });
+w.DB.bulkRemove("seeds", s => s.crop_id === "my-sea-kale");
+w.UserCrops.remove(w.DB.all("usercrops").find(r => r.slug === "my-sea-kale").id);
+
+w.UserCrops.remove(w.DB.all("usercrops").find(r => r.slug === "my-fiddlehead-fern").id);
+w.closeSheet();
+check("removing the test crops leaves only Lemongrass", () =>
+  w.DB.count("usercrops") === 1 && !w.crop("my-fiddlehead-fern") && !w.crop("my-sea-kale"));
+
 check("her sowing dates drive the calendar like any other crop", () => {
   const ws = w.Season.windows("my-lemongrass");
   return ws.length === 2 && ws.some(x => x.kind === "indoor") && ws.some(x => x.kind === "transplant"); });

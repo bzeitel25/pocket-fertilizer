@@ -13683,15 +13683,25 @@ const UserCrops = {
   EMOJI: ["🌱","🌿","🍃","🌾","🌼","🌸","🌺","🌻","🌷","🪻","💮","🏵️","🍀","🥬","🥕","🥔",
           "🍅","🫑","🌶️","🧄","🧅","🥒","🎃","🍆","🌽","🫘","🍓","🫐","🍇","🍈","🍏","🍐","🌰"],
 
-  open(id){
+  /* opts (all optional):
+       name    seed the Name field — what she typed into the search that found nothing
+       onDone  called with the new slug instead of jumping to the library, so the
+               screen that sent her here can carry on with the crop she just made
+       onBack  render a way back to where she came from, so abandoning this form
+               does not also throw away the half-filled packet behind it       */
+  open(id, opts){
     const row = id ? DB.find("usercrops", id) : null;
+    UserCrops._opts = opts || null;
     const v = (k, d) => row && row[k] !== null && row[k] !== undefined && row[k] !== "" ? row[k] : d;
     const emoji = v("emoji", "🌱");
 
-    let h = '<p class="muted sm" style="margin-top:0">Everything the app does for a built-in crop it will do for this one — spacing, watering, the calendar, rotation, companions. The only difference is that it will always be shown as <b>your figures</b> rather than an extension service\'s.</p>';
+    let h = '';
+    if(opts && opts.onBack)
+      h += '<button class="btn ghost sm" id="uc-back" style="margin-bottom:10px">‹ Back to the crop list</button>';
+    h += '<p class="muted sm" style="margin-top:0">Everything the app does for a built-in crop it will do for this one — spacing, watering, the calendar, rotation, companions. The only difference is that it will always be shown as <b>your figures</b> rather than an extension service\'s.</p>';
 
     h += '<div class="grid2"><div><label class="f">Name</label>' +
-      '<input type="text" id="uc-name" value="' + esc(v("name","")) + '" placeholder="Lemongrass"></div>' +
+      '<input type="text" id="uc-name" value="' + esc(v("name", (opts && opts.name) || "")) + '" placeholder="Lemongrass"></div>' +
       '<div><label class="f">Family</label><select id="uc-fam">' +
       Object.keys(FAMILY).map(k => '<option value="' + k + '"' + (v("fam","aster") === k ? " selected" : "") + '>' +
         esc(FAMILY[k].n) + '</option>').join("") + '</select>' +
@@ -13756,6 +13766,10 @@ const UserCrops = {
       $$("#uc-emoji .chip").forEach(x => x.classList.toggle("on", x === b));
       $("#uc-emoji-v").value = b.dataset.e;
     });
+    if(opts && opts.onBack){
+      const bk = $("#uc-back");
+      if(bk) bk.onclick = () => { UserCrops._opts = null; opts.onBack(); };
+    }
     setTimeout(() => { const el = $("#uc-name"); if(el && !id) el.focus(); }, 300);
   },
 
@@ -13782,9 +13796,17 @@ const UserCrops = {
     };
     if(!id) row.slug = UserCrops.slug(name);
     const saved = UserCrops.save(row, id);
+    const opts = UserCrops._opts; UserCrops._opts = null;
     closeSheet();
     if(APP.tab === "library") Library.render();
     toast(id ? "Saved" : name + " added to your crops");
+    /* she came here from somewhere that wanted a crop — hand it back rather
+       than dropping her into the library and losing what she was doing */
+    if(opts && opts.onDone){
+      const slug = (saved && saved.slug) || row.slug;
+      setTimeout(() => opts.onDone(slug), 60);
+      return;
+    }
     if(!id && saved) setTimeout(() => Library.open(saved.slug), 250);
   },
 
@@ -13837,6 +13859,34 @@ const UserCrops = {
       'No extension service stands behind them — which is exactly why the rest of the app\'s numbers are worth something.' +
       (row ? '<br><button class="btn sm" style="margin-top:8px" onclick="UserCrops.open(\'' + row.id + '\')">Edit these figures</button>' : '') +
       '</div>');
+  };
+
+  /* ---- a way in from the crop picker ----
+     The library is not where she meets the limit. She meets it halfway through
+     adding a seed packet, or standing over a bed, when she searches for the thing
+     in her hand and the list comes back empty. Sending her to another screen to
+     add it would cost her the packet she was typing, so the door is here, in the
+     picker, with what she searched for already in the name field and a way back
+     if she changes her mind. */
+  const origPicker = Garden.cropPicker;
+  Garden.cropPicker = function(title, onPick, bed){
+    origPicker.call(Garden, title, onPick, bed);
+    const list = $("#cp-list");
+    if(!list) return;
+    list.insertAdjacentHTML("afterend",
+      '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">' +
+      '<button class="btn ghost block" id="cp-own">＋ Not here? Add your own crop</button>' +
+      '<div class="tiny muted center" style="margin-top:6px">A regional green, a herb, whatever came back from the seed swap. It behaves like any other crop — the figures are just yours rather than an extension service\'s.</div></div>');
+    const btn = $("#cp-own");
+    if(!btn) return;
+    btn.onclick = () => {
+      const q = $("#cp-q");
+      UserCrops.open(null, {
+        name: q ? String(q.value || "").trim() : "",
+        onDone: slug => onPick(slug),
+        onBack: () => Garden.cropPicker(title, onPick, bed)
+      });
+    };
   };
 
   /* a way in from the crop library */
@@ -16020,7 +16070,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-07.4";
+const BUILD = "2026-08-13.1";
 
 const Updater = {
   prompt: null, installed: false,
