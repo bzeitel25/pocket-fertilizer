@@ -100,7 +100,9 @@ const REQUIRED = [
   ["Units.chip",       "the units switch in the plot strip"],
   ["const Trays",      "seed trays"],
   ["const TrayUI",     "the tray screen"],
-  ["const Groups",     "pots, planters and window boxes"]
+  ["const Groups",     "pots, planters and window boxes"],
+  ["const Feed",       "feeding rates, doses and the schedule"],
+  ["const FeedUI",     "the feeding card, dose sheet and shelf"]
 ];
 const lost = REQUIRED.filter(([marker]) => html.indexOf(marker) < 0);
 if (lost.length && process.argv.indexOf("--force") < 0) {

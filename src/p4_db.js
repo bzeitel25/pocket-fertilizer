@@ -44,7 +44,19 @@ const SCHEMA = {
   traycells:  ["id","tray_id","idx","crop_id","variety","variety_id","seed_id","seeds_sown",
                "sown_on","sprouted_on","sprouted","potted_on","out_on","planting_id","bed_id","notes","created"],
   events:     ["id","date","type","title","crop_id","seed_id","bed_id","planting_id","notes","done","auto","created"],
-  journal:    ["id","date","type","bed_id","planting_id","crop_id","amount","unit","cost","minutes","product","notes","photo_id","created"],
+  /* amendment_id and n_lbs exist so a "feed" row is answerable rather
+     than just readable: which product off the shelf, and how much
+     actual nitrogen it put on that ground. Without the second one the
+     season tally — the only thing standing between a gardener and
+     UMD's "more is not better" — cannot be computed at all. */
+  journal:    ["id","date","type","bed_id","planting_id","crop_id","amount","unit","cost","minutes","product","notes","photo_id","created",
+               "amendment_id","n_lbs"],
+  /* the fertilisers and amendments she actually owns. A real table, so
+     the .sqlite export and the SQL console see it like anything else,
+     and so a product's cost can reach the recap. n/p/k are the label
+     percentages — the bag is the source, and the app says so rather
+     than dressing her own product up as sourced. */
+  amendments: ["id","name","n","p","k","form","organic","lbs_per_bag","cost","notes","created"],
   harvests:   ["id","date","planting_id","bed_id","crop_id","weight","unit","count","value","notes","created"],
   diagnoses:  ["id","date","planting_id","bed_id","crop_id","photo_id","symptoms","result","confidence","treatment","source","notes","created"],
   observations:["id","date","bed_id","ph","moisture","soil_temp","air_temp","rain_in","notes","created"],

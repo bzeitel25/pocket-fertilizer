@@ -720,7 +720,19 @@ const SCHEMA = {
   traycells:  ["id","tray_id","idx","crop_id","variety","variety_id","seed_id","seeds_sown",
                "sown_on","sprouted_on","sprouted","potted_on","out_on","planting_id","bed_id","notes","created"],
   events:     ["id","date","type","title","crop_id","seed_id","bed_id","planting_id","notes","done","auto","created"],
-  journal:    ["id","date","type","bed_id","planting_id","crop_id","amount","unit","cost","minutes","product","notes","photo_id","created"],
+  /* amendment_id and n_lbs exist so a "feed" row is answerable rather
+     than just readable: which product off the shelf, and how much
+     actual nitrogen it put on that ground. Without the second one the
+     season tally — the only thing standing between a gardener and
+     UMD's "more is not better" — cannot be computed at all. */
+  journal:    ["id","date","type","bed_id","planting_id","crop_id","amount","unit","cost","minutes","product","notes","photo_id","created",
+               "amendment_id","n_lbs"],
+  /* the fertilisers and amendments she actually owns. A real table, so
+     the .sqlite export and the SQL console see it like anything else,
+     and so a product's cost can reach the recap. n/p/k are the label
+     percentages — the bag is the source, and the app says so rather
+     than dressing her own product up as sourced. */
+  amendments: ["id","name","n","p","k","form","organic","lbs_per_bag","cost","notes","created"],
   harvests:   ["id","date","planting_id","bed_id","crop_id","weight","unit","count","value","notes","created"],
   diagnoses:  ["id","date","planting_id","bed_id","crop_id","photo_id","symptoms","result","confidence","treatment","source","notes","created"],
   observations:["id","date","bed_id","ph","moisture","soil_temp","air_temp","rain_in","notes","created"],
@@ -11008,8 +11020,14 @@ const Cal = {
         title: "First harvest: " + cropName(p.crop_id), notes:"Roughly " + crop(p.crop_id).dtm + " days from planting." });
     });
 
-    /* prune stale auto events */
-    DB.bulkRemove("events", e => e.auto && !keep[e.auto] && e.done !== "1");
+    /* Prune stale auto events — but only the ones THIS pass generates.
+       Anything wrapping rebuild() to add its own auto events (feeding
+       does) keeps a separate `keep` list, and an unqualified sweep here
+       would delete every one of them a moment before the wrapper put
+       them back: correct in the end, but it churns a row per event on
+       every rebuild and would silently break any wrapper that ran
+       first. Namespace the sweep to the four kinds written above. */
+    DB.bulkRemove("events", e => e.auto && /^(frost|seed|exp|harv):/.test(e.auto) && !keep[e.auto] && e.done !== "1");
   },
 
   forPlanting(p){ if(p) Cal.rebuild(); },
@@ -13943,6 +13961,571 @@ const UserCrops = {
 
 <script>
 /* ============================================================
+   FEEDING — what to feed, how much of it, and when
+
+   The app is called Pocket Fertilizer and until now feeding was a
+   sentence of prose on each crop page. This turns it into a number
+   she can act on, WITHOUT pretending to know things only a soil
+   test can tell her.
+
+   The line this file will not cross:
+
+   · NITROGEN can be recommended blind. It leaches, it is consumed
+     every season, and every extension service publishes a garden
+     rate for it in lb per 1,000 sq ft.
+   · PHOSPHORUS cannot. OSU's own table says apply ZERO bonemeal
+     where the soil test reads above 60 ppm, and UMN's dataset puts
+     the median garden at 68 ppm against 26 ppm in farm fields —
+     because compost carries P and gardens get compost every year.
+     So the app never computes a P dose. It says what a test would
+     have to show first.
+   · POTASSIUM sits between the two: OSU gives a wood-ash rate, but
+     only against a soil test value, and refuses it outright above
+     600 ppm or at pH 7 and over.
+
+   Everything here that is a number came off a publisher's own page.
+   Anything derived rather than published is marked `est` and the UI
+   says so, the same way Habit and the garden plants do it.
+   ============================================================ */
+
+const FEED_SRC = {
+  umdFert: {
+    n:"Fertilizing Vegetable Gardens",
+    org:"University of Maryland Extension, Home & Garden Information Center",
+    url:"https://extension.umd.edu/resource/fertilizing-vegetable-gardens",
+    what:"Nitrogen rates per 1,000 sq ft for general and heavy-feeding vegetables, the analysis of the common high-nitrogen organic fertilisers, the arithmetic for converting a nitrogen rate into a weight of product, and the cup-to-pound weights this app converts with."
+  },
+  osuFert: {
+    n:"Fertilizing your garden: vegetables, fruits and ornamentals (EC 1503)",
+    org:"Oregon State University Extension Service",
+    url:"https://extension.oregonstate.edu/catalog/pub/ec-1503-fertilizing-your-garden-vegetables-fruits-ornamentals",
+    what:"Per-100-square-foot application rates, the phosphorus and potassium tables that are keyed to a soil test, manure nutrient content and first-year availability, wood-ash and lime rates, and the row-and-plant area conversions."
+  },
+  muSide: {
+    n:"Side-dressing: mid-season boost for hungry plants",
+    org:"University of Missouri Extension, Integrated Pest Management (timing table credited to Kansas State University Extension)",
+    url:"https://ipm.missouri.edu/meg/2024/6/side_dressing-dt/",
+    what:"When to side-dress each garden vegetable, which crops should not be side-dressed at all, side-dress rates for blood meal and cottonseed meal, and why nitrogen early on a tomato costs you the fruit."
+  },
+  umnOver: {
+    n:"You might be over-fertilizing your garden",
+    org:"University of Minnesota Extension",
+    url:"https://extension.umn.edu/yard-and-garden-news/you-might-be-over-fertilizing-your-garden",
+    what:"Soil-test phosphorus thresholds above which no phosphorus should be applied, and the statewide garden readings showing most gardens are already well over them."
+  },
+  umnCompost: {
+    n:"Compost and soil organic matter: the more, the merrier?",
+    org:"University of Minnesota Extension",
+    url:"https://extension.umn.edu/yard-and-garden-news/compost-and-soil-organic-matter-more-merrier",
+    what:"What repeated compost applications do to garden phosphorus levels over time."
+  }
+};
+
+/* These are primary references like any other, so they belong on the
+   Sources screen with the rest rather than in a corner of their own.
+   SOURCES is what that screen reads. */
+Object.keys(FEED_SRC).forEach(k => { SOURCES[k] = FEED_SRC[k]; });
+
+/* ============================================================
+   HOW MUCH NITROGEN A SEASON
+
+   UMD states two figures and only two: 2 lb N per 1,000 sq ft as
+   the general vegetable rate, and 3 lb for heavy feeders, naming
+   tomato, broccoli and beet. There is no published third figure for
+   light feeders, so the app derives one and says it derived it.
+   ============================================================ */
+const FEED_RATES = {
+  heavy:  { n1000:3, est:false, src:"umdFert",
+            why:"UMD Extension puts heavy feeders — it names tomato, broccoli and beet — at 3 lb of nitrogen per 1,000 sq ft." },
+  medium: { n1000:2, est:false, src:"umdFert",
+            why:"UMD Extension's general recommendation for vegetable crops is 2 lb of nitrogen per 1,000 sq ft." },
+  light:  { n1000:1, est:true,  src:"umdFert",
+            why:"No extension source states a separate light-feeder rate. This is half the general figure, chosen to sit under it rather than over it — for most of these crops compost alone is enough." }
+};
+
+/* ============================================================
+   WHAT IS ON THE SHELF
+
+   Reference products, each carrying the analysis the source states
+   and nothing more. `form` decides how a weight becomes a household
+   measure; UMD gives both figures:
+
+     meal      1 cup of a dry organic meal ....... 0.33 lb
+     granular  1 cup of a synthetic granular ..... 0.50 lb
+
+   OSU says the same thing from the other end — "1 pound of packaged
+   fertilizer mix usually equals about 2 cups" — so the two agree on
+   granular and only UMD speaks for meals.
+
+   `n`/`p`/`k` are label percentages. A product with no analysis its
+   source states carries `rateOnly` and is never used to compute a
+   dose; the app quotes the published application rate instead.
+   ============================================================ */
+const LB_PER_CUP = { meal:0.33, granular:0.50 };
+
+const AMEND_REF = [
+  /* --- nitrogen, organic --- */
+  { id:"bloodmeal",   n:"Blood meal",        npk:[12,0,0], form:"meal", organic:true, src:"umdFert",
+    note:"Fast for an organic source. Missouri puts it at about 12% nitrogen too, and side-dresses it at 2 lb per 100 sq ft." },
+  { id:"cottonseed",  n:"Cottonseed meal",   npk:[6,2,1],  form:"meal", organic:true, src:"umdFert",
+    note:"UMD gives the label analysis as 6-2-1. Missouri quotes about 7% nitrogen for the same material — a bag can be either, so check yours." },
+  { id:"fishmeal",    n:"Fish meal",         npk:[8,0,0],  form:"meal", organic:true, src:"umdFert", low:true,
+    note:"UMD states a range of 8–10% nitrogen. The app works from 8, the low end, so it errs towards under-applying." },
+  { id:"fishemul",    n:"Fish emulsion",     npk:[5,0,0],  form:"liquid", organic:true, src:"umdFert",
+    note:"A liquid concentrate, diluted before use — there is no honest cup-per-bed figure. Follow the dilution on the bottle." },
+  { id:"organicmix",  n:"Organic blend 7-3-2", npk:[7,3,2], form:"meal", organic:true, src:"osuFert",
+    note:"OSU names 7-3-2 as the common blended organic fertiliser and gives conversions from its own tables to it." },
+
+  /* --- nitrogen, synthetic --- */
+  { id:"nitrateSoda", n:"Nitrate of soda",   npk:[15,0,0], form:"granular", organic:false, src:"umdFert" },
+  { id:"calnitrate",  n:"Calcium nitrate",   npk:[16,0,0], form:"granular", organic:false, src:"umdFert" },
+  { id:"urea",        n:"Urea",              npk:[46,0,0], form:"granular", organic:false, src:"umdFert",
+    note:"Very concentrated — a small measuring error is a large dose. Water it in." },
+  { id:"ammsulf",     n:"Ammonium sulfate 21-0-0", npk:[21,0,0], form:"granular", organic:false, src:"osuFert",
+    note:"OSU's side-dress standard: half a cup per 10 feet of row. Also acidifies, which is useful on alkaline ground and not on acid ground." },
+
+  /* --- balanced mixes --- */
+  { id:"tenten",      n:"10-10-10",          npk:[10,10,10], form:"granular", organic:false, src:"osuFert" },
+  { id:"fifteen",     n:"15-15-15",          npk:[15,15,15], form:"granular", organic:false, src:"osuFert" },
+  { id:"twelve",      n:"12-12-12",          npk:[12,12,12], form:"granular", organic:false, src:"muSide",
+    note:"Missouri side-dresses this at about 3 lb per 100 sq ft." },
+  { id:"fivetenfive", n:"5-10-5",            npk:[5,10,5],  form:"granular", organic:false, src:"osuFert" },
+
+  /* --- things the sources give a RATE for but not an analysis --- */
+  { id:"bonemeal",    n:"Bone meal",  rateOnly:true, nutrient:"P", form:"meal", organic:true, src:"osuFert",
+    note:"Phosphorus, and phosphorus is the one thing this app will not dose blind. OSU's table applies 4 lb per 100 sq ft only where a soil test reads under 25 ppm, 2.5 lb from 25–60, and zero above 60." },
+  { id:"woodash",     n:"Wood ash",   rateOnly:true, nutrient:"K", form:"bulk", organic:true, src:"osuFert",
+    note:"OSU: 1–1.5 lb per 100 sq ft where the potassium test is under 300 ppm, nothing at all above it, and never more than 5–10 lb per 100 sq ft. Not on soil already at pH 7, not around potatoes, not on blueberries." },
+  { id:"compost",     n:"Compost",    rateOnly:true, nutrient:"OM", form:"bulk", organic:true, src:"umdFert",
+    note:"Feeds the soil rather than the plant. UMD reckons each 1% of organic matter releases about 0.4 lb of nitrogen per 1,000 sq ft, so a bed at 5% organic matter is already supplying the whole general recommendation." },
+  { id:"manureDairy", n:"Dairy manure, composted", rateOnly:true, nutrient:"N", form:"bulk", organic:true, src:"osuFert", manure:[0.50,0.16,0.44] },
+  { id:"manurePoult", n:"Poultry manure, composted", rateOnly:true, nutrient:"N", form:"bulk", organic:true, src:"osuFert", manure:[1.30,1.02,0.50],
+    note:"About 75% of its nitrogen is available the first year, against 25–50% for the other manures." },
+  { id:"manureHorse", n:"Horse manure, composted", rateOnly:true, nutrient:"N", form:"bulk", organic:true, src:"osuFert", manure:[0.70,0.25,0.60] }
+];
+
+/* ============================================================
+   WHEN TO SIDE-DRESS
+
+   Straight off the Missouri / Kansas State table, which is the only
+   per-crop timing list this project found on a publisher's own site.
+   The trigger is kept as the source WORDS, because most of them are
+   growth stages and a growth stage is what she should actually look
+   at. `days` only exists so the reminder has somewhere to sit.
+
+   · days       — days after the planting date, when the source
+                  states a time
+   · thirds     — the source says "about one-third grown", so the
+                  date comes from this crop's own days-to-maturity
+   · stage      — the date is a placeholder, the words are the rule.
+                  Where the source gives no time at all, the date
+                  falls at 35 days, the middle of Missouri's general
+                  "four to six weeks after planting"
+   · none       — the source says do not, and why
+   ============================================================ */
+const SIDEDRESS_MID = 35;   /* middle of MU's "four to six weeks after planting" */
+
+const FEED_PLAN = {
+  tomato:      { days:SIDEDRESS_MID, stage:true, repeat:18,
+                 text:"When the plant begins to set fruit, then every two to three weeks",
+                 warn:"Nitrogen early on a tomato buys leaves and costs fruit, and Missouri links it to blossom end rot later. Wait for fruit set. OSU goes further and leaves tomatoes off its mid-season nitrogen entirely." },
+  pepper:      { days:SIDEDRESS_MID, stage:true, text:"After the first fruits set" },
+  hotpepper:   { days:SIDEDRESS_MID, stage:true, text:"After the first fruits set" },
+  eggplant:    { days:SIDEDRESS_MID, stage:true, text:"After the first fruits set" },
+
+  cucumber:    { days:SIDEDRESS_MID, stage:true, repeat:21, repeats:1,
+                 text:"A week after flowering starts, and again three weeks later" },
+  melon:       { days:SIDEDRESS_MID, stage:true, repeat:21, repeats:1,
+                 text:"A week after flowering starts, and again three weeks later" },
+  pumpkin:     { days:SIDEDRESS_MID, stage:true, repeat:21, repeats:1,
+                 text:"A week after flowering starts, and again three weeks later" },
+  zucchini:    { days:SIDEDRESS_MID, stage:true, repeat:21, repeats:1,
+                 text:"A week after flowering starts, and again three weeks later",
+                 est:true, estWhy:"Missouri lists cucumber, cantaloupe and pumpkin. Summer squash is the same crop group and is treated the same way here." },
+  wintersquash:{ days:SIDEDRESS_MID, stage:true, repeat:21, repeats:1,
+                 text:"A week after flowering starts, and again three weeks later",
+                 est:true, estWhy:"Missouri lists cucumber, cantaloupe and pumpkin. Winter squash is the same crop group and is treated the same way here." },
+
+  broccoli:    { days:21, from:"transplant", text:"Three weeks after transplanting" },
+  cauliflower: { days:21, from:"transplant", text:"Three weeks after transplanting" },
+  cabbage:     { days:21, from:"transplant", text:"Three weeks after transplanting" },
+  brussels:    { days:21, from:"transplant", text:"Three weeks after transplanting",
+                 est:true, estWhy:"Missouri names cabbage, cauliflower and broccoli. Brussels sprouts are transplanted the same way and are treated the same way here." },
+
+  spinach:     { thirds:true, text:"When the plants are about one-third grown" },
+  kale:        { thirds:true, text:"When the plants are about one-third grown" },
+  mustard:     { thirds:true, text:"When the plants are about one-third grown" },
+  collards:    { thirds:true, text:"When the plants are about one-third grown" },
+  bokchoy:     { thirds:true, text:"When the plants are about one-third grown" },
+  chard:       { thirds:true, text:"When the plants are about one-third grown" },
+  arugula:     { thirds:true, text:"When the plants are about one-third grown" },
+
+  corn:        { days:SIDEDRESS_MID, stage:true, repeat:28, repeats:1,
+                 text:"When the plants are 8–10 inches tall, and again a week after tasseling" },
+  potato:      { days:28, stage:true, text:"When the plants are 4–6 inches tall" },
+  onion:       { days:21, text:"Two to four weeks after planting" },
+  shallot:     { days:21, text:"Two to four weeks after planting",
+                 est:true, estWhy:"Missouri names mature onions. A shallot is the same crop and is treated the same way here." },
+  rhubarb:     { days:SIDEDRESS_MID, stage:true, text:"When the plants are 2–10 inches tall" },
+  asparagus:   { days:SIDEDRESS_MID, stage:true,
+                 text:"Before growth starts in spring, or after the last cut" },
+
+  /* Legumes get no pre-plant nitrogen at all. The crop table has said
+     "fixes its own nitrogen — do NOT fertilize with N" since the first
+     build, and an app that printed that on the crop page and then put
+     a dose on the calendar would be arguing with itself. Missouri's
+     pod-set timing is the only point in the season these want any. */
+  pea:         { days:SIDEDRESS_MID, stage:true, noPre:true, text:"After heavy flowering and pod set",
+                 warn:"A pea makes its own nitrogen, so nothing goes on before pod set — and the app does not offer a feed at planting for this one." },
+  bushbean:    { days:SIDEDRESS_MID, stage:true, noPre:true, text:"After heavy flowering and pod set",
+                 warn:"A bean makes its own nitrogen, so nothing goes on before pod set." },
+  polebean:    { days:SIDEDRESS_MID, stage:true, noPre:true, text:"After heavy flowering and pod set",
+                 warn:"A bean makes its own nitrogen, so nothing goes on before pod set." },
+
+  /* --- the source says don't --- */
+  carrot:      { none:"Not normally needed if the bed was fed before planting." },
+  beet:        { none:"Not normally needed if the bed was fed before planting." },
+  turnip:      { none:"Not normally needed if the bed was fed before planting." },
+  parsnip:     { none:"Not normally needed if the bed was fed before planting." },
+  lettuce:     { none:"Not normally needed if the bed was fed before planting." },
+  sweetpotato: { none:"Not recommended — extra nitrogen costs you yield or quality, or both." },
+  watermelon:  { none:"Not recommended — extra nitrogen costs you yield or quality, or both." },
+  basil:       { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." },
+  oregano:     { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." },
+  thyme:       { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." },
+  rosemary:    { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." },
+  sage:        { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." },
+  mint:        { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." },
+  cilantro:    { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." },
+  dill:        { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." },
+  parsley:     { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." },
+  chive:       { none:"Herbs are on Missouri's do-not list — extra nitrogen costs flavour." }
+};
+
+/* a crop that finishes this fast is out of the ground before a
+   side-dress could do anything, which is the same reasoning the
+   source applies to carrots, beets and lettuce */
+const FEED_QUICK_DAYS = 45;
+
+const Feed = {
+
+  /* ---------- rates ---------- */
+
+  rate(cropId){
+    const c = crop(cropId);
+    const k = (c && c.feeder) || "medium";
+    return FEED_RATES[k] || FEED_RATES.medium;
+  },
+
+  /* lb of nitrogen for a piece of ground, at this crop's rate */
+  nFor(cropId, sqFt){
+    return Feed.rate(cropId).n1000 / 1000 * num(sqFt, 0);
+  },
+
+  /* the ground one planting is entitled to. The app already measures
+     a plant's root zone in inches, so use that rather than OSU's
+     coarse "a large plant is about 5 square feet" — which is kept
+     below only as a sanity check on the answer. */
+  areaFor(p){
+    const g = Geom.plant(p);
+    const rr = Geom.RR(g);
+    if(!rr) return 0;
+    return Math.PI * rr * rr / 144 * Math.max(1, num(p.qty, 1));
+  },
+
+  /* ---------- products ---------- */
+
+  shelf(){
+    const mine = DB.all("amendments").map(a => ({
+      id: a.id, n: a.name, npk: [num(a.n), num(a.p), num(a.k)],
+      form: a.form || "granular", organic: a.organic === "1",
+      cost: num(a.cost), lbsBag: num(a.lbs_per_bag), mine: true, note: a.notes || null
+    }));
+    return mine.concat(AMEND_REF.map(r => Object.assign({ mine:false }, r)));
+  },
+  product(id){ return Feed.shelf().find(p => p.id === id) || null; },
+
+  /* what weight of this product carries that much nitrogen, and what
+     that is in cups. The arithmetic is UMD's: lb of product = lb of
+     N wanted / the fraction of N in the product. */
+  dose(lbsN, prod){
+    if(!prod || prod.rateOnly) return { ok:false, why:"rateOnly" };
+    const pct = prod.npk && prod.npk[0];
+    if(!pct) return { ok:false, why:"noNitrogen" };
+    const lbs = num(lbsN, 0) / (pct / 100);
+    const perCup = LB_PER_CUP[prod.form] || null;
+    return {
+      ok: true,
+      lbs: lbs,
+      oz: lbs * 16,
+      cups: perCup ? lbs / perCup : null,
+      liquid: prod.form === "liquid",
+      pct: pct
+    };
+  },
+
+  /* a dose written the way she measures it. Cups are a US kitchen
+     measure and UMD's figures are US cups, so metric gets grams and
+     is not offered a cup count it cannot use. */
+  doseText(d){
+    if(!d || !d.ok) return "—";
+    if(d.liquid) return "dilute per the bottle";
+    const mass = Feed.mass(d.lbs);
+    if(Units.metric || !d.cups) return mass;
+    return Feed.cupText(d.cups) + " (" + mass + ")";
+  },
+  /* A weight small enough to round to "0 oz" is not a weight, it is a
+     bug on screen. Carry enough decimals that the number is always
+     readable, and switch units before the digits run out. */
+  mass(lbs){
+    const v = num(lbs, 0);
+    if(Units.metric){
+      const g = v * 453.592;
+      if(g < 10) return (Math.round(g * 10) / 10) + " g";
+      if(g < 1000) return Math.round(g) + " g";
+      return Units.weight(v);
+    }
+    const oz = v * 16;
+    if(oz < 1) return (Math.round(oz * 100) / 100) + " oz";
+    if(oz < 16) return (Math.round(oz * 10) / 10) + " oz";
+    return (Math.round(v * 100) / 100) + " lbs";
+  },
+  /* Kitchen measures, because "0.24 cups" is not something anybody can
+     take out of a bag. Worked in teaspoons — 48 to a US cup — because a
+     single plant's share of a bed lands well below a cup and rounding
+     to cups turns every small crop into "a pinch". */
+  cupText(cups){
+    const t = num(cups, 0) * 48;
+    if(t < 0.5)  return "a pinch";
+    if(t < 0.8)  return "about ½ tsp";
+    if(t < 1.6)  return "about 1 tsp";
+    if(t < 2.5)  return "about 2 tsp";
+    if(t < 4.5)  return "about 1 tbsp";
+    if(t < 7.5)  return "about 2 tbsp";
+    if(t < 10.5) return "about 3 tbsp";
+    if(t < 14)   return "about ¼ cup";
+    if(t < 20)   return "about ⅓ cup";
+    if(t < 28)   return "about ½ cup";
+    if(t < 40)   return "about ¾ cup";
+    if(t < 56)   return "about 1 cup";
+    const r = Math.round(t / 48 * 2) / 2;
+    return "about " + (r % 1 ? r.toFixed(1) : r) + " cups";
+  },
+
+  /* ============================================================
+     WHAT PIECE OF GROUND ARE WE FEEDING?
+
+     One plant's share of a bed is often a teaspoon of something, and
+     nobody walks out to the garden to give one corn plant a teaspoon.
+     Extension publishes rates per 100 sq ft for exactly this reason.
+     So the dose is offered at three scopes and defaults to the one
+     that matches how the job is actually done: everything of that
+     crop in that bed, in one pass.
+     ============================================================ */
+  scopes(p){
+    if(!p) return [];
+    const out = [];
+    const mine = Feed.areaFor(p);
+    out.push({ key:"plant", label:"This " + cropName(p.crop_id).toLowerCase(),
+               sqft: mine, lbsN: Feed.nFor(p.crop_id, mine) });
+
+    if(p.bed_id){
+      const same = DB.where("plantings", q => q.bed_id === p.bed_id &&
+        q.crop_id === p.crop_id && q.status !== "removed");
+      if(same.length > 1){
+        const sq = same.reduce((a, q) => a + Feed.areaFor(q), 0);
+        out.push({ key:"crop", label:"All " + same.length + " " + cropName(p.crop_id).toLowerCase() +
+                   " in " + (DB.find("beds", p.bed_id) || {}).name,
+                   sqft: sq, lbsN: Feed.nFor(p.crop_id, sq), n: same.length });
+      }
+      const bed = DB.find("beds", p.bed_id);
+      if(bed){
+        const sq = Geom.areaSqFt(Geom.bed(bed));
+        /* a whole-bed pass is rated for the hungriest thing in it,
+           which is what bedBudget already answers */
+        out.push({ key:"bed", label:"The whole of " + bed.name,
+                   sqft: sq, lbsN: Feed.bedBudget(p.bed_id), whole:true });
+      }
+    }
+    return out;
+  },
+  /* the scope to open on: a single plant's share is usually too small
+     to measure, so prefer doing the crop in one pass */
+  defaultScope(p){
+    const s = Feed.scopes(p);
+    return (s.find(x => x.key === "crop") || s[0] || null);
+  },
+
+  /* ---------- the schedule ---------- */
+
+  /* every feeding this planting should get, derived and never stored.
+     Same contract as Trays.plan — if the frost dates or the sowing
+     date are corrected later, this re-reads correctly. */
+  plan(p){
+    if(!p || !p.crop_id) return [];
+    const c = crop(p.crop_id); if(!c) return [];
+    const plan = FEED_PLAN[p.crop_id] || null;
+    const start = p.transplant_on || p.sown_on;
+    const out = [];
+    const sqft = Feed.areaFor(p);
+    const lbsN = Feed.nFor(p.crop_id, sqft);
+
+    /* the pre-plant feed, at the crop's own season rate */
+    if(!(plan && (plan.noPre || plan.none)) && lbsN > 0){
+      out.push({
+        kind:"pre", date: start ? iso(parseISO(start)) : null,
+        label:"Feed at planting", lbsN: lbsN, sqft: sqft,
+        text:"Worked into the top 2–4 inches before or at planting.",
+        est: Feed.rate(p.crop_id).est
+      });
+    }
+
+    if(!start) return out;
+    const s = parseISO(start);
+
+    if(plan && plan.none){
+      out.push({ kind:"none", date:null, label:"No side-dressing", text: plan.none });
+      return out;
+    }
+    if(!plan && num(c.dtm, 0) && num(c.dtm) < FEED_QUICK_DAYS){
+      out.push({ kind:"none", date:null, label:"No side-dressing",
+        text:"This one is out of the ground in " + c.dtm + " days — too quick for a mid-season feed to reach it." });
+      return out;
+    }
+
+    /* how many days in the side-dress falls */
+    let days;
+    if(plan && plan.thirds) days = Math.round(num(c.dtm, 60) / 3);
+    else if(plan && plan.days) days = plan.days;
+    else days = SIDEDRESS_MID;
+
+    /* a side-dress is nitrogen only and it is not the whole season's
+       worth — Missouri's rates work out near half the pre-plant
+       figure, so that is what is offered */
+    const sideN = lbsN / 2;
+    const base = {
+      kind:"side", lbsN: sideN, sqft: sqft,
+      text: (plan && plan.text) || "About four to six weeks after planting, if growth has gone pale or slow.",
+      stage: !!(plan && plan.stage),
+      warn: (plan && plan.warn) || null,
+      est: !!(plan && plan.est), estWhy: (plan && plan.estWhy) || null,
+      generic: !plan
+    };
+    out.push(Object.assign({ date: iso(addDays(s, days)), label:"Side-dress" }, base));
+
+    const reps = (plan && plan.repeats) || 0;
+    if(plan && plan.repeat){
+      /* a repeat every N days: bounded by the number the source
+         states, or by the crop finishing */
+      const dtm = num(c.dtm, 90);
+      let d = days, n = 0;
+      const cap = reps || 4;
+      while(n < cap){
+        d += plan.repeat;
+        if(d > dtm + 21) break;
+        n++;
+        out.push(Object.assign({ date: iso(addDays(s, d)), label:"Side-dress again" }, base));
+      }
+    }
+    return out;
+  },
+
+  /* ---------- what has actually gone on ---------- */
+
+  seasonN(bedId, year){
+    const y = String(year || today().getFullYear());
+    return DB.all("journal")
+      .filter(j => j.type === "feed" && (j.date || "").slice(0,4) === y && (!bedId || j.bed_id === bedId))
+      .reduce((a, j) => a + num(j.n_lbs), 0);
+  },
+  /* the bed's own entitlement: the hungriest thing growing in it,
+     across the whole bed */
+  bedBudget(bedId){
+    const bed = DB.find("beds", bedId); if(!bed) return 0;
+    const sq = Geom.areaSqFt(Geom.bed(bed));
+    const here = DB.where("plantings", p => p.bed_id === bedId && p.status !== "removed");
+    let rate = 0;
+    here.forEach(p => { rate = Math.max(rate, Feed.rate(p.crop_id).n1000); });
+    if(!rate) rate = FEED_RATES.medium.n1000;
+    return rate / 1000 * sq;
+  },
+  /* over-application is the failure mode UMD warns about, so say it
+     with the number rather than in general terms */
+  overFed(bedId){
+    const budget = Feed.bedBudget(bedId);
+    if(!budget) return null;
+    const used = Feed.seasonN(bedId);
+    if(used <= budget * 1.25) return null;
+    return { used: used, budget: budget, pct: Math.round(used / budget * 100) };
+  },
+
+  /* ---------- logging ---------- */
+
+  /* one row in the journal she already has, so the recap, the spend
+     breakdown and the CSV export all pick it up for free. n_lbs is
+     what makes the season tally possible. */
+  log(rec){
+    return DB.insert("journal", Object.assign({ type:"feed", unit:"lbs" }, rec));
+  },
+
+  /* ---------- the standing caveats ---------- */
+
+  /* Phosphorus is the one the app refuses to guess at, and this is
+     the sentence that says why. Shown wherever a P-carrying product
+     is chosen. */
+  P_NOTE: "Most established beds are already high in phosphorus — compost carries it and it does not leach away. " +
+          "Minnesota's garden readings run a median of 68 ppm against 26 ppm in farm fields, and Oregon State's own table " +
+          "applies zero bonemeal above 60 ppm. Without a soil test the safe assumption is that you need none, and the " +
+          "excess ends up in the nearest creek.",
+  K_NOTE: "Potassium is worth adding only against a test. Oregon State gives 1–1.5 lb of wood ash per 100 sq ft below 300 ppm, " +
+          "nothing above it, and none at all on soil already at pH 7 or over.",
+  OM_NOTE: "Every 1% of organic matter in the soil releases roughly 0.4 lb of nitrogen per 1,000 sq ft over a season. " +
+           "A bed at 5% is already supplying the whole general recommendation on its own — which is why well-composted " +
+           "gardens often need no fertiliser at all."
+};
+
+/* ============================================================
+   FEEDING ON THE CALENDAR
+
+   Cal.rebuild owns every auto event and prunes anything it did not
+   just write, so feeding has to be generated inside the same pass
+   rather than alongside it. Wrapping keeps p9_seeds.js unaware of
+   this file, the same way p8d_maturity.js wraps Journal.saveHarvest.
+   ============================================================ */
+EV.feed = { c:"#7a9a3d", i:"🌿", n:"Feed" };
+
+Feed._calBase = Cal.rebuild;
+Cal.rebuild = function(){
+  Feed._calBase.call(Cal);
+  if(!Season.lastFrost() || !Season.firstFrost()) return;
+  const yr = today().getFullYear();
+  const keep = {};
+
+  DB.where("plantings", p => p.status !== "removed" && (p.sown_on || p.transplant_on)).forEach(p => {
+    Feed.plan(p).forEach((step, i) => {
+      if(!step.date || step.kind === "none") return;
+      if(parseISO(step.date).getFullYear() !== yr) return;
+      const key = "feed:" + p.id + ":" + i;
+      keep[key] = 1;
+      const body = {
+        date: step.date, type:"feed", crop_id: p.crop_id, bed_id: p.bed_id, planting_id: p.id,
+        title: (step.kind === "pre" ? "Feed " : "Side-dress ") + cropName(p.crop_id),
+        notes: step.text + (step.stage ? " The date is only a reminder — the plant is the trigger." : "")
+      };
+      const ex = DB.all("events").find(e => e.auto === key);
+      if(ex) DB.update("events", ex.id, body);
+      else DB.insert("events", Object.assign({ auto:key, done:"0" }, body));
+    });
+  });
+
+  /* prune feeding events whose planting is gone or whose schedule
+     moved, leaving anything already ticked off alone */
+  DB.bulkRemove("events", e => e.auto && e.auto.indexOf("feed:") === 0 && !keep[e.auto] && e.done !== "1");
+};
+</script>
+
+<script>
+/* ============================================================
    WEATHER — daily & weekly detail + shareable PNG snapshots
    ============================================================ */
 const Weather = {
@@ -16184,7 +16767,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-13.2";
+const BUILD = "2026-08-14.1";
 
 const Updater = {
   prompt: null, installed: false,
@@ -16910,6 +17493,375 @@ Settings.render = function(){
 
   box.innerHTML = h;
 };
+</script>
+
+<script>
+/* ============================================================
+   FEEDING — the screens
+
+   Three places this shows up, and no new tab for any of them:
+
+   · a card in the planting sheet, saying what this plant is owed
+     and when the next feed falls
+   · a dose sheet — pick something off the shelf, get a measurement
+     you can actually take, log it in one tap
+   · the shelf itself, in Settings, where a product she owns gets
+     its label analysis typed in once
+
+   The calendar side is already handled: Cal.rebuild writes the
+   events, and the event sheet gets a "log this feeding" button
+   wired up at the bottom of this file.
+   ============================================================ */
+
+const FeedUI = {
+
+  /* ---------- the card in the planting sheet ---------- */
+
+  card(p){
+    const c = crop(p.crop_id); if(!c) return "";
+    const steps = Feed.plan(p);
+    const rate = Feed.rate(p.crop_id);
+    const sqft = Feed.areaFor(p);
+    const done = DB.all("journal").filter(j => j.type === "feed" && j.planting_id === p.id);
+
+    let h = '<div class="card" style="margin-top:12px">' +
+      '<div class="tiny b muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Feeding</div>';
+
+    const none = steps.find(s => s.kind === "none");
+    if(none){
+      h += '<div class="note g">🌿 <b>' + esc(none.label) + '.</b> ' + esc(none.text) + '</div>';
+    }
+
+    /* what it is owed for the season */
+    const lbsN = Feed.nFor(p.crop_id, sqft);
+    if(lbsN > 0){
+      h += '<div class="b" style="font-size:1.1rem">' + FeedUI.nText(lbsN) + ' of nitrogen</div>' +
+        '<div class="tiny muted">for the season, over the ' + Units.area(Math.round(sqft * 10) / 10) +
+        ' this ' + esc(c.n.toLowerCase()) + ' has to itself · ' +
+        rate.n1000 + ' lb per 1,000 sq ft' + (rate.est ? ' <span class="chip warn tiny">derived</span>' : '') + '</div>';
+      h += '<div class="tiny muted" style="margin-top:6px">' + esc(rate.why) + '</div>';
+    }
+
+    /* the schedule */
+    const dated = steps.filter(s => s.date);
+    if(dated.length){
+      h += '<div class="list" style="margin-top:10px">';
+      dated.forEach((s, i) => {
+        const idx = steps.indexOf(s);
+        const late = diffDays(today(), parseISO(s.date)) < 0;
+        h += '<button class="item" onclick="FeedUI.open(\'' + p.id + '\',' + idx + ')">' +
+          '<div class="av">' + (s.kind === "pre" ? "🌱" : "🌿") + '</div><div class="grow">' +
+          '<div class="b">' + esc(s.label) + ' · ' + FeedUI.nText(s.lbsN) + ' N</div>' +
+          '<div class="tiny ' + (late ? "" : "muted") + '"' + (late ? ' style="color:var(--warn)"' : '') + '>' +
+          fmt(s.date) + (s.stage ? ' · when the plant says so' : '') + '</div>' +
+          '</div><span class="go">›</span></button>';
+      });
+      h += '</div>';
+      const stage = dated.find(s => s.stage);
+      if(stage) h += '<div class="note i" style="margin-top:8px">🕐 <b>' + esc(stage.text) + '.</b> ' +
+        'The date is only a reminder to go and look — the plant is what decides.</div>';
+      const warn = dated.map(s => s.warn).filter(Boolean)[0];
+      if(warn) h += '<div class="note w" style="margin-top:8px">⚠️ ' + escU(warn) + '</div>';
+      const est = dated.find(s => s.est);
+      if(est) h += '<div class="tiny muted" style="margin-top:8px"><b>Timing is inferred.</b> ' + esc(est.estWhy) + '</div>';
+      const gen = dated.find(s => s.generic);
+      if(gen) h += '<div class="tiny muted" style="margin-top:8px">No per-crop timing is published for this one, so the general rule is used: about four to six weeks after planting, if growth has gone pale or slow.</div>';
+    } else if(!none && !p.sown_on && !p.transplant_on){
+      h += '<div class="note i" style="margin-top:8px">Set the sown or planted date above and the feeding dates work themselves out.</div>';
+    }
+
+    if(done.length){
+      h += '<div class="tiny muted" style="margin-top:10px">✓ Fed ' + done.length + ' time' + (done.length === 1 ? "" : "s") +
+        ' · ' + FeedUI.nText(done.reduce((a, j) => a + num(j.n_lbs), 0)) + ' of nitrogen logged</div>';
+    }
+
+    /* the bed-level over-application check, which is the failure
+       mode the sources actually warn about */
+    const over = p.bed_id ? Feed.overFed(p.bed_id) : null;
+    if(over) h += '<div class="note d" style="margin-top:10px">⚠️ <b>This bed has had ' + over.pct + '% of what it is owed.</b> ' +
+      'Maryland Extension is blunt about it — more is not better. Surplus nitrogen buys leaf at the expense of fruit and makes plants likelier to get sick.</div>';
+
+    h += '<div class="note g" style="margin-top:10px">🌱 ' + esc(Feed.OM_NOTE) + '</div>';
+    h += '<button class="btn ghost block sm" style="margin-top:10px" onclick="FeedUI.open(\'' + p.id + '\',-1)">🌿 Work out a dose</button>';
+    h += '</div>';
+    return h;
+  },
+
+  nText(lbs){ return Feed.mass(lbs); },
+
+  /* ---------- the dose sheet ---------- */
+
+  open(plantingId, idx){
+    const p = DB.find("plantings", plantingId); if(!p) return;
+    FeedUI.ctx = { pid: plantingId, idx: num(idx, -1) };
+    const steps = Feed.plan(p);
+    const step = (idx >= 0 && steps[idx]) || null;
+    const scopes = Feed.scopes(p);
+    const def = Feed.defaultScope(p);
+    FeedUI.ctx.scopes = scopes;
+    FeedUI.ctx.half = !!(step && step.kind === "side");
+
+    let h = '<div class="row" style="gap:12px;margin-bottom:10px"><div style="font-size:2.2rem">' + cropEmoji(p.crop_id) + '</div>' +
+      '<div class="grow"><div class="b">' + esc(cropName(p.crop_id)) + (step ? ' · ' + esc(step.label) : '') + '</div>' +
+      '<div class="tiny muted">' + esc(Journal.bedName(p.bed_id)) + '</div></div></div>';
+
+    if(step && step.text) h += '<div class="note i">🕐 ' + escU(step.text) + '</div>';
+    if(step && step.warn) h += '<div class="note w" style="margin-top:8px">⚠️ ' + escU(step.warn) + '</div>';
+
+    /* One plant's share of a bed is usually a teaspoon of something,
+       which is not a job anybody walks outside to do. Default to the
+       pass she would actually make. */
+    if(scopes.length > 1){
+      h += '<div class="field" style="margin-top:12px"><label class="f">Feeding what?</label>' +
+        '<select id="fd-scope" onchange="FeedUI.recalc()">' +
+        scopes.map(s => '<option value="' + esc(s.key) + '"' + (def && s.key === def.key ? " selected" : "") + '>' +
+          esc(s.label) + ' · ' + Units.area(Math.round(s.sqft * 10) / 10) + '</option>').join("") +
+        '</select></div>';
+    }
+
+    h += '<div id="fd-hero"></div>';
+    h += '<div class="field" style="margin-top:12px"><label class="f">What are you using?</label>' +
+      '<select id="fd-prod" onchange="FeedUI.recalc()">' + FeedUI.options() + '</select></div>';
+    h += '<div id="fd-out"></div>';
+
+    h += '<div class="grid2" style="margin-top:12px">' +
+      '<div><label class="f">Date</label><input type="date" id="fd-date" value="' + esc(step && step.date ? step.date : iso(today())) + '"></div>' +
+      '<div><label class="f">Cost ($)</label><input type="number" step="0.01" id="fd-cost" placeholder="optional"></div></div>';
+    h += '<div class="field"><label class="f">Notes</label><textarea id="fd-notes" placeholder="Anything you noticed"></textarea></div>';
+    h += '<button class="btn block" style="margin-top:12px" onclick="FeedUI.save()">Log this feeding</button>';
+    h += '<button class="btn ghost block sm" style="margin-top:8px" onclick="FeedUI.shelf()">Manage what is on my shelf</button>';
+
+    openSheet("Feed " + cropName(p.crop_id), h);
+    setTimeout(FeedUI.recalc, 40);
+  },
+
+  options(){
+    const shelf = Feed.shelf();
+    const mine = shelf.filter(s => s.mine), ref = shelf.filter(s => !s.mine);
+    let o = '';
+    if(mine.length) o += '<optgroup label="On my shelf">' +
+      mine.map(s => '<option value="' + esc(s.id) + '">' + esc(s.n) + ' ' + s.npk.join("-") + '</option>').join("") + '</optgroup>';
+    o += '<optgroup label="Nitrogen">' + ref.filter(s => !s.rateOnly).map(s =>
+      '<option value="' + esc(s.id) + '">' + esc(s.n) + ' ' + s.npk.join("-") + '</option>').join("") + '</optgroup>';
+    o += '<optgroup label="Measured a different way">' + ref.filter(s => s.rateOnly).map(s =>
+      '<option value="' + esc(s.id) + '">' + esc(s.n) + '</option>').join("") + '</optgroup>';
+    return o;
+  },
+
+  /* the chosen scope, and the nitrogen that follows from it */
+  scope(){
+    const list = FeedUI.ctx.scopes || [];
+    const sel = $("#fd-scope");
+    return (sel && list.find(s => s.key === sel.value)) || list[0] || null;
+  },
+
+  recalc(){
+    const box = $("#fd-out"); if(!box) return;
+    const sc = FeedUI.scope();
+    /* a side-dress is half the season figure, whatever ground it covers */
+    const lbsN = sc ? sc.lbsN / (FeedUI.ctx.half ? 2 : 1) : 0;
+    FeedUI.ctx.lbsN = lbsN;
+    FeedUI.ctx.sqft = sc ? sc.sqft : 0;
+
+    const hero = $("#fd-hero");
+    const p0 = DB.find("plantings", FeedUI.ctx.pid);
+    if(hero && sc) hero.innerHTML = '<div class="hero" style="margin-top:12px"><div class="lbl">Nitrogen to apply</div>' +
+      '<div style="font-size:2rem;font-weight:800;line-height:1.1">' + FeedUI.nText(lbsN) + '</div>' +
+      '<div class="sm" style="opacity:.92">' +
+      (sc.whole ? 'the hungriest crop in this bed' : Feed.rate(p0.crop_id).n1000 + ' lb per 1,000 sq ft') +
+      ', over ' + Units.area(Math.round(sc.sqft * 10) / 10) +
+      (FeedUI.ctx.half ? ', halved for a mid-season feed' : '') + '</div></div>';
+
+    const prod = Feed.product($("#fd-prod").value);
+    let h = '';
+    if(!prod){ box.innerHTML = ''; return; }
+
+    if(prod.rateOnly){
+      h += '<div class="note w" style="margin-top:10px">📏 <b>' + esc(prod.n) + ' is not dosed off a nitrogen figure.</b><br>' +
+        escU(prod.note || "") + '</div>';
+      if(prod.manure) h += '<div class="tiny muted" style="margin-top:8px">Oregon State puts this manure at ' +
+        prod.manure[0] + '% N, ' + prod.manure[1] + '% P₂O₅ and ' + prod.manure[2] + '% K₂O, and spreads it 1.5 inches deep for the first three years, half an inch after that. ' +
+        'Only a quarter to a half of that nitrogen is available the first year.</div>';
+      if(prod.nutrient === "P") h += '<div class="note d" style="margin-top:8px">🚫 ' + escU(Feed.P_NOTE) + '</div>';
+      if(prod.nutrient === "K") h += '<div class="note i" style="margin-top:8px">' + escU(Feed.K_NOTE) + '</div>';
+      FeedUI.ctx.dose = null; FeedUI.ctx.prod = prod;
+      box.innerHTML = h; return;
+    }
+
+    const d = Feed.dose(lbsN, prod);
+    FeedUI.ctx.dose = d; FeedUI.ctx.prod = prod;
+
+    h += '<div class="card" style="margin-top:10px;background:var(--surface-2)">' +
+      '<div class="tiny muted">Apply</div>' +
+      '<div class="b" style="font-size:1.4rem">' + esc(Feed.doseText(d)) + '</div>' +
+      '<div class="tiny muted" style="margin-top:4px">of ' + esc(prod.n) + ' at ' + d.pct + '% nitrogen' +
+      (d.liquid ? '' : ' — ' + FeedUI.nText(lbsN) + ' ÷ ' + (d.pct / 100).toFixed(2)) + '</div>';
+    if(!d.liquid && !Units.metric && d.cups) h += '<div class="tiny muted" style="margin-top:6px">' +
+      'Cups come from Maryland Extension: a cup of a dry organic meal weighs about 0.33 lb, a cup of granular about 0.5 lb. ' +
+      'Weigh it if you have a scale — a cup of anything is a rough measure.</div>';
+    h += '</div>';
+
+    if(d.liquid) h += '<div class="note i" style="margin-top:8px">This is a liquid concentrate, so there is no honest dry measure for it. ' +
+      'Dilute as the bottle says and treat the nitrogen figure above as the target for the season, not for one watering can.</div>';
+    if(prod.note) h += '<div class="tiny muted" style="margin-top:8px">' + escU(prod.note) + '</div>';
+    if(prod.npk && prod.npk[1] > 0) h += '<div class="note w" style="margin-top:8px">⚠️ <b>This also carries phosphorus.</b> ' + escU(Feed.P_NOTE) + '</div>';
+    if(prod.mine) h += '<div class="tiny muted" style="margin-top:8px">Your own product — the figures are the ones off the bag, not from an extension source.</div>';
+    else if(prod.src && FEED_SRC[prod.src]) h += '<div class="tiny muted" style="margin-top:8px">' +
+      esc(FEED_SRC[prod.src].org) + ' — <a href="' + esc(FEED_SRC[prod.src].url) + '" target="_blank" rel="noopener noreferrer">' +
+      esc(FEED_SRC[prod.src].n) + ' ↗</a></div>';
+
+    /* Oregon State works in 100 sq ft, so restate the answer that way —
+       it is the figure their tables are written in and it is how you
+       check this app against them. */
+    if(!d.liquid && FeedUI.ctx.sqft > 0){
+      const per100 = d.lbs / FeedUI.ctx.sqft * 100;
+      h += '<div class="tiny muted" style="margin-top:8px">That works out at ' +
+        esc(Feed.mass(per100)) + ' of ' + esc(prod.n) + ' per 100 sq ft — the unit Oregon State writes its tables in, ' +
+        'if you want to check this against them.</div>';
+    }
+    box.innerHTML = h;
+  },
+
+  save(){
+    const p = DB.find("plantings", FeedUI.ctx.pid); if(!p) return;
+    const prod = FeedUI.ctx.prod, d = FeedUI.ctx.dose;
+    const sc = FeedUI.scope();
+    /* a whole-bed pass is not attributable to one planting, and saying
+       it was would make the per-plant history a lie */
+    const rec = {
+      date: $("#fd-date").value, bed_id: p.bed_id,
+      planting_id: sc && sc.whole ? null : p.id,
+      crop_id: sc && sc.whole ? null : p.crop_id,
+      product: prod ? prod.n : null,
+      amendment_id: prod && prod.mine ? prod.id : null,
+      amount: d && d.ok ? Math.round(d.lbs * 1000) / 1000 : null,
+      unit: d && d.ok && !d.liquid ? "lbs" : null,
+      n_lbs: d && d.ok ? Math.round(FeedUI.ctx.lbsN * 1000) / 1000 : null,
+      cost: num($("#fd-cost").value) || null,
+      notes: $("#fd-notes").value.trim()
+    };
+    if(!rec.date) return toast("Pick a date");
+    Feed.log(rec);
+    /* tick off the calendar event this answers, so the reminder stops
+       nagging without her having to find it separately */
+    if(FeedUI.ctx.idx >= 0){
+      const key = "feed:" + p.id + ":" + FeedUI.ctx.idx;
+      const ev = DB.all("events").find(e => e.auto === key);
+      if(ev) DB.update("events", ev.id, { done:"1" });
+    }
+    closeSheet(); refresh(); toast("Feeding logged 🌿");
+  },
+
+  /* ---------- the shelf ---------- */
+
+  shelf(){
+    const mine = DB.all("amendments");
+    let h = '<p class="muted sm" style="margin-top:0">What you actually own. Type the three numbers off the front of the bag once, ' +
+      'and every dose the app works out can be measured in that product.</p>';
+    if(mine.length){
+      h += '<div class="card pad0"><div class="list">';
+      mine.forEach(a => {
+        h += '<button class="item" onclick="FeedUI.editProduct(\'' + a.id + '\')"><div class="av">🌿</div>' +
+          '<div class="grow"><div class="b">' + esc(a.name) + '</div>' +
+          '<div class="tiny muted">' + num(a.n) + '-' + num(a.p) + '-' + num(a.k) + ' · ' + esc(a.form || "granular") +
+          (num(a.cost) ? ' · $' + num(a.cost) + (num(a.lbs_per_bag) ? ' for ' + num(a.lbs_per_bag) + ' lbs' : '') : '') +
+          '</div></div><span class="go">›</span></button>';
+      });
+      h += '</div></div>';
+    } else {
+      h += '<div class="card"><div class="empty sm"><span class="e">🪴</span><div class="b">Nothing on the shelf yet</div>' +
+        '<div class="tiny">Until you add something, doses are worked out in the reference products the extension services publish.</div></div></div>';
+    }
+    h += '<button class="btn block" style="margin-top:12px" onclick="FeedUI.editProduct()">＋ Add a product</button>';
+    openSheet("My shelf", h);
+  },
+
+  editProduct(id){
+    const a = id ? DB.find("amendments", id) : null;
+    let h = '<div class="field"><label class="f">Name, as it says on the bag</label>' +
+      '<input type="text" id="am-name" value="' + esc(a ? a.name : "") + '" placeholder="Espoma Garden-tone"></div>';
+    h += '<div class="grid3" style="margin-top:12px">' +
+      '<div><label class="f">N %</label><input type="number" step="0.1" id="am-n" value="' + esc(a ? a.n : "") + '" placeholder="3"></div>' +
+      '<div><label class="f">P %</label><input type="number" step="0.1" id="am-p" value="' + esc(a ? a.p : "") + '" placeholder="4"></div>' +
+      '<div><label class="f">K %</label><input type="number" step="0.1" id="am-k" value="' + esc(a ? a.k : "") + '" placeholder="4"></div></div>';
+    h += '<div class="note i" style="margin-top:8px">The three numbers on the front of the bag, in that order. A 3-4-4 is 3% nitrogen, 4% phosphate, 4% potash.</div>';
+    h += '<div class="field"><label class="f">What is it like?</label><select id="am-form">' +
+      ['meal','granular','liquid','bulk'].map(f => '<option value="' + f + '"' + (a && a.form === f ? " selected" : "") + '>' +
+        ({ meal:"A dry meal or powder", granular:"Granules or pellets", liquid:"A liquid concentrate", bulk:"Bulky — compost, manure, ash" })[f] +
+        '</option>').join("") + '</select></div>';
+    h += '<div class="tiny muted">This only decides how a weight becomes a cup measure: Maryland Extension weighs a cup of dry meal at 0.33 lb and a cup of granular at 0.5 lb. A liquid is never converted.</div>';
+    h += '<div class="grid2" style="margin-top:12px">' +
+      '<div><label class="f">Bag weight (lbs)</label><input type="number" step="0.1" id="am-bag" value="' + esc(a ? a.lbs_per_bag : "") + '" placeholder="4"></div>' +
+      '<div><label class="f">Bag cost ($)</label><input type="number" step="0.01" id="am-cost" value="' + esc(a ? a.cost : "") + '" placeholder="14.99"></div></div>';
+    h += '<div class="field"><label class="f">Notes</label><textarea id="am-notes">' + esc(a ? a.notes || "" : "") + '</textarea></div>';
+    h += '<button class="btn block" style="margin-top:14px" onclick="FeedUI.saveProduct(' + (a ? "'" + a.id + "'" : "null") + ')">Save</button>';
+    if(a) h += '<button class="btn ghost danger block" style="margin-top:8px" onclick="DB.remove(\'amendments\',\'' + a.id + '\');FeedUI.shelf()">Remove from the shelf</button>';
+    openSheet(a ? "Edit product" : "Add a product", h);
+  },
+
+  saveProduct(id){
+    const name = $("#am-name").value.trim();
+    if(!name) return toast("Give it a name");
+    const rec = {
+      name: name, n: num($("#am-n").value), p: num($("#am-p").value), k: num($("#am-k").value),
+      form: $("#am-form").value, organic: "0",
+      lbs_per_bag: num($("#am-bag").value) || null, cost: num($("#am-cost").value) || null,
+      notes: $("#am-notes").value.trim()
+    };
+    if(id) DB.update("amendments", id, rec); else DB.insert("amendments", rec);
+    FeedUI.shelf(); toast("Saved");
+  }
+};
+
+/* ---- the feeding card, into the planting sheet ---- */
+(function feedInSheet(){
+  const orig = Garden.plantingSheet.bind(Garden);
+  Garden.plantingSheet = function(p){
+    orig(p);
+    if(!p || !p.crop_id) return;
+    const body = $("#sheet-body"); if(!body) return;
+    const h = FeedUI.card(p);
+    if(!h) return;
+    const anchor = '<div class="grid2" style="margin-top:16px">';
+    if(body.innerHTML.indexOf(anchor) >= 0) body.innerHTML = body.innerHTML.replace(anchor, h + anchor);
+    else body.insertAdjacentHTML("beforeend", h);
+  };
+})();
+
+/* ---- "log this feeding" on a feed event ---- */
+(function feedInCalendar(){
+  const orig = Cal.openEvent.bind(Cal);
+  Cal.openEvent = function(id){
+    orig(id);
+    const e = DB.find("events", id);
+    if(!e || e.type !== "feed" || !e.planting_id) return;
+    const body = $("#sheet-body"); if(!body) return;
+    const m = /^feed:[^:]+:(\d+)$/.exec(e.auto || "");
+    body.insertAdjacentHTML("beforeend",
+      '<button class="btn block" style="margin-top:8px" onclick="closeSheet();setTimeout(function(){FeedUI.open(\'' +
+      e.planting_id + '\',' + (m ? m[1] : -1) + ')},250)">🌿 Work out the dose and log it</button>');
+  };
+})();
+
+/* ---- the shelf, from Settings ---- */
+(function feedInSettings(){
+  const orig = Settings.render.bind(Settings);
+  Settings.render = function(){
+    orig();
+    const box = $("#s-settings"); if(!box) return;
+    const n = DB.all("amendments").length;
+    const h = '<div class="sec"><h2>Feeding</h2></div><div class="card">' +
+      '<div class="row between"><div class="grow"><div class="b">My shelf</div>' +
+      '<div class="tiny muted">' + (n ? n + ' product' + (n === 1 ? "" : "s") + ' you own' : "Nothing added — doses use the published reference products") + '</div></div>' +
+      '<button class="btn sm ghost" onclick="FeedUI.shelf()">Manage</button></div>' +
+      '<div class="tiny muted" style="margin-top:10px">Feeding rates come from Maryland, Oregon State and Missouri Extension. ' +
+      'The app works out nitrogen and refuses to guess at phosphorus, because most established beds already have more than they can use.</div>' +
+      '</div>';
+    const anchor = '<div class="sec" style="margin-top:24px"><h2>&nbsp;</h2></div>';
+    if(box.innerHTML.indexOf(anchor) >= 0) box.innerHTML = box.innerHTML.replace(anchor, h + anchor);
+    else box.insertAdjacentHTML("beforeend", h);
+  };
+})();
 </script>
 
 <script>

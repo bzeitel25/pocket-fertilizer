@@ -89,8 +89,17 @@ Record a first harvest on any planting and it starts learning. One record and it
 ### Seed bank
 Photograph packets or type them in. Tracks quantity, brand, lot, packed year, printed expiry, germination rate and cost. Each packet gets a viability level and an expected germination percentage derived from that crop's seed life, so fading and expired packets surface before they waste bed space. Includes the 10-seed paper-towel test calculator.
 
+### Feeding
+The app is called Pocket Fertilizer, and this is the part that earns the name. Every planting carries a nitrogen figure worked out from its feeder class and the actual ground its roots have — 3 lb per 1,000 sq ft for a heavy feeder, 2 for everything else, scaled down to your 4×8 bed. Pick something off the shelf and it becomes a measurement you can take: *about ⅓ cup of blood meal*, not 0.31 pounds.
+
+Feeding dates land on the calendar alongside the sowing ones. The timing is per crop and it is the published timing, kept in the source's own words, because most of these are growth stages rather than dates — a cabbage three weeks after transplanting, sweet corn at 8–10 inches, a tomato **when it starts setting fruit and not before**, since early nitrogen on a tomato buys leaves and costs fruit. Carrots, beets and lettuce get told they need nothing. Watermelon, sweet potatoes and the herbs get told that feeding them makes them worse. Beans and peas are never offered nitrogen at planting at all — they make their own.
+
+Log what you actually put on and the app tracks nitrogen per bed for the season, and says so when a bed has had more than it is owed.
+
+**What it refuses to do is guess at phosphorus.** Most established beds are already saturated with it — compost carries phosphorus and it does not leach away, which is why Minnesota's garden soils run a median of 68 ppm against 26 ppm in farm fields, and why Oregon State's own table applies *zero* bonemeal above 60 ppm. So the app computes nitrogen, quotes the published rates for potassium and lime against the soil-test values they depend on, and tells you plainly that two-thirds of a balanced 10-10-10 is probably doing nothing but running into the creek. It also tells you when you may not need to feed at all: every 1% of soil organic matter releases roughly 0.4 lb of nitrogen per 1,000 sq ft, so a well-composted bed at 5% is already supplying the whole recommendation.
+
 ### Grow calendar
-Builds itself. Every packet in the bank generates sow, transplant and fall-sowing dates anchored to your frost dates, plus projected first-harvest dates for anything planted and warnings as seed reaches its viability limit. Month grid, colour-coded timeline, and your own tasks alongside.
+Builds itself. Every packet in the bank generates sow, transplant and fall-sowing dates anchored to your frost dates, plus projected first-harvest dates for anything planted and warnings as seed reaches its viability limit — and the feeding dates above sit in the same timeline. Month grid, colour-coded timeline, and your own tasks alongside.
 
 ### Plant doctor
 Capture from the in-app camera or upload a photo. The image is analysed on-device for green/yellow/brown ratios and whether damage concentrates at the leaf margins, which pre-selects the matching symptoms. 63 observations then run against 43 conditions — nutrient deficiencies, watering and light problems, fungal and bacterial disease, pests, and cultural issues like herbicide drift and pH lockout. You get ranked diagnoses with confidence, a 48-hour action plan, prevention, and a note when the top two are too close to call. Everything saves to plant history.
@@ -192,6 +201,10 @@ Primary references used:
 | [Liming and Fertilizing Vegetables](https://hgic.clemson.edu/factsheet/fertilizing-vegetables/) | Clemson Cooperative Extension |
 | [Disease Resistant Vegetable Varieties](https://www.vegetables.cornell.edu/pest-management/disease-factsheets/disease-resistant-vegetable-varieties/) | Cornell University |
 | [Plant Hardiness Zone Map](https://planthardiness.ars.usda.gov/) | USDA Agricultural Research Service |
+| [Fertilizing Vegetable Gardens](https://extension.umd.edu/resource/fertilizing-vegetable-gardens) | University of Maryland Extension |
+| [Fertilizing your garden: vegetables, fruits and ornamentals (EC 1503)](https://extension.oregonstate.edu/catalog/pub/ec-1503-fertilizing-your-garden-vegetables-fruits-ornamentals) | Oregon State University Extension |
+| [Side-dressing: mid-season boost for hungry plants](https://ipm.missouri.edu/meg/2024/6/side_dressing-dt/) | University of Missouri Extension (table credited to Kansas State) |
+| [You might be over-fertilizing your garden](https://extension.umn.edu/yard-and-garden-news/you-might-be-over-fertilizing-your-garden) | University of Minnesota Extension |
 
 Each of the 43 diagnoses in the Plant Doctor links to the extension page that published the guidance. Claims where the evidence is genuinely mixed — milk sprays on powdery mildew, marigolds against nematodes, Japanese beetle traps — carry an explicit caveat rather than being stated flatly.
 

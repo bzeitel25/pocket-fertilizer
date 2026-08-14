@@ -544,8 +544,14 @@ const Cal = {
         title: "First harvest: " + cropName(p.crop_id), notes:"Roughly " + crop(p.crop_id).dtm + " days from planting." });
     });
 
-    /* prune stale auto events */
-    DB.bulkRemove("events", e => e.auto && !keep[e.auto] && e.done !== "1");
+    /* Prune stale auto events — but only the ones THIS pass generates.
+       Anything wrapping rebuild() to add its own auto events (feeding
+       does) keeps a separate `keep` list, and an unqualified sweep here
+       would delete every one of them a moment before the wrapper put
+       them back: correct in the end, but it churns a row per event on
+       every rebuild and would silently break any wrapper that ran
+       first. Namespace the sweep to the four kinds written above. */
+    DB.bulkRemove("events", e => e.auto && /^(frost|seed|exp|harv):/.test(e.auto) && !keep[e.auto] && e.done !== "1");
   },
 
   forPlanting(p){ if(p) Cal.rebuild(); },

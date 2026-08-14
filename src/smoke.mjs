@@ -42,7 +42,8 @@ const w = dom.window;
 const G = w.eval("({DB,CROPS,CONDITIONS,Season,Recommend,Garden,Seeds,Cal,Doctor,Journal,Recap,Library,Settings,SqlView,APP,go,iso,today,pairRating,companionsFor,closeSheet,Photos,Vault,Weather,Assist,AI_TOOLS,SOURCES,COND_SRC,VERIFIED,Sources,Updater,BUILD,cropSource,FIELD_CONFIDENCE,CLAIM_NOTES,Varieties,VARIETY_REF,PROVIDERS,Maturity,INFO,TIPS,Tips,Notify,Coach,GUIDE,Help,Onboard,Live,Gmap,FEATURES,Native,Solar,Micro,MicroUI,MicroLog,SECTORS,SECTOR_AZ," +
   "Geom,PlantArt,Canvas,CanvasDrag,Shape,Habit,HABIT_SRC,addDays,diffDays,crop,cropName,FAMILY," +
   "GARDEN_PLANTS,GARDEN_SRC,PLANT_ROLE,UserCrops,SCHEMA,companionsFor,CROP_ABSENT,CROP_ALIAS," +
-  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,Share,Units,escU,Trays,TrayUI,Groups,MicroUI,EV,Ask,Vision,firstJsonObject})");
+  "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,Share,Units,escU,Trays,TrayUI,Groups,MicroUI,EV,Ask,Vision,firstJsonObject," +
+  "Feed,FeedUI,FEED_SRC,FEED_RATES,FEED_PLAN,AMEND_REF,LB_PER_CUP,num,parseISO})");
 for(const k of Object.keys(G)) w[k] = G[k];
 const origErr = console.error;
 const JSDOM_NOISE = /^Not implemented:/;
@@ -292,7 +293,7 @@ check("every crop resolves to an https source", () =>
 /* Every source in the app has to be a land-grant extension service, a USDA
    body or a university horticulture programme — read on the publisher's own
    site, never a blog quoting one. This is the list; widen it deliberately. */
-const OFFICIAL = /^https:\/\/([a-z0-9-]+\.)*(extension\.[a-z]+\.edu|[a-z]+\.extension\.[a-z]+\.edu|extension\.org|hgic\.clemson\.edu|ces\.ncsu\.edu|ipm\.ucanr\.edu|canr\.msu\.edu|ars\.usda\.gov|cornell\.edu|umn\.edu|umass\.edu|uillinois\.edu|illinois\.edu|clemson\.edu|ncsu\.edu|usu\.edu|psu\.edu|wisc\.edu|oregonstate\.edu|uga\.edu|iastate\.edu|unh\.edu|colostate\.edu)(\/|$)/;
+const OFFICIAL = /^https:\/\/([a-z0-9-]+\.)*(extension\.[a-z]+\.edu|[a-z]+\.extension\.[a-z]+\.edu|extension\.org|hgic\.clemson\.edu|ces\.ncsu\.edu|ipm\.ucanr\.edu|canr\.msu\.edu|ars\.usda\.gov|cornell\.edu|umn\.edu|umass\.edu|uillinois\.edu|illinois\.edu|clemson\.edu|ncsu\.edu|usu\.edu|psu\.edu|wisc\.edu|oregonstate\.edu|uga\.edu|iastate\.edu|unh\.edu|colostate\.edu|umd\.edu|ipm\.missouri\.edu|missouri\.edu)(\/|$)/;
 
 check("crop sources point at official orgs", () => {
   const bad = w.CROPS.filter(c => !OFFICIAL.test(w.cropSource(c.id))).map(c => c.id + " " + w.cropSource(c.id));
@@ -3521,6 +3522,274 @@ check("the magnet setting survives a restart", () => {
   if(w.CanvasDrag.magnet !== was) w.Garden.toggleMagnet();
   return ok2; });
 w.APP.bedId = null; w.Garden.setView("beds"); w.Undo.clear();
+
+/* ==========================================================================
+   FEEDING
+
+   The whole point of this feature is that it is arithmetic on a published
+   rate, not an opinion. So most of these checks are the sources' own worked
+   examples run back through the app, plus the restraint rules — the places
+   the app is supposed to REFUSE to produce a number.
+   ========================================================================== */
+const fb = w.DB.insert("beds", { name:"Feed bed", cols:4, rows:8, cell_in:12, sun_hours:8 });
+
+check("feeding rates are the published lb-N-per-1,000 figures", () =>
+  w.FEED_RATES.heavy.n1000 === 3 && w.FEED_RATES.medium.n1000 === 2 &&
+  w.FEED_RATES.heavy.est === false && w.FEED_RATES.medium.est === false);
+check("the light-feeder rate is flagged as derived, because no source states one", () =>
+  w.FEED_RATES.light.est === true && w.FEED_RATES.light.n1000 < w.FEED_RATES.medium.n1000);
+check("a crop's rate follows its feeder class", () =>
+  w.Feed.rate("tomato").n1000 === 3 && w.Feed.rate("lettuce").n1000 === 1 &&
+  w.Feed.rate("onion").n1000 === 2);
+
+/* UMD's own worked example: 3.2 oz of N using nitrate of soda (15-0-0)
+   comes to 21.33 oz of product. 3.2 oz is 0.2 lb. */
+check("the dose maths reproduces UMD's nitrate-of-soda example", () => {
+  const d = w.Feed.dose(0.2, w.Feed.product("nitrateSoda"));
+  return d.ok && Math.abs(d.oz - 21.33) < 0.05; });
+/* and their second: 2 lb of N as cottonseed meal (6-2-1) is 33.3 lb */
+check("the dose maths reproduces UMD's cottonseed-meal example", () => {
+  const d = w.Feed.dose(2.0, w.Feed.product("cottonseed"));
+  return d.ok && Math.abs(d.lbs - 33.3) < 0.1; });
+check("cups come from the published weights, not a guess", () =>
+  w.LB_PER_CUP.meal === 0.33 && w.LB_PER_CUP.granular === 0.50 &&
+  Math.abs(w.Feed.dose(0.33, { npk:[100,0,0], form:"meal" }).cups - 1) < 0.001);
+check("a liquid concentrate is never turned into cups", () => {
+  const d = w.Feed.dose(0.2, w.Feed.product("fishemul"));
+  return d.ok && d.liquid === true && d.cups === null; });
+check("a dose reads as something you can measure", () =>
+  /cup|tbsp|tsp|pinch/.test(w.Feed.doseText(w.Feed.dose(0.1, w.Feed.product("bloodmeal")))));
+/* a US cup is 48 teaspoons, and a single plant's share lands well under
+   one — so the small end has to resolve into spoons, not round to a pinch */
+check("small measures resolve into spoons rather than collapsing", () => {
+  const cup = f => w.Feed.cupText(f / 48);
+  return cup(1) === "about 1 tsp" && cup(3) === "about 1 tbsp" &&
+         cup(12) === "about ¼ cup" && cup(24) === "about ½ cup"; });
+check("a weight never renders as zero", () => {
+  const t = w.Feed.mass(0.004);          /* about a sixteenth of an ounce */
+  return !/^0 /.test(t) && parseFloat(t) > 0; });
+check("a small metric weight comes out in grams, not 0.00 kg", () => {
+  w.DB.set("units", "metric");
+  const t = w.Feed.mass(0.004);
+  w.DB.set("units", "imperial");
+  return / g$/.test(t) && parseFloat(t) > 0; });
+
+/* ---- the restraint rules ---- */
+check("phosphorus is never dosed off a nitrogen figure", () => {
+  const bm = w.Feed.product("bonemeal");
+  return bm.rateOnly === true && w.Feed.dose(1, bm).ok === false; });
+check("the phosphorus note names the thresholds it is standing on", () =>
+  /60 ppm/.test(w.Feed.P_NOTE) && /68 ppm/.test(w.Feed.P_NOTE));
+check("potassium defers to a soil test too", () =>
+  w.Feed.product("woodash").rateOnly === true && /300 ppm/.test(w.Feed.K_NOTE));
+check("the organic-matter credit is stated, because it is often the whole answer", () =>
+  /0\.4 lb/.test(w.Feed.OM_NOTE) && /5%/.test(w.Feed.OM_NOTE));
+
+/* ---- the schedule ---- */
+const fp = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"tomato", qty:1, status:"growing",
+  sown_on: w.iso(w.addDays(w.today(), -30)), px:12, py:12, rr:12, rc:14 });
+check("a tomato is scheduled at fruit set, not on a fixed date", () => {
+  const steps = w.Feed.plan(w.DB.find("plantings", fp.id));
+  const side = steps.filter(s => s.kind === "side");
+  return side.length >= 2 && side[0].stage === true && /set fruit/.test(side[0].text); });
+check("the tomato warning about early nitrogen survives", () => {
+  const s = w.Feed.plan(w.DB.find("plantings", fp.id)).find(x => x.warn);
+  return !!s && /blossom end rot/.test(s.warn); });
+check("a side-dress is half the season figure, not a second full one", () => {
+  const steps = w.Feed.plan(w.DB.find("plantings", fp.id));
+  const pre = steps.find(s => s.kind === "pre"), side = steps.find(s => s.kind === "side");
+  return Math.abs(side.lbsN * 2 - pre.lbsN) < 1e-9; });
+
+const fbean = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"bushbean", qty:1, status:"growing",
+  sown_on: w.iso(w.addDays(w.today(), -20)), px:36, py:12, rr:6, rc:8 });
+check("a legume is never offered nitrogen at planting", () => {
+  const steps = w.Feed.plan(w.DB.find("plantings", fbean.id));
+  return !steps.some(s => s.kind === "pre") && steps.some(s => /pod set/.test(s.text || "")); });
+
+const fcar = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"carrot", qty:1, status:"growing",
+  sown_on: w.iso(w.addDays(w.today(), -20)), px:60, py:12, rr:4, rc:5 });
+check("crops the source says not to side-dress are not side-dressed", () => {
+  const steps = w.Feed.plan(w.DB.find("plantings", fcar.id));
+  return steps.some(s => s.kind === "none") && !steps.some(s => s.kind === "side"); });
+check("the do-not list matches what the source actually says", () =>
+  !!w.FEED_PLAN.watermelon.none && !!w.FEED_PLAN.sweetpotato.none &&
+  !!w.FEED_PLAN.basil.none && !!w.FEED_PLAN.lettuce.none &&
+  !w.FEED_PLAN.cucumber.none);
+check("a brassica is timed three weeks after transplanting, as published", () =>
+  w.FEED_PLAN.cabbage.days === 21 && w.FEED_PLAN.cabbage.from === "transplant");
+check("'about one-third grown' is computed from the crop's own maturity", () => {
+  const k = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"kale", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:12, py:36, rr:9, rc:11 });
+  const side = w.Feed.plan(w.DB.find("plantings", k.id)).find(s => s.kind === "side");
+  const want = Math.round(w.crop("kale").dtm / 3);
+  const got = w.diffDays(w.today(), w.parseISO(side.date));
+  w.DB.remove("plantings", k.id);
+  return Math.abs(got - want) <= 1; });
+check("timing inferred from a neighbouring crop says that it was", () =>
+  w.FEED_PLAN.brussels.est === true && w.FEED_PLAN.brussels.estWhy.length > 30 &&
+  w.FEED_PLAN.cabbage.est !== true);
+
+/* ---- scope: nobody walks outside to feed one corn plant ---- */
+check("a dose can be scaled to the whole crop or the whole bed", () => {
+  const a = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"corn", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:12, py:60, rr:6, rc:8 });
+  const b = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"corn", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:24, py:60, rr:6, rc:8 });
+  const sc = w.Feed.scopes(w.DB.find("plantings", a.id));
+  const keys = sc.map(s => s.key);
+  const crop2 = sc.find(s => s.key === "crop"), one = sc.find(s => s.key === "plant");
+  const ok2 = keys.indexOf("plant") >= 0 && keys.indexOf("crop") >= 0 && keys.indexOf("bed") >= 0 &&
+              Math.abs(crop2.sqft - one.sqft * 2) < 1e-6 && crop2.n === 2;
+  w.DB.remove("plantings", a.id); w.DB.remove("plantings", b.id);
+  return ok2; });
+check("the whole-bed scope is rated for the hungriest thing in the bed", () => {
+  const a = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"lettuce", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:12, py:60, rr:4, rc:6 });
+  const t = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"tomato", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:36, py:60, rr:12, rc:14 });
+  const bedScope = w.Feed.scopes(w.DB.find("plantings", a.id)).find(s => s.key === "bed");
+  const sq = w.Geom.areaSqFt(w.Geom.bed(w.DB.find("beds", fb.id)));
+  const ok2 = Math.abs(bedScope.lbsN - 3 / 1000 * sq) < 1e-9;   /* tomato's rate, not lettuce's */
+  w.DB.remove("plantings", a.id); w.DB.remove("plantings", t.id);
+  return ok2; });
+check("a lone planting is not offered a crop-wide scope it cannot use", () => {
+  const sc = w.Feed.scopes(w.DB.find("plantings", fp.id));
+  return !sc.some(s => s.key === "crop"); });
+/* The rate per unit of ground must not move when the scope does — that
+   is the invariant the whole calculator rests on, and it is what makes
+   the answer checkable against tables written per 100 sq ft. For a heavy
+   feeder it lands at 2.5 lb of blood meal per 100 sq ft, against
+   Missouri's published 2 lb for a general side-dress. */
+check("the rate per 100 sq ft is the same whatever scope you pick", () => {
+  const a = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"tomato", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:12, py:60, rr:12, rc:14 });
+  const b = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"tomato", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:40, py:60, rr:12, rc:14 });
+  const per = w.Feed.scopes(w.DB.find("plantings", a.id)).map(s =>
+    w.Feed.dose(s.lbsN, w.Feed.product("bloodmeal")).lbs / s.sqft * 100);
+  w.DB.remove("plantings", a.id); w.DB.remove("plantings", b.id);
+  return per.every(v => Math.abs(v - per[0]) < 1e-9) && Math.abs(per[0] - 2.5) < 0.01; });
+check("the default scope is the pass she would actually make", () => {
+  const a = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"corn", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:12, py:60, rr:6, rc:8 });
+  const b = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"corn", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:24, py:60, rr:6, rc:8 });
+  const d = w.Feed.defaultScope(w.DB.find("plantings", a.id));
+  w.DB.remove("plantings", a.id); w.DB.remove("plantings", b.id);
+  return d.key === "crop"; });
+
+/* ---- the calendar ---- */
+check("feeding lands on the calendar", () => {
+  w.Cal.rebuild();
+  const evs = w.DB.where("events", e => e.type === "feed" && e.planting_id === fp.id);
+  return evs.length >= 1 && evs.every(e => !!e.date && /Feed|Side-dress/.test(e.title)); });
+check("rebuilding twice does not double the feeding events", () => {
+  const before = w.DB.where("events", e => e.type === "feed").length;
+  w.Cal.rebuild(); w.Cal.rebuild();
+  return w.DB.where("events", e => e.type === "feed").length === before; });
+check("the sowing pass no longer sweeps away events it did not write", () => {
+  w.Cal.rebuild();
+  const feeds = w.DB.where("events", e => e.type === "feed");
+  const ids = feeds.map(e => e.id);
+  w.Cal.rebuild();
+  const still = w.DB.where("events", e => e.type === "feed").map(e => e.id);
+  return feeds.length > 0 && ids.every(i => still.indexOf(i) >= 0); });
+check("removing the planting takes its feeding reminders with it", () => {
+  const tmp = w.DB.insert("plantings", { bed_id: fb.id, crop_id:"pepper", qty:1, status:"growing",
+    sown_on: w.iso(w.today()), px:36, py:36, rr:9, rc:11 });
+  w.Cal.rebuild();
+  const had = w.DB.where("events", e => e.type === "feed" && e.planting_id === tmp.id).length;
+  w.DB.remove("plantings", tmp.id);
+  w.Cal.rebuild();
+  const now = w.DB.where("events", e => e.type === "feed" && e.planting_id === tmp.id).length;
+  return had > 0 && now === 0; });
+check("feed gets its own colour in the calendar legend", () =>
+  !!w.EV.feed && !!w.EV.feed.c && !!w.EV.feed.i);
+
+/* ---- logging, and the over-application guard ---- */
+check("a logged feeding records the nitrogen it delivered", () => {
+  w.Feed.log({ date: w.iso(w.today()), bed_id: fb.id, planting_id: fp.id, crop_id:"tomato",
+    product:"Blood meal", amount:0.5, n_lbs:0.06 });
+  const j = w.DB.all("journal").filter(x => x.type === "feed" && x.bed_id === fb.id);
+  return j.length >= 1 && w.num(j[0].n_lbs) === 0.06; });
+check("the season tally adds up what went on that bed", () =>
+  Math.abs(w.Feed.seasonN(fb.id) - 0.06) < 1e-9);
+check("over-feeding a bed is caught and quantified", () => {
+  const budget = w.Feed.bedBudget(fb.id);
+  w.Feed.log({ date: w.iso(w.today()), bed_id: fb.id, crop_id:"tomato", n_lbs: budget * 2 });
+  const over = w.Feed.overFed(fb.id);
+  const ok2 = !!over && over.pct > 150;
+  w.DB.bulkRemove("journal", j => j.type === "feed" && j.bed_id === fb.id);
+  return ok2; });
+check("a bed with nothing logged is not accused of anything", () =>
+  w.Feed.overFed(fb.id) === null);
+
+/* ---- the screens ---- */
+check("the planting sheet carries a feeding card", () => {
+  w.Garden.plantingSheet(w.DB.find("plantings", fp.id));
+  const h = w.document.getElementById("sheet-body").innerHTML;
+  w.closeSheet();
+  return h.includes("Feeding") && h.includes("nitrogen") && h.includes("per 1,000 sq ft"); });
+check("the card says where the rate came from", () => {
+  w.Garden.plantingSheet(w.DB.find("plantings", fp.id));
+  const h = w.document.getElementById("sheet-body").innerHTML;
+  w.closeSheet();
+  return /UMD Extension/.test(h); });
+check("the dose sheet offers a measurement and a source", () => {
+  w.FeedUI.open(fp.id, -1);
+  w.FeedUI.recalc();
+  const h = w.document.getElementById("sheet-body").innerHTML;
+  w.closeSheet();
+  return h.includes("Nitrogen to apply") && h.includes("fd-prod"); });
+check("choosing a phosphorus product refuses to dose and explains why", () => {
+  w.FeedUI.open(fp.id, -1);
+  w.document.getElementById("fd-prod").value = "bonemeal";
+  w.FeedUI.recalc();
+  const h = w.document.getElementById("fd-out").innerHTML;
+  w.closeSheet();
+  return /not dosed off a nitrogen figure/.test(h) && /60 ppm/.test(h); });
+check("metric is not offered a cup measure it cannot use", () => {
+  w.DB.set("units", "metric");
+  const t = w.Feed.doseText(w.Feed.dose(0.1, w.Feed.product("bloodmeal")));
+  w.DB.set("units", "imperial");
+  return !/cup/.test(t) && /g|kg/.test(t); });
+check("the shelf takes a product off her own bag", () => {
+  const a = w.DB.insert("amendments", { name:"Garden-tone", n:3, p:4, k:4, form:"meal" });
+  const p = w.Feed.product(a.id);
+  const ok2 = !!p && p.mine === true && p.npk[0] === 3;
+  w.DB.remove("amendments", a.id);
+  return ok2; });
+check("her own product is never dressed up as sourced", () => {
+  const a = w.DB.insert("amendments", { name:"Mystery mix", n:5, p:0, k:0, form:"granular" });
+  w.FeedUI.open(fp.id, -1);
+  w.document.getElementById("fd-prod").value = a.id;
+  w.FeedUI.recalc();
+  const h = w.document.getElementById("fd-out").innerHTML;
+  w.closeSheet(); w.DB.remove("amendments", a.id);
+  return /the figures are the ones off the bag/.test(h); });
+
+/* ---- provenance ---- */
+check("every feeding source is https, official, and says what it gave us", () =>
+  Object.keys(w.FEED_SRC).every(k => {
+    const s = w.FEED_SRC[k];
+    return OFFICIAL.test(s.url) && s.org && s.n && s.what && s.what.length > 40; }));
+check("feeding sources reach the Sources screen with the rest", () =>
+  Object.keys(w.FEED_SRC).every(k => !!w.SOURCES[k]));
+check("every reference product names a source that exists", () =>
+  w.AMEND_REF.every(a => !!w.FEED_SRC[a.src]));
+check("a reference product either has an analysis or is rate-only, never neither", () =>
+  w.AMEND_REF.every(a => a.rateOnly === true || (Array.isArray(a.npk) && a.npk.length === 3)));
+check("where two sources disagree, the app says so instead of picking quietly", () =>
+  /Missouri quotes about 7%/.test(w.Feed.product("cottonseed").note) &&
+  /low end/.test(w.Feed.product("fishmeal").note));
+
+/* ---- the database sees it like anything else ---- */
+check("the shelf and the nitrogen figure are real columns", () =>
+  Array.isArray(w.SCHEMA.amendments) && w.SCHEMA.amendments.indexOf("name") > 0 &&
+  w.SCHEMA.journal.indexOf("n_lbs") > 0 && w.SCHEMA.journal.indexOf("amendment_id") > 0);
+
+w.DB.remove("plantings", fp.id); w.DB.remove("plantings", fbean.id); w.DB.remove("plantings", fcar.id);
+w.DB.remove("beds", fb.id); w.Cal.rebuild();
 
 w.DB.set("aiProvider", savedProv || "gemini");
 w.DB.set("gemKey", savedGem || ""); w.DB.set("aiKey", savedAi || "");

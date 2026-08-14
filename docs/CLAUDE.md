@@ -36,7 +36,7 @@ site ever 404s after a push, that setting is the first thing to check.
 
 ```bash
 node build.mjs                       # src/ -> docs/index.html
-node src/smoke.mjs docs/index.html   # 600 checks
+node src/smoke.mjs docs/index.html   # 798 checks
 node verify_camera.mjs docs/index.html # 26 checks on the camera -> AI -> form path
 ```
 
@@ -403,13 +403,57 @@ no profile they hand straight back to the original. Every adjustment carries its
 `micro.why` or in the rec's own `why`/`warn` — a number that moves without saying why is a
 bug here.
 
+## Feeding
+
+`p23_feed.js` (the model) and `p23b_feedui.js` (the screens). This is the feature the
+app is named after and it went in last, so the rules it follows are worth stating plainly.
+
+**Nitrogen is computed. Phosphorus is refused.** That asymmetry is the whole design.
+Nitrogen leaches, is consumed annually, and every extension service publishes a garden
+rate for it, so `Feed.nFor` scales UMD's figures — 3 lb per 1,000 sq ft for a heavy
+feeder, 2 for the general case — down to the ground a planting actually occupies.
+Phosphorus is the opposite: OSU's own table applies **zero** bonemeal above a soil test
+of 60 ppm, and UMN's dataset puts the median garden at 68 ppm against 26 ppm in farm
+fields, because compost carries P and it does not leach. So `Feed.dose` returns
+`{ok:false}` for anything carrying `rateOnly`, and the app quotes the published rate and
+the test value it depends on instead of producing a number. **Do not add a P dose.**
+
+**The light-feeder rate is the only invented figure and it is flagged.** No source states
+one. `FEED_RATES.light.est` is `true` and the UI shows a `derived` chip, the same
+convention as `Habit.estSpread` and the garden plants' `estfields`.
+
+**Side-dress timing is kept in the source's words, not converted to a date.** Most of the
+Missouri/K-State table is growth stages — "when the plant begins to set fruit", "when
+plants are 8–10 inches tall" — and a stage is what the gardener should actually look at.
+`stage:true` means the date on the calendar is only a reminder to go and look, and the UI
+says so. Where a source gives no time at all the reminder falls at `SIDEDRESS_MID` (35
+days), the middle of Missouri's general "four to six weeks after planting". Crops the
+source says *not* to side-dress — carrots, beets, lettuce, watermelon, sweet potato, the
+herbs — return a `none` step and no event. Legumes carry `noPre` and are never offered
+nitrogen at planting, because the crop table has always said they fix their own and an
+app that printed that and then scheduled a dose would be arguing with itself.
+
+**`Feed.plan()` derives, never stores** — same contract as `Trays.plan`. Correct a sowing
+date and the whole schedule re-reads.
+
+**Cups come from a source too.** UMD weighs a cup of dry organic meal at 0.33 lb and a cup
+of granular at 0.5 lb; OSU independently gives "1 pound ≈ 2 cups", which agrees on
+granular. `LB_PER_CUP` is those two numbers and nothing else. Liquids are never converted,
+and metric never sees a cup — those are US cups and `Feed.doseText` gives grams instead.
+
+**`Cal.rebuild` is wrapped, and its prune is now namespaced.** The sweep in `p9_seeds.js`
+used to remove *every* auto event it had not just written, which would have deleted the
+feeding events a moment before the wrapper recreated them. It now only prunes
+`frost|seed|exp|harv`. Any future wrapper adding auto events needs its own namespace and
+its own `keep`.
+
 ## Testing — do not skip
 
 ```bash
 node src/smoke.mjs docs/index.html
 ```
 
-600 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
+798 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
 round-trips, season maths, companion logic, grid spans, seed and maturity maths, the SQL guard,
 every screen and modal, assistant tool execution, and data-accuracy invariants. It has caught
 real bugs — an infinite retry loop, a data-truncating patch, stale-task rendering. Run it
