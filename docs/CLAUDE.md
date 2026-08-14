@@ -478,6 +478,27 @@ limitation — commit and hand back by default, and push on request. It keeps a 
 between "the suites are green" and "the updater has fired on the phone", which is the checkpoint
 the 2026-08-04 fork went around.
 
+### Hand Bruno this exact line, every time
+
+He runs it from **cmd.exe**, and his shell opens on a different drive. `cd` alone will not
+move him — without `/d` it changes directory *on C:* and leaves him where he was, silently.
+The quotes are not optional either; the path has a space in it.
+
+```cmd
+cd /d "C:\Dev\Pocket Fertilizer" && git push origin main
+```
+
+Give him the whole line including the folder change. Not `git push origin main` on its own,
+not a PowerShell variant unless he asks for one, and not a two-step "cd, then push" — one
+line he can paste. He has had to ask for this more than once; that is the tell that a bare
+push command is not a useful answer here.
+
+To confirm it went live a minute or two later:
+
+```cmd
+curl -s https://bzeitel25.github.io/pocket-fertilizer/index.html | findstr "const BUILD"
+```
+
 The credential is a **fine-grained GitHub PAT scoped to this one repo** (Contents: read/write),
 in `C:\Dev\.claude-secrets\gh-token.txt`. That folder is a **sibling of the repo, never inside
 it** — this repo is public, so a token under `C:\Dev\Pocket Fertilizer` would be one `git add -A`
