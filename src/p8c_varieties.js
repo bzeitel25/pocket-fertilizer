@@ -136,7 +136,13 @@ const Varieties = {
   },
 
   /* ---------- picker ---------- */
-  pick(cropId, onPick){
+  /* opts.onCancel — see Garden.cropPicker. Dismissing a picker used to dismiss
+     whatever it was opened on top of, which for the seed bank meant a packet
+     half typed in and a photograph already taken. */
+  pick(cropId, onPick, opts){
+    opts = opts || {};
+    let chosen = false;
+    const take = (name, v) => { chosen = true; onPick(name, v); };
     const list = Varieties.forCrop(cropId);
     let h = '<p class="muted sm" style="margin-top:0">Varieties of ' + esc(cropName(cropId)) +
       '. Days to maturity is the figure catalogues broadly agree on — your seed packet is the authority.</p>';
@@ -149,7 +155,9 @@ const Varieties = {
       (Assist.ready() ? '<button class="btn grow" id="vp-ai">✨ Look it up</button>' : '') + '</div>';
     if(!Assist.ready()) h += '<div class="tiny muted" style="margin-top:8px">Connect the assistant in Settings and this can search the web for any variety and fill in the details.</div>';
     h += '<div id="vp-out" style="margin-top:12px"></div>';
-    openSheet("Choose a variety", h);
+    if(opts.onCancel)
+      h += '<button class="btn ghost block sm" id="vp-cancel" style="margin-top:10px">Not now — go back</button>';
+    openSheet("Choose a variety", h, () => { if(!chosen && opts.onCancel) opts.onCancel(); });
 
     const draw = q => {
       const f = list.filter(v => !q || v.name.toLowerCase().indexOf(q) >= 0);
@@ -167,11 +175,15 @@ const Varieties = {
       });
       o += '</div></div>';
       $("#vp-list").innerHTML = o;
-      $$("#vp-list .item").forEach(el => el.onclick = () => onPick(el.dataset.v, Varieties.find(cropId, el.dataset.v)));
+      $$("#vp-list .item").forEach(el => el.onclick = () => take(el.dataset.v, Varieties.find(cropId, el.dataset.v)));
     };
     $("#vp-q").oninput = e => draw(e.target.value.toLowerCase().trim());
-    $("#vp-add").onclick = () => Varieties.form(cropId, $("#vp-q").value.trim(), onPick);
-    if($("#vp-ai")) $("#vp-ai").onclick = () => Varieties.lookup(cropId, $("#vp-q").value.trim(), onPick);
+    /* both of these open a sheet of their own, so this one is being left
+       deliberately rather than abandoned */
+    $("#vp-add").onclick = () => { chosen = true; Varieties.form(cropId, $("#vp-q").value.trim(), onPick); };
+    if($("#vp-ai")) $("#vp-ai").onclick = () => { chosen = true; Varieties.lookup(cropId, $("#vp-q").value.trim(), onPick); };
+    const vx = $("#vp-cancel");
+    if(vx) vx.onclick = () => closeSheet();
     draw("");
   },
 

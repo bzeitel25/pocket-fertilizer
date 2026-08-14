@@ -1756,6 +1756,67 @@ check("offline packet read explains itself", () =>
 V.ask = realAsk; V.json = realJson;
 w.closeSheet();
 
+/* --- the request itself, against a stubbed endpoint ---
+   Everything above stubs Vision.json and so never sees what the app actually
+   sends. That is where the packet reader was broken: a legible photograph, a
+   working key, and a request that asked a thinking model for 900 tokens. */
+const realFetch = w.fetch;
+let lastBody = null;
+const vStub = (payload, ok) => { w.fetch = (url, init) => {
+  lastBody = JSON.parse(init.body);
+  return Promise.resolve({ ok: ok !== false, status: ok === false ? 400 : 200,
+    json: async () => payload, text: async () => JSON.stringify(payload) }); }; };
+w.DB.set("aiProvider", "gemini"); w.DB.set("gemKey", "AIza-test");
+w.DB.set("gemModel", "gemini-3.6-flash");
+const vPhoto = w.Photos.put("data:image/jpeg;base64,AAAA", 100, 100);
+
+vStub({ candidates:[{ content:{ parts:[{ text:
+  '```json\n{"crop":"tomato","name":"Sungold"}\n```\nHope that helps! {see the note above}' }] } }] });
+const vNarrated = await V.json(vPhoto, "read it");
+check("a model that fences and narrates around its JSON is still understood", () =>
+  vNarrated.crop === "tomato" && vNarrated.name === "Sungold");
+check("Gemini 3 is told to think lightly, and given room to answer", () =>
+  lastBody.generationConfig.thinkingConfig.thinkingLevel === "low" &&
+  lastBody.generationConfig.temperature === 1 &&
+  lastBody.generationConfig.maxOutputTokens >= 2600);
+
+w.DB.set("gemModel", "gemini-2.5-flash");
+vStub({ candidates:[{ content:{ parts:[{ text:'{"crop":"pea"}' }] } }] });
+await V.json(vPhoto, "read it");
+check("an older model is left on the settings that suit it", () =>
+  !lastBody.generationConfig.thinkingConfig && lastBody.generationConfig.temperature === 0.1);
+
+w.DB.set("gemModel", "gemini-3.6-flash");
+let vN = 0; const vBudgets = [];
+w.fetch = (url, init) => {
+  vBudgets.push(JSON.parse(init.body).generationConfig.maxOutputTokens); vN++;
+  return Promise.resolve({ ok:true, status:200, text: async () => "",
+    json: async () => vN === 1
+      ? { candidates:[{ content:{ parts:[] }, finishReason:"MAX_TOKENS" }] }
+      : { candidates:[{ content:{ parts:[{ text:'{"crop":"pea"}' }] } }] } }); };
+const vRetried = await V.json(vPhoto, "read it");
+check("running out of room is asked again with more of it, not blamed on the photo", () =>
+  vRetried.crop === "pea" && vBudgets.length === 2 && vBudgets[1] > vBudgets[0]);
+
+let vM = 0; const vBodies = [];
+w.fetch = (url, init) => {
+  vBodies.push(JSON.parse(init.body)); vM++;
+  return Promise.resolve({ ok: vM > 1, status: vM === 1 ? 400 : 200,
+    text: async () => 'Unknown name "thinkingLevel"',
+    json: async () => ({ candidates:[{ content:{ parts:[{ text:'{"crop":"kale"}' }] } }] }) }); };
+const vBare = await V.json(vPhoto, "read it");
+check("a service that rejects the thinking setting is asked again the plain way", () =>
+  vBare.crop === "kale" && vBodies.length === 2 &&
+  !!vBodies[0].generationConfig.thinkingConfig && !vBodies[1].generationConfig.thinkingConfig);
+
+vStub({ candidates:[{ content:{ parts:[{ text:"I could not read that." }] } }] });
+let vRaw = null;
+try{ await V.json(vPhoto, "read it"); }catch(e){ vRaw = e; }
+check("an answer with no object in it carries what came back, for the screen to show", () =>
+  !!vRaw && vRaw.message === "no-json" && /could not read that/i.test(String(vRaw.raw)));
+w.fetch = realFetch;
+w.DB.set("gemModel", "");
+
 /* --- Plant Doctor --- */
 check("Plant Doctor offers AI vision to a Gemini user too", () => {
   w.DB.set("aiProvider", "gemini"); w.DB.set("gemKey", "AIza-test"); w.DB.set("aiKey", "");
@@ -2388,6 +2449,47 @@ check("the packet then saves against her own crop", () => {
   return !!s && s.crop_id === "my-sea-kale"; });
 w.DB.bulkRemove("seeds", s => s.crop_id === "my-sea-kale");
 w.UserCrops.remove(w.DB.all("usercrops").find(r => r.slug === "my-sea-kale").id);
+
+/* ---- a picker is a detour, not an exit ---- */
+w.Seeds.form(null);
+w.document.getElementById("sd-name").value = "Kept";
+w.document.getElementById("sd-brand").value = "Baker Creek";
+w.Seeds._photoId = w.Photos.put("data:image/jpeg;base64,AAAA", 10, 10);
+w.Seeds.pickCrop();
+check("the crop picker offers a way back, not only a way out", () =>
+  !!w.document.getElementById("cp-cancel"));
+w.document.getElementById("cp-cancel").onclick();
+await sleep(420);
+check("backing out of the crop picker returns to the packet, not the seed list", () =>
+  val("sd-name") === "Kept" && val("sd-brand") === "Baker Creek");
+check("and the photograph she already took is still attached", () =>
+  !!w.Seeds._photoId && w.document.getElementById("sd-photo").innerHTML.includes("<img"));
+
+w.document.getElementById("sd-crop").value = "tomato";
+w.Seeds.pickVariety();
+check("the variety picker offers the same way back", () =>
+  !!w.document.getElementById("vp-cancel"));
+w.document.getElementById("vp-cancel").onclick();
+await sleep(420);
+check("backing out of the variety picker keeps the packet too", () =>
+  val("sd-name") === "Kept" && val("sd-crop") === "tomato");
+w.closeSheet();
+
+/* ---- nothing on the packet form is required ---- */
+w.Seeds.form(null);
+const seedsBefore = w.DB.count("seeds");
+w.Seeds.save();
+check("a packet with nothing filled in still saves", () => {
+  const s = w.DB.all("seeds").find(x => x.name === "Unnamed packet");
+  return w.DB.count("seeds") === seedsBefore + 1 && !!s && !s.crop_id; });
+check("the seed list says which packets are still missing a crop", () => {
+  w.Seeds.render();
+  return w.document.getElementById("s-seeds").innerHTML.includes("no crop yet"); });
+check("a crop-less packet does not manufacture calendar entries", () =>
+  w.DB.all("events").every(e => !e.seed_id ||
+    !!(w.DB.find("seeds", e.seed_id) || {}).crop_id));
+w.DB.bulkRemove("seeds", s => s.name === "Unnamed packet");
+w.closeSheet();
 
 w.UserCrops.remove(w.DB.all("usercrops").find(r => r.slug === "my-fiddlehead-fern").id);
 w.closeSheet();

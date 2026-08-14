@@ -287,6 +287,28 @@ Assist.providerName = () => Assist.prov().n;
    the buttons never rendered. Everything now goes through here
    and follows whichever provider is actually connected.
    ============================================================ */
+/* ---- Gemini 3 is not Gemini 2.5, and the difference is not cosmetic ----
+
+   A Gemini 3 model reasons before it answers, at `thinkingLevel: "high"`
+   unless told otherwise, and those thinking tokens come out of the SAME
+   maxOutputTokens budget as the answer itself. Ask for 900 and the model
+   can spend every one of them thinking and hand back a candidate with no
+   parts at all — which reached the gardener as "could not read the packet"
+   over a photograph that was perfectly legible. Flash cannot turn thinking
+   off entirely, so the lever is "low", plus room to work in.
+
+   Google also asks specifically for temperature 1.0 on Gemini 3: below it
+   the model can loop, which is one more way to burn an output budget. The
+   hardcoded 0.1 was right for 2.5 and wrong for 3.
+
+   https://ai.google.dev/gemini-api/docs/generate-content/gemini-3          */
+function isGemini3(){ return /^(models\/)?gemini-3/.test(Assist.modelName()); }
+function geminiGen(max){
+  const gen = { maxOutputTokens: max, temperature: isGemini3() ? 1 : 0.1 };
+  if(isGemini3()) gen.thinkingConfig = { thinkingLevel: "low" };
+  return gen;
+}
+
 const Vision = {
   ready(){ return !!Assist.apiKey(); },
   who(){ return Assist.prov().n; },
@@ -331,18 +353,32 @@ const Vision = {
       return (j.content || []).map(c => c.text || "").join("").trim();
     }
 
-    const gen = { temperature: 0.1, maxOutputTokens: max };
+    const model = Assist.modelName();
+    const g3 = isGemini3();
+    const gen = geminiGen(max);
     if(opts.json) gen.responseMimeType = "application/json";
-    const r = await fetch(GEM_URL + Assist.modelName() + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
+
+    const post = cfg => fetch(GEM_URL + model + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
       method:"POST", headers:{ "content-type":"application/json" },
       body: JSON.stringify({
         contents:[{ role:"user", parts:[
           { inline_data:{ mime_type: mime, data: ph.data } },
           { text: prompt }
         ]}],
-        generationConfig: gen
+        generationConfig: cfg
       })
     });
+
+    let r = await post(gen);
+    /* An endpoint that has never heard of thinkingLevel rejects the whole
+       request rather than ignoring the field. Losing the packet reader over
+       a tuning parameter would be a poor trade, so drop the extras and ask
+       again the old way. */
+    if(!r.ok && r.status === 400 && g3){
+      const bare = { maxOutputTokens: max, temperature: 0.1 };
+      if(opts.json) bare.responseMimeType = "application/json";
+      r = await post(bare);
+    }
     if(!r.ok){ const b = await r.text().catch(() => ""); throw new Error("Gemini " + r.status + " " + b.slice(0, 160)); }
     const j = await r.json();
     const cand = (j.candidates || [])[0];
@@ -359,14 +395,40 @@ const Vision = {
     return out;
   },
 
-  /* same, but insists on a JSON object and hands it back parsed */
+  /* same, but insists on a JSON object and hands it back parsed.
+
+     Two bugs lived here. The first was `/\{[\s\S]*\}/` — first brace to LAST
+     brace, greedy, so a model that said anything after its JSON (a fence, a
+     "hope that helps", a citation) produced a match that would not parse, and
+     a legible packet came back as "could not make sense of it". firstJsonObject
+     was written for exactly that and this call site never adopted it.
+
+     The second was a 900-token default shared with a model that thinks out of
+     the same budget. The default is now the survey's, and running out of room
+     is retried with more of it rather than reported as a bad photograph —
+     because it is this app asking for too little, not her holding the camera
+     wrong. */
   async json(photo, prompt, opts){
     opts = opts || {};
-    const txt = await Vision.ask(photo, prompt, { json:true, maxTokens: opts.maxTokens || 900 });
-    const m = txt.match(/\{[\s\S]*\}/);
-    if(!m) throw new Error(opts.what === "survey" ? "no-json-survey" : "no-json");
-    try{ return JSON.parse(m[0]); }
-    catch(e){ throw new Error(opts.what === "survey" ? "no-json-survey" : "no-json"); }
+    const budget = opts.maxTokens || 2600;
+    let txt;
+    try{
+      txt = await Vision.ask(photo, prompt, { json:true, maxTokens: budget });
+    }catch(e){
+      if(String(e && e.message || "") === "truncated" && !opts._retried)
+        return Vision.json(photo, prompt,
+          Object.assign({}, opts, { maxTokens: Math.min(budget * 2, 8000), _retried: true }));
+      throw e;
+    }
+    const fail = () => {
+      const err = new Error(opts.what === "survey" ? "no-json-survey" : "no-json");
+      err.raw = txt;                 /* so the screen can show what actually came back */
+      return err;
+    };
+    const raw = firstJsonObject(txt);
+    if(!raw) throw fail();
+    try{ return JSON.parse(raw); }
+    catch(e){ throw fail(); }
   },
 
   /* plain-language failures — a gardener should never see a status code alone */
@@ -482,15 +544,23 @@ const Ask = {
     }
 
     const body = { contents:[{ role:"user", parts:[{ text: prompt }] }],
-                   generationConfig:{ temperature: 0.1, maxOutputTokens: max } };
+                   generationConfig: geminiGen(max) };
     /* google_search and responseMimeType:"application/json" are mutually
        exclusive on Gemini — asking for both is a 400. Search wins, and the
        object gets dug out of the prose by firstJsonObject. */
     if(search) body.tools = [{ google_search:{} }];
     else if(opts.json) body.generationConfig.responseMimeType = "application/json";
-    const r = await fetch(GEM_URL + Assist.modelName() + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
+    const send = () => fetch(GEM_URL + Assist.modelName() + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
       method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify(body)
     });
+    let r = await send();
+    /* an endpoint that has never heard of thinkingLevel rejects the whole
+       request rather than ignoring the field — ask again the old way */
+    if(!r.ok && r.status === 400 && body.generationConfig.thinkingConfig){
+      delete body.generationConfig.thinkingConfig;
+      body.generationConfig.temperature = 0.1;
+      r = await send();
+    }
     /* the body carries Google's actual complaint; throwing "HTTP 400" alone
        is what made this feature impossible to diagnose from a phone */
     if(!r.ok){ const b = await r.text().catch(() => ""); throw new Error("Gemini " + r.status + " " + b.slice(0, 160)); }
@@ -501,7 +571,15 @@ const Ask = {
       throw new Error(blocked ? "The service refused that question (" + blocked + ")." : "The service returned nothing.");
     }
     const gm = cand.groundingMetadata || {};
-    return { text: (((cand.content || {}).parts) || []).map(p => p.text || "").join("").trim(),
+    const out = (((cand.content || {}).parts) || []).map(p => p.text || "").join("").trim();
+    /* same thinking-budget trap as the packet reader: an empty answer with
+       MAX_TOKENS is this app asking for too little room, not a bad question */
+    if(!out && cand.finishReason === "MAX_TOKENS"){
+      if(opts._retried) throw new Error("truncated");
+      return Ask.text(prompt, Object.assign({}, opts,
+        { maxTokens: Math.min(max * 3, 8000), _retried: true }));
+    }
+    return { text: out,
              sources: (gm.groundingChunks || []).map(g => (g.web || {}).title).filter(Boolean).slice(0, 3) };
   },
 

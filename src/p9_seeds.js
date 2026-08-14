@@ -84,7 +84,8 @@ const Seeds = {
           '<div class="tiny muted truncate">' + esc(s.brand || "—") + (s.packed_year ? ' · packed ' + esc(s.packed_year) : '') +
             (s.qty ? ' · ' + esc(s.qty) + ' ' + esc(s.unit || "seeds") : '') + '</div>' +
           '<div class="row wrap" style="gap:4px;margin-top:4px">' + Seeds.badge(v) +
-            (st && st.inWindow ? '<span class="chip info tiny">' + esc(st.w.label) + ' now</span>' : '') + '</div></div>' +
+            (st && st.inWindow ? '<span class="chip info tiny">' + esc(st.w.label) + ' now</span>' : '') +
+            (s.crop_id ? '' : '<span class="chip warn tiny">no crop yet</span>') + '</div></div>' +
           '<span class="go">›</span></button>';
       });
       h += '</div></div>';
@@ -122,7 +123,8 @@ const Seeds = {
     h += '<div class="field"><label class="f">Crop</label><div class="row" style="gap:8px">' +
       '<input type="text" id="sd-cropname" readonly value="' + esc(cur.crop_id ? cropName(cur.crop_id) : "") + '" placeholder="Pick a crop">' +
       '<button class="btn ghost sm" onclick="Seeds.pickCrop()">Choose</button></div>' +
-      '<input type="hidden" id="sd-crop" value="' + esc(cur.crop_id || "") + '"></div>';
+      '<input type="hidden" id="sd-crop" value="' + esc(cur.crop_id || "") + '">' +
+      '<div class="tiny muted" style="margin-top:4px">Optional, like everything here — save now and come back. The crop is what gives this packet a sowing calendar and a growing guide.</div></div>';
     h += '<div class="field"><label class="f">Packet name</label><input type="text" id="sd-name" value="' + esc(cur.name || "") + '" placeholder="Cherry Tomato"></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Variety</label><div class="row" style="gap:6px">' +
@@ -209,8 +211,14 @@ const Seeds = {
     if(state && state.busy)
       return '<div class="note i sm"><span class="spinner"></span> Reading the packet with ' + esc(Vision.who()) + '…</div>';
     if(state && state.err)
-      return '<div class="note d sm"><b>Could not read the packet.</b><br>' + esc(state.err) + '</div>' +
-        '<button class="btn outline block sm" style="margin-top:8px" onclick="Seeds.readPacket()">↻ Try reading it again</button>';
+      return '<div class="note d sm"><b>Could not read the packet.</b><br>' + esc(state.err) +
+        /* a failure a gardener cannot describe is a failure nobody can fix.
+           What the model actually said is worth more than a status code. */
+        (state.raw ? '<details style="margin-top:6px"><summary class="tiny">What came back</summary>' +
+          '<div class="tiny" style="white-space:pre-wrap;word-break:break-word;margin-top:4px">' + esc(state.raw) + '</div></details>' : '') +
+        '</div>' +
+        '<button class="btn outline block sm" style="margin-top:8px" onclick="Seeds.readPacket()">↻ Try reading it again</button>' +
+        '<div class="tiny muted center" style="margin-top:6px">You can save the packet as it is and type the rest in.</div>';
     if(state && state.filled)
       return '<div class="note g sm"><b>✨ Filled in from the photo.</b> ' +
         (state.filled.length ? esc(state.filled.join(", ")) + '. ' : '') +
@@ -228,28 +236,34 @@ const Seeds = {
     const d = Seeds.readForm();
     if(!d.crop_id) return toast("Pick a crop first");
     Seeds._draft = d;
-    const editId = Seeds._editId;
     Varieties.pick(d.crop_id, name => {
       closeSheet();
-      setTimeout(() => {
-        Seeds.form(editId ? DB.find("seeds", editId) : null,
-          Object.assign({}, Seeds._draft, { variety: name || "" }));
-      }, 220);
-    });
+      setTimeout(() => Seeds.reopen({ variety: name || "" }), 220);
+    }, { onCancel: () => Seeds.reopen() });
+  },
+
+  /* Reopen the packet exactly as she left it. The draft is captured before the
+     sheet swaps, so the photo, the brand, the packed year and everything else
+     survive a trip to the crop picker — including the trip she abandons. */
+  reopen(extra){
+    const editId = Seeds._editId;
+    const merged = Object.assign({}, Seeds._draft || {}, { photo_id: Seeds._photoId }, extra || {});
+    Seeds.form(editId ? DB.find("seeds", editId) : null, merged);
   },
 
   pickCrop(){
     Seeds._draft = Seeds.readForm();          /* capture what is typed BEFORE the sheet swaps */
-    const editId = Seeds._editId;
     Garden.cropPicker("Which crop is this?", id => {
       closeSheet();
-      setTimeout(() => {
-        const merged = Object.assign({}, Seeds._draft || {}, {
-          crop_id: id, photo_id: Seeds._photoId,
-          name: (Seeds._draft && Seeds._draft.name) || cropName(id)
-        });
-        Seeds.form(editId ? DB.find("seeds", editId) : null, merged);
-      }, 230);
+      setTimeout(() => Seeds.reopen({
+        crop_id: id,
+        name: (Seeds._draft && Seeds._draft.name) || cropName(id)
+      }), 230);
+    }, null, {
+      /* backing out of the picker used to close the packet with it, all the
+         way to the seed list, and everything typed since the photograph went
+         with it. Now it puts her back where she was. */
+      onCancel: () => Seeds.reopen()
     });
   },
 
@@ -264,14 +278,18 @@ const Seeds = {
     };
   },
 
+  /* Nothing on this form is required. A packet in her hand is a real thing
+     whether or not she knows the variety yet, and refusing to save one until
+     it is complete just means the photograph gets taken twice. Anything left
+     blank can be filled in later, or read off the photo on a second attempt. */
   save(id){
     if(id === undefined) id = Seeds._editId;
     const d = Seeds.readForm();
-    if(!d.name && !d.crop_id) return toast("Add a name or pick a crop");
-    if(!d.name) d.name = cropName(d.crop_id);
+    if(!d.name) d.name = d.crop_id ? cropName(d.crop_id) : (d.variety || d.brand || "Unnamed packet");
     if(id) DB.update("seeds", id, d); else DB.insert("seeds", d);
     Cal.rebuild();
-    closeSheet(); Seeds.render(); toast("Packet saved");
+    closeSheet(); Seeds.render();
+    toast(d.crop_id ? "Packet saved" : "Saved — add the crop whenever you like");
   },
   del(id){
     confirmSheet("Delete this packet?", "It is removed from your seed bank and its calendar entries go with it.", "Delete", () => {
@@ -405,7 +423,8 @@ const Seeds = {
     try{
       d = await Vision.json(Seeds._readSrc || Seeds._photoId, Seeds.PACKET_PROMPT);
     }catch(e){
-      Seeds._readState = { err: Vision.explain(e) }; Seeds.paint();
+      Seeds._readState = { err: Vision.explain(e), raw: (e && e.raw) ? String(e.raw).slice(0, 300) : null };
+      Seeds.paint();
       return;
     }
 

@@ -600,7 +600,9 @@ const Doctor = {
         (syms ? " They report: " + syms + "." : "") +
         " Give: 1) the most likely diagnosis with a confidence percentage, 2) two alternatives worth ruling out and how to tell them apart, " +
         "3) what to do in the next 48 hours, 4) prevention. Be concrete and brief. If the photo is too unclear to judge, say so plainly.",
-        { maxTokens: 900 });
+        /* four sections of prose, from a model that thinks out of the same
+           budget it answers from. 900 was enough for neither. */
+        { maxTokens: 2600 });
       if(!txt) throw new Error("empty");
       const html = esc(txt).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>");
       openSheet("AI diagnosis",

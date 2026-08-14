@@ -114,11 +114,13 @@ const UserCrops = {
        name    seed the Name field — what she typed into the search that found nothing
        onDone  called with the new slug instead of jumping to the library, so the
                screen that sent her here can carry on with the crop she just made
-       onBack  render a way back to where she came from, so abandoning this form
-               does not also throw away the half-filled packet behind it       */
+       onBack  render a way back to where she came from
+       onCancel called if she dismisses this sheet outright, so abandoning the
+               form does not also throw away the half-filled packet behind it */
   open(id, opts){
     const row = id ? DB.find("usercrops", id) : null;
     UserCrops._opts = opts || null;
+    UserCrops._left = false;
     const v = (k, d) => row && row[k] !== null && row[k] !== undefined && row[k] !== "" ? row[k] : d;
     const emoji = v("emoji", "🌱");
 
@@ -188,14 +190,15 @@ const UserCrops = {
       (id ? "'" + id + "'" : "null") + ')">' + (id ? "Save changes" : "Add this crop") + '</button>';
     if(id) h += '<button class="btn danger block" style="margin-top:8px" onclick="UserCrops.confirmRemove(\'' + id + '\')">Delete this crop</button>';
 
-    openSheet(id ? "Edit " + (row.name || "crop") : "Add your own crop", h);
+    openSheet(id ? "Edit " + (row.name || "crop") : "Add your own crop", h,
+      () => { if(!UserCrops._left && opts && opts.onCancel) opts.onCancel(); });
     $$("#uc-emoji .chip").forEach(b => b.onclick = () => {
       $$("#uc-emoji .chip").forEach(x => x.classList.toggle("on", x === b));
       $("#uc-emoji-v").value = b.dataset.e;
     });
     if(opts && opts.onBack){
       const bk = $("#uc-back");
-      if(bk) bk.onclick = () => { UserCrops._opts = null; opts.onBack(); };
+      if(bk) bk.onclick = () => { UserCrops._left = true; UserCrops._opts = null; opts.onBack(); };
     }
     setTimeout(() => { const el = $("#uc-name"); if(el && !id) el.focus(); }, 300);
   },
@@ -224,6 +227,7 @@ const UserCrops = {
     if(!id) row.slug = UserCrops.slug(name);
     const saved = UserCrops.save(row, id);
     const opts = UserCrops._opts; UserCrops._opts = null;
+    UserCrops._left = true;               /* saved, not abandoned */
     closeSheet();
     if(APP.tab === "library") Library.render();
     toast(id ? "Saved" : name + " added to your crops");
@@ -286,34 +290,6 @@ const UserCrops = {
       'No extension service stands behind them — which is exactly why the rest of the app\'s numbers are worth something.' +
       (row ? '<br><button class="btn sm" style="margin-top:8px" onclick="UserCrops.open(\'' + row.id + '\')">Edit these figures</button>' : '') +
       '</div>');
-  };
-
-  /* ---- a way in from the crop picker ----
-     The library is not where she meets the limit. She meets it halfway through
-     adding a seed packet, or standing over a bed, when she searches for the thing
-     in her hand and the list comes back empty. Sending her to another screen to
-     add it would cost her the packet she was typing, so the door is here, in the
-     picker, with what she searched for already in the name field and a way back
-     if she changes her mind. */
-  const origPicker = Garden.cropPicker;
-  Garden.cropPicker = function(title, onPick, bed){
-    origPicker.call(Garden, title, onPick, bed);
-    const list = $("#cp-list");
-    if(!list) return;
-    list.insertAdjacentHTML("afterend",
-      '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">' +
-      '<button class="btn ghost block" id="cp-own">＋ Not here? Add your own crop</button>' +
-      '<div class="tiny muted center" style="margin-top:6px">A regional green, a herb, whatever came back from the seed swap. It behaves like any other crop — the figures are just yours rather than an extension service\'s.</div></div>');
-    const btn = $("#cp-own");
-    if(!btn) return;
-    btn.onclick = () => {
-      const q = $("#cp-q");
-      UserCrops.open(null, {
-        name: q ? String(q.value || "").trim() : "",
-        onDone: slug => onPick(slug),
-        onBack: () => Garden.cropPicker(title, onPick, bed)
-      });
-    };
   };
 
   /* a way in from the crop library */

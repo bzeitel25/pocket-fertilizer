@@ -3152,7 +3152,15 @@ const Garden = {
     }, b);
   },
 
-  cropPicker(title, onPick, bed){
+  /* opts.onCancel — what to do if she leaves without choosing anything.
+     Without it, dismissing the picker dismissed the sheet, and the sheet
+     was the half-filled seed packet behind it: photo, brand, packed year,
+     all gone, with no warning and nothing to undo. A picker is a detour,
+     not an exit. */
+  cropPicker(title, onPick, bed, opts){
+    opts = opts || {};
+    let chosen = false;
+    const choose = id => { chosen = true; onPick(id); };
     const stock = {}; DB.all("seeds").forEach(s => { if(s.crop_id) stock[s.crop_id] = (stock[s.crop_id] || 0) + 1; });
     const recs = Recommend.now({ bedId: bed ? bed.id : null }).slice(0, 30);
     const recIds = recs.map(r => r.crop.id);
@@ -3163,7 +3171,13 @@ const Garden = {
       '<button class="chip" data-f="seed">I have seed</button>' +
       '<button class="chip" data-f="comp">Good companions</button></div>';
     h += '<div id="cp-list"></div>';
-    openSheet(title, h);
+    /* the door out, for a crop the app has never heard of */
+    h += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">' +
+      '<button class="btn ghost block" id="cp-own">＋ Not here? Add your own crop</button>' +
+      '<div class="tiny muted center" style="margin-top:6px">A regional green, a herb, whatever came back from the seed swap.</div></div>';
+    if(opts.onCancel)
+      h += '<button class="btn ghost block sm" id="cp-cancel" style="margin-top:10px">Not now — go back</button>';
+    openSheet(title, h, () => { if(!chosen && opts.onCancel) opts.onCancel(); });
 
     const compIds = bed ? Recommend.forBed(bed.id).map(x => x.id) : [];
     let filter = "all", q = "";
@@ -3198,8 +3212,21 @@ const Garden = {
       });
       out += '</div>';
       $("#cp-list").innerHTML = out;
-      $$("#cp-list .item").forEach(el => el.onclick = () => onPick(el.dataset.id));
+      $$("#cp-list .item").forEach(el => el.onclick = () => choose(el.dataset.id));
     }
+    const own = $("#cp-own");
+    if(own) own.onclick = () => {
+      chosen = true;                       /* leaving for the editor, not abandoning */
+      const typed = $("#cp-q");             /* q is lowercased for matching; her capitals are not */
+      UserCrops.open(null, {
+        name: typed ? String(typed.value || "").trim() : "",
+        onDone: id => choose(id),
+        onBack: () => Garden.cropPicker(title, onPick, bed, opts),
+        onCancel: opts.onCancel
+      });
+    };
+    const cx = $("#cp-cancel");
+    if(cx) cx.onclick = () => closeSheet();
     $("#cp-q").oninput = e => { q = e.target.value.toLowerCase().trim(); draw(); };
     $$("#sheet-body .chip[data-f]").forEach(el => el.onclick = () => {
       filter = el.dataset.f;
@@ -3976,7 +4003,13 @@ const Varieties = {
   },
 
   /* ---------- picker ---------- */
-  pick(cropId, onPick){
+  /* opts.onCancel — see Garden.cropPicker. Dismissing a picker used to dismiss
+     whatever it was opened on top of, which for the seed bank meant a packet
+     half typed in and a photograph already taken. */
+  pick(cropId, onPick, opts){
+    opts = opts || {};
+    let chosen = false;
+    const take = (name, v) => { chosen = true; onPick(name, v); };
     const list = Varieties.forCrop(cropId);
     let h = '<p class="muted sm" style="margin-top:0">Varieties of ' + esc(cropName(cropId)) +
       '. Days to maturity is the figure catalogues broadly agree on — your seed packet is the authority.</p>';
@@ -3989,7 +4022,9 @@ const Varieties = {
       (Assist.ready() ? '<button class="btn grow" id="vp-ai">✨ Look it up</button>' : '') + '</div>';
     if(!Assist.ready()) h += '<div class="tiny muted" style="margin-top:8px">Connect the assistant in Settings and this can search the web for any variety and fill in the details.</div>';
     h += '<div id="vp-out" style="margin-top:12px"></div>';
-    openSheet("Choose a variety", h);
+    if(opts.onCancel)
+      h += '<button class="btn ghost block sm" id="vp-cancel" style="margin-top:10px">Not now — go back</button>';
+    openSheet("Choose a variety", h, () => { if(!chosen && opts.onCancel) opts.onCancel(); });
 
     const draw = q => {
       const f = list.filter(v => !q || v.name.toLowerCase().indexOf(q) >= 0);
@@ -4007,11 +4042,15 @@ const Varieties = {
       });
       o += '</div></div>';
       $("#vp-list").innerHTML = o;
-      $$("#vp-list .item").forEach(el => el.onclick = () => onPick(el.dataset.v, Varieties.find(cropId, el.dataset.v)));
+      $$("#vp-list .item").forEach(el => el.onclick = () => take(el.dataset.v, Varieties.find(cropId, el.dataset.v)));
     };
     $("#vp-q").oninput = e => draw(e.target.value.toLowerCase().trim());
-    $("#vp-add").onclick = () => Varieties.form(cropId, $("#vp-q").value.trim(), onPick);
-    if($("#vp-ai")) $("#vp-ai").onclick = () => Varieties.lookup(cropId, $("#vp-q").value.trim(), onPick);
+    /* both of these open a sheet of their own, so this one is being left
+       deliberately rather than abandoned */
+    $("#vp-add").onclick = () => { chosen = true; Varieties.form(cropId, $("#vp-q").value.trim(), onPick); };
+    if($("#vp-ai")) $("#vp-ai").onclick = () => { chosen = true; Varieties.lookup(cropId, $("#vp-q").value.trim(), onPick); };
+    const vx = $("#vp-cancel");
+    if(vx) vx.onclick = () => closeSheet();
     draw("");
   },
 
@@ -10509,7 +10548,8 @@ const Seeds = {
           '<div class="tiny muted truncate">' + esc(s.brand || "—") + (s.packed_year ? ' · packed ' + esc(s.packed_year) : '') +
             (s.qty ? ' · ' + esc(s.qty) + ' ' + esc(s.unit || "seeds") : '') + '</div>' +
           '<div class="row wrap" style="gap:4px;margin-top:4px">' + Seeds.badge(v) +
-            (st && st.inWindow ? '<span class="chip info tiny">' + esc(st.w.label) + ' now</span>' : '') + '</div></div>' +
+            (st && st.inWindow ? '<span class="chip info tiny">' + esc(st.w.label) + ' now</span>' : '') +
+            (s.crop_id ? '' : '<span class="chip warn tiny">no crop yet</span>') + '</div></div>' +
           '<span class="go">›</span></button>';
       });
       h += '</div></div>';
@@ -10547,7 +10587,8 @@ const Seeds = {
     h += '<div class="field"><label class="f">Crop</label><div class="row" style="gap:8px">' +
       '<input type="text" id="sd-cropname" readonly value="' + esc(cur.crop_id ? cropName(cur.crop_id) : "") + '" placeholder="Pick a crop">' +
       '<button class="btn ghost sm" onclick="Seeds.pickCrop()">Choose</button></div>' +
-      '<input type="hidden" id="sd-crop" value="' + esc(cur.crop_id || "") + '"></div>';
+      '<input type="hidden" id="sd-crop" value="' + esc(cur.crop_id || "") + '">' +
+      '<div class="tiny muted" style="margin-top:4px">Optional, like everything here — save now and come back. The crop is what gives this packet a sowing calendar and a growing guide.</div></div>';
     h += '<div class="field"><label class="f">Packet name</label><input type="text" id="sd-name" value="' + esc(cur.name || "") + '" placeholder="Cherry Tomato"></div>';
     h += '<div class="grid2" style="margin-top:12px">' +
       '<div><label class="f">Variety</label><div class="row" style="gap:6px">' +
@@ -10634,8 +10675,14 @@ const Seeds = {
     if(state && state.busy)
       return '<div class="note i sm"><span class="spinner"></span> Reading the packet with ' + esc(Vision.who()) + '…</div>';
     if(state && state.err)
-      return '<div class="note d sm"><b>Could not read the packet.</b><br>' + esc(state.err) + '</div>' +
-        '<button class="btn outline block sm" style="margin-top:8px" onclick="Seeds.readPacket()">↻ Try reading it again</button>';
+      return '<div class="note d sm"><b>Could not read the packet.</b><br>' + esc(state.err) +
+        /* a failure a gardener cannot describe is a failure nobody can fix.
+           What the model actually said is worth more than a status code. */
+        (state.raw ? '<details style="margin-top:6px"><summary class="tiny">What came back</summary>' +
+          '<div class="tiny" style="white-space:pre-wrap;word-break:break-word;margin-top:4px">' + esc(state.raw) + '</div></details>' : '') +
+        '</div>' +
+        '<button class="btn outline block sm" style="margin-top:8px" onclick="Seeds.readPacket()">↻ Try reading it again</button>' +
+        '<div class="tiny muted center" style="margin-top:6px">You can save the packet as it is and type the rest in.</div>';
     if(state && state.filled)
       return '<div class="note g sm"><b>✨ Filled in from the photo.</b> ' +
         (state.filled.length ? esc(state.filled.join(", ")) + '. ' : '') +
@@ -10653,28 +10700,34 @@ const Seeds = {
     const d = Seeds.readForm();
     if(!d.crop_id) return toast("Pick a crop first");
     Seeds._draft = d;
-    const editId = Seeds._editId;
     Varieties.pick(d.crop_id, name => {
       closeSheet();
-      setTimeout(() => {
-        Seeds.form(editId ? DB.find("seeds", editId) : null,
-          Object.assign({}, Seeds._draft, { variety: name || "" }));
-      }, 220);
-    });
+      setTimeout(() => Seeds.reopen({ variety: name || "" }), 220);
+    }, { onCancel: () => Seeds.reopen() });
+  },
+
+  /* Reopen the packet exactly as she left it. The draft is captured before the
+     sheet swaps, so the photo, the brand, the packed year and everything else
+     survive a trip to the crop picker — including the trip she abandons. */
+  reopen(extra){
+    const editId = Seeds._editId;
+    const merged = Object.assign({}, Seeds._draft || {}, { photo_id: Seeds._photoId }, extra || {});
+    Seeds.form(editId ? DB.find("seeds", editId) : null, merged);
   },
 
   pickCrop(){
     Seeds._draft = Seeds.readForm();          /* capture what is typed BEFORE the sheet swaps */
-    const editId = Seeds._editId;
     Garden.cropPicker("Which crop is this?", id => {
       closeSheet();
-      setTimeout(() => {
-        const merged = Object.assign({}, Seeds._draft || {}, {
-          crop_id: id, photo_id: Seeds._photoId,
-          name: (Seeds._draft && Seeds._draft.name) || cropName(id)
-        });
-        Seeds.form(editId ? DB.find("seeds", editId) : null, merged);
-      }, 230);
+      setTimeout(() => Seeds.reopen({
+        crop_id: id,
+        name: (Seeds._draft && Seeds._draft.name) || cropName(id)
+      }), 230);
+    }, null, {
+      /* backing out of the picker used to close the packet with it, all the
+         way to the seed list, and everything typed since the photograph went
+         with it. Now it puts her back where she was. */
+      onCancel: () => Seeds.reopen()
     });
   },
 
@@ -10689,14 +10742,18 @@ const Seeds = {
     };
   },
 
+  /* Nothing on this form is required. A packet in her hand is a real thing
+     whether or not she knows the variety yet, and refusing to save one until
+     it is complete just means the photograph gets taken twice. Anything left
+     blank can be filled in later, or read off the photo on a second attempt. */
   save(id){
     if(id === undefined) id = Seeds._editId;
     const d = Seeds.readForm();
-    if(!d.name && !d.crop_id) return toast("Add a name or pick a crop");
-    if(!d.name) d.name = cropName(d.crop_id);
+    if(!d.name) d.name = d.crop_id ? cropName(d.crop_id) : (d.variety || d.brand || "Unnamed packet");
     if(id) DB.update("seeds", id, d); else DB.insert("seeds", d);
     Cal.rebuild();
-    closeSheet(); Seeds.render(); toast("Packet saved");
+    closeSheet(); Seeds.render();
+    toast(d.crop_id ? "Packet saved" : "Saved — add the crop whenever you like");
   },
   del(id){
     confirmSheet("Delete this packet?", "It is removed from your seed bank and its calendar entries go with it.", "Delete", () => {
@@ -10830,7 +10887,8 @@ const Seeds = {
     try{
       d = await Vision.json(Seeds._readSrc || Seeds._photoId, Seeds.PACKET_PROMPT);
     }catch(e){
-      Seeds._readState = { err: Vision.explain(e) }; Seeds.paint();
+      Seeds._readState = { err: Vision.explain(e), raw: (e && e.raw) ? String(e.raw).slice(0, 300) : null };
+      Seeds.paint();
       return;
     }
 
@@ -12465,7 +12523,9 @@ const Doctor = {
         (syms ? " They report: " + syms + "." : "") +
         " Give: 1) the most likely diagnosis with a confidence percentage, 2) two alternatives worth ruling out and how to tell them apart, " +
         "3) what to do in the next 48 hours, 4) prevention. Be concrete and brief. If the photo is too unclear to judge, say so plainly.",
-        { maxTokens: 900 });
+        /* four sections of prose, from a model that thinks out of the same
+           budget it answers from. 900 was enough for neither. */
+        { maxTokens: 2600 });
       if(!txt) throw new Error("empty");
       const html = esc(txt).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>");
       openSheet("AI diagnosis",
@@ -13687,11 +13747,13 @@ const UserCrops = {
        name    seed the Name field — what she typed into the search that found nothing
        onDone  called with the new slug instead of jumping to the library, so the
                screen that sent her here can carry on with the crop she just made
-       onBack  render a way back to where she came from, so abandoning this form
-               does not also throw away the half-filled packet behind it       */
+       onBack  render a way back to where she came from
+       onCancel called if she dismisses this sheet outright, so abandoning the
+               form does not also throw away the half-filled packet behind it */
   open(id, opts){
     const row = id ? DB.find("usercrops", id) : null;
     UserCrops._opts = opts || null;
+    UserCrops._left = false;
     const v = (k, d) => row && row[k] !== null && row[k] !== undefined && row[k] !== "" ? row[k] : d;
     const emoji = v("emoji", "🌱");
 
@@ -13761,14 +13823,15 @@ const UserCrops = {
       (id ? "'" + id + "'" : "null") + ')">' + (id ? "Save changes" : "Add this crop") + '</button>';
     if(id) h += '<button class="btn danger block" style="margin-top:8px" onclick="UserCrops.confirmRemove(\'' + id + '\')">Delete this crop</button>';
 
-    openSheet(id ? "Edit " + (row.name || "crop") : "Add your own crop", h);
+    openSheet(id ? "Edit " + (row.name || "crop") : "Add your own crop", h,
+      () => { if(!UserCrops._left && opts && opts.onCancel) opts.onCancel(); });
     $$("#uc-emoji .chip").forEach(b => b.onclick = () => {
       $$("#uc-emoji .chip").forEach(x => x.classList.toggle("on", x === b));
       $("#uc-emoji-v").value = b.dataset.e;
     });
     if(opts && opts.onBack){
       const bk = $("#uc-back");
-      if(bk) bk.onclick = () => { UserCrops._opts = null; opts.onBack(); };
+      if(bk) bk.onclick = () => { UserCrops._left = true; UserCrops._opts = null; opts.onBack(); };
     }
     setTimeout(() => { const el = $("#uc-name"); if(el && !id) el.focus(); }, 300);
   },
@@ -13797,6 +13860,7 @@ const UserCrops = {
     if(!id) row.slug = UserCrops.slug(name);
     const saved = UserCrops.save(row, id);
     const opts = UserCrops._opts; UserCrops._opts = null;
+    UserCrops._left = true;               /* saved, not abandoned */
     closeSheet();
     if(APP.tab === "library") Library.render();
     toast(id ? "Saved" : name + " added to your crops");
@@ -13859,34 +13923,6 @@ const UserCrops = {
       'No extension service stands behind them — which is exactly why the rest of the app\'s numbers are worth something.' +
       (row ? '<br><button class="btn sm" style="margin-top:8px" onclick="UserCrops.open(\'' + row.id + '\')">Edit these figures</button>' : '') +
       '</div>');
-  };
-
-  /* ---- a way in from the crop picker ----
-     The library is not where she meets the limit. She meets it halfway through
-     adding a seed packet, or standing over a bed, when she searches for the thing
-     in her hand and the list comes back empty. Sending her to another screen to
-     add it would cost her the packet she was typing, so the door is here, in the
-     picker, with what she searched for already in the name field and a way back
-     if she changes her mind. */
-  const origPicker = Garden.cropPicker;
-  Garden.cropPicker = function(title, onPick, bed){
-    origPicker.call(Garden, title, onPick, bed);
-    const list = $("#cp-list");
-    if(!list) return;
-    list.insertAdjacentHTML("afterend",
-      '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">' +
-      '<button class="btn ghost block" id="cp-own">＋ Not here? Add your own crop</button>' +
-      '<div class="tiny muted center" style="margin-top:6px">A regional green, a herb, whatever came back from the seed swap. It behaves like any other crop — the figures are just yours rather than an extension service\'s.</div></div>');
-    const btn = $("#cp-own");
-    if(!btn) return;
-    btn.onclick = () => {
-      const q = $("#cp-q");
-      UserCrops.open(null, {
-        name: q ? String(q.value || "").trim() : "",
-        onDone: slug => onPick(slug),
-        onBack: () => Garden.cropPicker(title, onPick, bed)
-      });
-    };
   };
 
   /* a way in from the crop library */
@@ -15236,6 +15272,28 @@ Assist.providerName = () => Assist.prov().n;
    the buttons never rendered. Everything now goes through here
    and follows whichever provider is actually connected.
    ============================================================ */
+/* ---- Gemini 3 is not Gemini 2.5, and the difference is not cosmetic ----
+
+   A Gemini 3 model reasons before it answers, at `thinkingLevel: "high"`
+   unless told otherwise, and those thinking tokens come out of the SAME
+   maxOutputTokens budget as the answer itself. Ask for 900 and the model
+   can spend every one of them thinking and hand back a candidate with no
+   parts at all — which reached the gardener as "could not read the packet"
+   over a photograph that was perfectly legible. Flash cannot turn thinking
+   off entirely, so the lever is "low", plus room to work in.
+
+   Google also asks specifically for temperature 1.0 on Gemini 3: below it
+   the model can loop, which is one more way to burn an output budget. The
+   hardcoded 0.1 was right for 2.5 and wrong for 3.
+
+   https://ai.google.dev/gemini-api/docs/generate-content/gemini-3          */
+function isGemini3(){ return /^(models\/)?gemini-3/.test(Assist.modelName()); }
+function geminiGen(max){
+  const gen = { maxOutputTokens: max, temperature: isGemini3() ? 1 : 0.1 };
+  if(isGemini3()) gen.thinkingConfig = { thinkingLevel: "low" };
+  return gen;
+}
+
 const Vision = {
   ready(){ return !!Assist.apiKey(); },
   who(){ return Assist.prov().n; },
@@ -15280,18 +15338,32 @@ const Vision = {
       return (j.content || []).map(c => c.text || "").join("").trim();
     }
 
-    const gen = { temperature: 0.1, maxOutputTokens: max };
+    const model = Assist.modelName();
+    const g3 = isGemini3();
+    const gen = geminiGen(max);
     if(opts.json) gen.responseMimeType = "application/json";
-    const r = await fetch(GEM_URL + Assist.modelName() + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
+
+    const post = cfg => fetch(GEM_URL + model + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
       method:"POST", headers:{ "content-type":"application/json" },
       body: JSON.stringify({
         contents:[{ role:"user", parts:[
           { inline_data:{ mime_type: mime, data: ph.data } },
           { text: prompt }
         ]}],
-        generationConfig: gen
+        generationConfig: cfg
       })
     });
+
+    let r = await post(gen);
+    /* An endpoint that has never heard of thinkingLevel rejects the whole
+       request rather than ignoring the field. Losing the packet reader over
+       a tuning parameter would be a poor trade, so drop the extras and ask
+       again the old way. */
+    if(!r.ok && r.status === 400 && g3){
+      const bare = { maxOutputTokens: max, temperature: 0.1 };
+      if(opts.json) bare.responseMimeType = "application/json";
+      r = await post(bare);
+    }
     if(!r.ok){ const b = await r.text().catch(() => ""); throw new Error("Gemini " + r.status + " " + b.slice(0, 160)); }
     const j = await r.json();
     const cand = (j.candidates || [])[0];
@@ -15308,14 +15380,40 @@ const Vision = {
     return out;
   },
 
-  /* same, but insists on a JSON object and hands it back parsed */
+  /* same, but insists on a JSON object and hands it back parsed.
+
+     Two bugs lived here. The first was `/\{[\s\S]*\}/` — first brace to LAST
+     brace, greedy, so a model that said anything after its JSON (a fence, a
+     "hope that helps", a citation) produced a match that would not parse, and
+     a legible packet came back as "could not make sense of it". firstJsonObject
+     was written for exactly that and this call site never adopted it.
+
+     The second was a 900-token default shared with a model that thinks out of
+     the same budget. The default is now the survey's, and running out of room
+     is retried with more of it rather than reported as a bad photograph —
+     because it is this app asking for too little, not her holding the camera
+     wrong. */
   async json(photo, prompt, opts){
     opts = opts || {};
-    const txt = await Vision.ask(photo, prompt, { json:true, maxTokens: opts.maxTokens || 900 });
-    const m = txt.match(/\{[\s\S]*\}/);
-    if(!m) throw new Error(opts.what === "survey" ? "no-json-survey" : "no-json");
-    try{ return JSON.parse(m[0]); }
-    catch(e){ throw new Error(opts.what === "survey" ? "no-json-survey" : "no-json"); }
+    const budget = opts.maxTokens || 2600;
+    let txt;
+    try{
+      txt = await Vision.ask(photo, prompt, { json:true, maxTokens: budget });
+    }catch(e){
+      if(String(e && e.message || "") === "truncated" && !opts._retried)
+        return Vision.json(photo, prompt,
+          Object.assign({}, opts, { maxTokens: Math.min(budget * 2, 8000), _retried: true }));
+      throw e;
+    }
+    const fail = () => {
+      const err = new Error(opts.what === "survey" ? "no-json-survey" : "no-json");
+      err.raw = txt;                 /* so the screen can show what actually came back */
+      return err;
+    };
+    const raw = firstJsonObject(txt);
+    if(!raw) throw fail();
+    try{ return JSON.parse(raw); }
+    catch(e){ throw fail(); }
   },
 
   /* plain-language failures — a gardener should never see a status code alone */
@@ -15431,15 +15529,23 @@ const Ask = {
     }
 
     const body = { contents:[{ role:"user", parts:[{ text: prompt }] }],
-                   generationConfig:{ temperature: 0.1, maxOutputTokens: max } };
+                   generationConfig: geminiGen(max) };
     /* google_search and responseMimeType:"application/json" are mutually
        exclusive on Gemini — asking for both is a 400. Search wins, and the
        object gets dug out of the prose by firstJsonObject. */
     if(search) body.tools = [{ google_search:{} }];
     else if(opts.json) body.generationConfig.responseMimeType = "application/json";
-    const r = await fetch(GEM_URL + Assist.modelName() + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
+    const send = () => fetch(GEM_URL + Assist.modelName() + ":generateContent?key=" + encodeURIComponent(Assist.apiKey()), {
       method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify(body)
     });
+    let r = await send();
+    /* an endpoint that has never heard of thinkingLevel rejects the whole
+       request rather than ignoring the field — ask again the old way */
+    if(!r.ok && r.status === 400 && body.generationConfig.thinkingConfig){
+      delete body.generationConfig.thinkingConfig;
+      body.generationConfig.temperature = 0.1;
+      r = await send();
+    }
     /* the body carries Google's actual complaint; throwing "HTTP 400" alone
        is what made this feature impossible to diagnose from a phone */
     if(!r.ok){ const b = await r.text().catch(() => ""); throw new Error("Gemini " + r.status + " " + b.slice(0, 160)); }
@@ -15450,7 +15556,15 @@ const Ask = {
       throw new Error(blocked ? "The service refused that question (" + blocked + ")." : "The service returned nothing.");
     }
     const gm = cand.groundingMetadata || {};
-    return { text: (((cand.content || {}).parts) || []).map(p => p.text || "").join("").trim(),
+    const out = (((cand.content || {}).parts) || []).map(p => p.text || "").join("").trim();
+    /* same thinking-budget trap as the packet reader: an empty answer with
+       MAX_TOKENS is this app asking for too little room, not a bad question */
+    if(!out && cand.finishReason === "MAX_TOKENS"){
+      if(opts._retried) throw new Error("truncated");
+      return Ask.text(prompt, Object.assign({}, opts,
+        { maxTokens: Math.min(max * 3, 8000), _retried: true }));
+    }
+    return { text: out,
              sources: (gm.groundingChunks || []).map(g => (g.web || {}).title).filter(Boolean).slice(0, 3) };
   },
 
@@ -16070,7 +16184,7 @@ const Coach = {
 /* ============================================================
    BUILD / INSTALL / SELF-UPDATE
    ============================================================ */
-const BUILD = "2026-08-13.1";
+const BUILD = "2026-08-13.2";
 
 const Updater = {
   prompt: null, installed: false,

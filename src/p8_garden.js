@@ -241,7 +241,15 @@ const Garden = {
     }, b);
   },
 
-  cropPicker(title, onPick, bed){
+  /* opts.onCancel — what to do if she leaves without choosing anything.
+     Without it, dismissing the picker dismissed the sheet, and the sheet
+     was the half-filled seed packet behind it: photo, brand, packed year,
+     all gone, with no warning and nothing to undo. A picker is a detour,
+     not an exit. */
+  cropPicker(title, onPick, bed, opts){
+    opts = opts || {};
+    let chosen = false;
+    const choose = id => { chosen = true; onPick(id); };
     const stock = {}; DB.all("seeds").forEach(s => { if(s.crop_id) stock[s.crop_id] = (stock[s.crop_id] || 0) + 1; });
     const recs = Recommend.now({ bedId: bed ? bed.id : null }).slice(0, 30);
     const recIds = recs.map(r => r.crop.id);
@@ -252,7 +260,13 @@ const Garden = {
       '<button class="chip" data-f="seed">I have seed</button>' +
       '<button class="chip" data-f="comp">Good companions</button></div>';
     h += '<div id="cp-list"></div>';
-    openSheet(title, h);
+    /* the door out, for a crop the app has never heard of */
+    h += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">' +
+      '<button class="btn ghost block" id="cp-own">＋ Not here? Add your own crop</button>' +
+      '<div class="tiny muted center" style="margin-top:6px">A regional green, a herb, whatever came back from the seed swap.</div></div>';
+    if(opts.onCancel)
+      h += '<button class="btn ghost block sm" id="cp-cancel" style="margin-top:10px">Not now — go back</button>';
+    openSheet(title, h, () => { if(!chosen && opts.onCancel) opts.onCancel(); });
 
     const compIds = bed ? Recommend.forBed(bed.id).map(x => x.id) : [];
     let filter = "all", q = "";
@@ -287,8 +301,21 @@ const Garden = {
       });
       out += '</div>';
       $("#cp-list").innerHTML = out;
-      $$("#cp-list .item").forEach(el => el.onclick = () => onPick(el.dataset.id));
+      $$("#cp-list .item").forEach(el => el.onclick = () => choose(el.dataset.id));
     }
+    const own = $("#cp-own");
+    if(own) own.onclick = () => {
+      chosen = true;                       /* leaving for the editor, not abandoning */
+      const typed = $("#cp-q");             /* q is lowercased for matching; her capitals are not */
+      UserCrops.open(null, {
+        name: typed ? String(typed.value || "").trim() : "",
+        onDone: id => choose(id),
+        onBack: () => Garden.cropPicker(title, onPick, bed, opts),
+        onCancel: opts.onCancel
+      });
+    };
+    const cx = $("#cp-cancel");
+    if(cx) cx.onclick = () => closeSheet();
     $("#cp-q").oninput = e => { q = e.target.value.toLowerCase().trim(); draw(); };
     $$("#sheet-body .chip[data-f]").forEach(el => el.onclick = () => {
       filter = el.dataset.f;
