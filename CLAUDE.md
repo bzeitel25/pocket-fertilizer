@@ -36,7 +36,7 @@ site ever 404s after a push, that setting is the first thing to check.
 
 ```bash
 node build.mjs                       # src/ -> docs/index.html
-node src/smoke.mjs docs/index.html   # 798 checks
+node src/smoke.mjs docs/index.html   # 844 checks
 node verify_camera.mjs docs/index.html # 26 checks on the camera -> AI -> form path
 ```
 
@@ -447,13 +447,66 @@ feeding events a moment before the wrapper recreated them. It now only prunes
 `frost|seed|exp|harv`. Any future wrapper adding auto events needs its own namespace and
 its own `keep`.
 
+## Named products, and whether any of it worked
+
+`p23c_products.js` (the catalogue, cost per unit of nitrogen, similarity, the label
+camera), `p24_trials.js` (outcomes and split trials), `p24b_trialui.js` (their screens).
+
+**A guaranteed analysis is a LABEL fact. An extension rate is a RESEARCH fact.** They are
+both true and they are not the same kind of thing, and the app must never let one borrow
+the other's authority. `PRODUCT_REF` is deliberately **not** merged into `SOURCES` — the
+smoke suite asserts that no manufacturer URL passes the `OFFICIAL` regex and that no
+product id turns up in `SOURCES`. Every entry carries `checked`, the date its label was
+read on the maker's own page, because formulations move: Jobe's Vegetable & Tomato has
+shipped as both 2-7-4 and 2-5-3, and a catalogue with no date on it goes quietly wrong.
+Each product's `url` must be on its own brand's domain; that is asserted too.
+
+**`Feed.shelf` is wrapped, not edited.** `p23_feed.js` stays purely extension material,
+and a build without `p23c` still works on the commodity ingredients alone. The wrapper
+also drops any catalogue entry she has already adopted, so nothing appears twice under
+two ids.
+
+**Cost per pound of actual nitrogen is the one recommendation the app can make with total
+confidence**, because it is arithmetic: `cost / bag_lbs / (N%/100)`. A 4 lb bag of 3-4-4
+holds 0.12 lb of nitrogen. It says nothing about which grows better tomatoes, and the UI
+says so.
+
+**Simple and Advanced change what is on screen, never what is computed.** The smoke suite
+asserts both modes produce an identical dose. Advanced adds percentages, the arithmetic,
+and `Products.blend` — a weighted average of shelf items, which is arithmetic and so is
+stated flatly. A blend containing a liquid returns `form:null` rather than pretending to
+be measurable in cups.
+
+**Outcomes is the easiest place in this project to lie, and it is built to make lying
+hard.** One gardener, no control, no randomisation, and every confounder there is. So:
+
+- comparisons are **within one crop only**, never across crops;
+- `OUTCOME_MIN` is 3, the same threshold `Maturity` already uses — nothing here is more
+  certain than that, so nothing here speaks sooner;
+- `Outcomes.confounds` names the differences that are actually present (different beds,
+  seasons, varieties) rather than waving at them, and `Outcomes.caveat` is unconditional
+  and points at the split trial. The suite asserts the caveat renders **above** the first
+  bar on screen;
+- **nothing here feeds back into any default.** `Feed.rate` is unaffected and tested to be.
+
+**A split trial is the only comparison allowed to use the word "result".** Same crop, same
+bed, same day, two products, arms interleaved down the bed so neither gets the sunny end.
+`Trials.can` **refuses** anything unfair — fewer than two plants, different sowing dates,
+no date at all — because a trial that looks like a trial but is not is worse than none.
+`Trials.MIN_EDGE` (15%) means a smaller margin is reported as "no difference you could act
+on", which is itself a useful finding: buy the cheaper one.
+
+**Everything here is local and stays local.** A shared library of other gardeners' results,
+with opt-in visibility, is the agreed **next** addition and is deliberately not wired in —
+keep it outside the app's inner workings when it lands, exactly as the outcome data is now.
+
 ## Testing — do not skip
 
 ```bash
 node src/smoke.mjs docs/index.html
 ```
 
-798 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
+844 checks against a headless DOM (jsdom, installed to `/tmp/chk`). It covers encryption
 round-trips, season maths, companion logic, grid spans, seed and maturity maths, the SQL guard,
 every screen and modal, assistant tool execution, and data-accuracy invariants. It has caught
 real bugs — an infinite retry loop, a data-truncating patch, stale-task rendering. Run it

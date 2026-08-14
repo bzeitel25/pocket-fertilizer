@@ -102,7 +102,10 @@ const REQUIRED = [
   ["const TrayUI",     "the tray screen"],
   ["const Groups",     "pots, planters and window boxes"],
   ["const Feed",       "feeding rates, doses and the schedule"],
-  ["const FeedUI",     "the feeding card, dose sheet and shelf"]
+  ["const FeedUI",     "the feeding card, dose sheet and shelf"],
+  ["const Products",   "the named plant foods and what nitrogen costs"],
+  ["const Outcomes",   "what happened when she used a thing"],
+  ["const Trials",     "split trials, the only fair comparison"]
 ];
 const lost = REQUIRED.filter(([marker]) => html.indexOf(marker) < 0);
 if (lost.length && process.argv.indexOf("--force") < 0) {

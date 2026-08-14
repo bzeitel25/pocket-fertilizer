@@ -56,7 +56,17 @@ const SCHEMA = {
      and so a product's cost can reach the recap. n/p/k are the label
      percentages — the bag is the source, and the app says so rather
      than dressing her own product up as sourced. */
-  amendments: ["id","name","n","p","k","form","organic","lbs_per_bag","cost","notes","created"],
+  /* ref_id points at a catalogue entry she picked rather than typed;
+     blend is a JSON list of parts by weight for anyone who mixes her
+     own. Both are optional — a product typed straight off a bag has
+     neither and is no less real for it. */
+  amendments: ["id","name","brand","ref_id","n","p","k","form","organic","omri","blend","lbs_per_bag","cost","notes","created"],
+  /* A split trial: same crop, same bed, same day, two products, two
+     halves. Two tables rather than a JSON blob for the same reason
+     trays are — the useful questions are asked across them, and the
+     .sqlite export should see the arms as rows. */
+  trials:     ["id","name","bed_id","crop_id","product_a","product_b","label_a","label_b","started","ended","status","notes","created"],
+  trialarms:  ["id","trial_id","arm","planting_id","created"],
   harvests:   ["id","date","planting_id","bed_id","crop_id","weight","unit","count","value","notes","created"],
   diagnoses:  ["id","date","planting_id","bed_id","crop_id","photo_id","symptoms","result","confidence","treatment","source","notes","created"],
   observations:["id","date","bed_id","ph","moisture","soil_temp","air_temp","rain_in","notes","created"],

@@ -43,7 +43,8 @@ const G = w.eval("({DB,CROPS,CONDITIONS,Season,Recommend,Garden,Seeds,Cal,Doctor
   "Geom,PlantArt,Canvas,CanvasDrag,Shape,Habit,HABIT_SRC,addDays,diffDays,crop,cropName,FAMILY," +
   "GARDEN_PLANTS,GARDEN_SRC,PLANT_ROLE,UserCrops,SCHEMA,companionsFor,CROP_ABSENT,CROP_ALIAS," +
   "Zoom,Undo,Sel,BedRecs,WaterGroups,Orient,Templates,CalSync,Share,Units,escU,Trays,TrayUI,Groups,MicroUI,EV,Ask,Vision,firstJsonObject," +
-  "Feed,FeedUI,FEED_SRC,FEED_RATES,FEED_PLAN,AMEND_REF,LB_PER_CUP,num,parseISO})");
+  "Feed,FeedUI,FEED_SRC,FEED_RATES,FEED_PLAN,AMEND_REF,LB_PER_CUP,num,parseISO," +
+  "Products,ProductUI,Outcomes,Trials,OutcomeUI,TrialUI,PRODUCT_REF,PRODUCT_BRANDS,PRODUCT_USE,OUTCOME_MIN})");
 for(const k of Object.keys(G)) w[k] = G[k];
 const origErr = console.error;
 const JSDOM_NOISE = /^Not implemented:/;
@@ -3787,6 +3788,279 @@ check("where two sources disagree, the app says so instead of picking quietly", 
 check("the shelf and the nitrogen figure are real columns", () =>
   Array.isArray(w.SCHEMA.amendments) && w.SCHEMA.amendments.indexOf("name") > 0 &&
   w.SCHEMA.journal.indexOf("n_lbs") > 0 && w.SCHEMA.journal.indexOf("amendment_id") > 0);
+
+/* ==========================================================================
+   NAMED PRODUCTS, WHAT NITROGEN COSTS, AND WHETHER IT WORKED
+
+   The load-bearing distinction in this whole block: a guaranteed analysis is
+   a LABEL fact and an extension rate is a RESEARCH fact. They are both true
+   and they are not the same kind of thing, and the app must never let one
+   borrow the other's authority.
+   ========================================================================== */
+
+check("every catalogue product carries a full analysis and a date it was read", () =>
+  w.PRODUCT_REF.every(p => Array.isArray(p.npk) && p.npk.length === 3 &&
+    p.npk.some(v => v > 0) && p.form && p.n &&
+    /^\d{4}-\d{2}-\d{2}$/.test(p.checked) && /^https:\/\//.test(p.url)));
+check("every catalogue product names a brand that exists", () =>
+  w.PRODUCT_REF.every(p => !!w.PRODUCT_BRANDS[p.brand]));
+check("a product's URL is on its own maker's domain", () =>
+  w.PRODUCT_REF.every(p => {
+    const host = new URL(p.url).host.replace(/^www\./, "");
+    const brandHost = new URL(w.PRODUCT_BRANDS[p.brand].url).host.replace(/^www\./, "");
+    return host === brandHost; }));
+/* the separation, asserted rather than assumed */
+check("a manufacturer label can never pass as an extension source", () =>
+  w.PRODUCT_REF.every(p => !OFFICIAL.test(p.url)));
+check("catalogue products are not smuggled into SOURCES", () =>
+  w.PRODUCT_REF.every(p => !w.SOURCES[p.id]) &&
+  Object.keys(w.SOURCES).every(k => !/espoma|jobes|drearth|scotts|neptune/.test(k)));
+check("every `uses` tag on a product is a real category", () =>
+  w.PRODUCT_REF.every(p => !p.uses || p.uses.every(u => !!w.PRODUCT_USE[u])));
+check("the catalogue is on the shelf the pickers actually read", () => {
+  const shelf = w.Feed.shelf();
+  return w.PRODUCT_REF.every(r => shelf.some(s => s.id === r.id)); });
+check("adopting a product does not leave it on the shelf twice", () => {
+  const a = w.Products.adopt("espoma-garden-tone");
+  const shelf = w.Feed.shelf();
+  const hits = shelf.filter(s => s.id === "espoma-garden-tone" || s.ref_id === "espoma-garden-tone" || s.id === a.id);
+  const ok2 = !!a && a.n === 3 && a.p === 4 && a.k === 4 && hits.length === 1;
+  w.DB.remove("amendments", a.id);
+  return ok2; });
+
+/* ---- what a pound of nitrogen costs: arithmetic, not opinion ---- */
+check("cost per pound of nitrogen is the plain arithmetic", () => {
+  /* a 4 lb bag of a 3-4-4 holds 0.12 lb of N; $12 for it is $100 a pound */
+  const v = w.Products.costPerLbN({ npk:[3,4,4], lbs_per_bag:4, cost:12 });
+  return Math.abs(v - 100) < 1e-9; });
+check("a bag with no price cannot be ranked and is not guessed at", () =>
+  w.Products.costPerLbN({ npk:[3,4,4], lbs_per_bag:4 }) === null &&
+  w.Products.costPerLbN({ npk:[3,4,4], cost:12 }) === null);
+check("the value table sorts cheapest nitrogen first and sets the unpriced aside", () => {
+  const a = w.DB.insert("amendments", { name:"Cheap N", n:12, p:0, k:0, form:"meal", lbs_per_bag:5, cost:15 });
+  const b = w.DB.insert("amendments", { name:"Dear N", n:3, p:4, k:4, form:"meal", lbs_per_bag:4, cost:18 });
+  const c = w.DB.insert("amendments", { name:"No price", n:5, p:3, k:3, form:"meal" });
+  const t = w.Products.valueTable();
+  const ok2 = t.priced.length >= 2 && t.priced[0].perLbN <= t.priced[1].perLbN &&
+              t.priced[0].n === "Cheap N" && t.unpriced.some(x => x.n === "No price");
+  [a,b,c].forEach(x => w.DB.remove("amendments", x.id));
+  return ok2; });
+
+/* ---- the phosphorus story, told with the products' own numbers ---- */
+check("phosphate-heavy blends are spotted by their own analysis", () =>
+  w.Products.pHeavy(w.Products.ref("espoma-garden-tone")) === true &&
+  w.Products.pHeavy(w.Products.ref("espoma-tomato-tone")) === true &&
+  w.Products.pHeavy(w.Products.ref("jobes-veg-tomato")) === true &&
+  w.Products.pHeavy(w.Products.ref("espoma-plant-tone")) === false);
+check("the phosphate warning quotes the bag rather than lecturing", () => {
+  const n = w.Products.pNote(w.Products.ref("jobes-veg-tomato"));
+  return /2-5-3/.test(n) && /more phosphate in the bag than nitrogen/.test(n); });
+
+/* ---- similarity is about what is IN it, never about outcomes ---- */
+check("similar products are matched on analysis, form and organic status", () => {
+  const sim = w.Products.similar(w.Products.ref("espoma-plant-tone"), 3);
+  return sim.length === 3 && sim.every(s => s.p.id !== "espoma-plant-tone") &&
+         sim[0].d <= sim[2].d; });
+check("the reason two products are alike never mentions results", () => {
+  const a = w.Products.ref("espoma-garden-tone"), b = w.Products.ref("espoma-tomato-tone");
+  const why = w.Products.whySimilar(a, b);
+  return /balance of N-P-K/.test(why) && !/yield|worked|better|result/i.test(why); });
+
+/* ---- picking for a crop: the maker's claim and the app's shape test ---- */
+check("a product the maker lists for this crop is marked as such", () => {
+  const list = w.Products.forCrop("tomato");
+  const tt = list.find(x => x.p.id === "espoma-tomato-tone");
+  const ht = list.find(x => x.p.id === "espoma-holly-tone");
+  return tt && tt.intended === true && ht && ht.intended === false; });
+check("the shape test prefers nitrogen over phosphate, as the sources do", () => {
+  const a = w.Products.forCrop("tomato").find(x => x.p.id === "espoma-plant-tone");
+  const b = w.Products.forCrop("tomato").find(x => x.p.id === "jobes-veg-tomato");
+  return a.why.indexOf("nitrogen-led") >= 0 && b.why.indexOf("more phosphate than nitrogen") >= 0; });
+check("there is always one answer for someone who just wants one", () =>
+  !!w.Products.pickFor("tomato") && !!w.Products.pickFor("lettuce"));
+
+/* ---- simple and advanced compute the same dose ---- */
+check("the mode is a preference and nothing else", () => {
+  const was = w.Products.mode;
+  const d1 = w.Feed.dose(0.2, w.Feed.product("bloodmeal"));
+  w.Products.mode = "advanced";
+  const d2 = w.Feed.dose(0.2, w.Feed.product("bloodmeal"));
+  const ok2 = w.Products.advanced === true && d1.lbs === d2.lbs;
+  w.Products.mode = "simple";
+  const ok3 = w.Products.advanced === false;
+  w.Products.mode = was;
+  return ok2 && ok3; });
+
+/* ---- mixing your own ---- */
+check("a blend's analysis is the weighted average of what went in", () => {
+  const a = w.DB.insert("amendments", { name:"N only", n:12, p:0, k:0, form:"meal" });
+  const b = w.DB.insert("amendments", { name:"P only", n:0, p:15, k:0, form:"meal" });
+  const r = w.Products.blend([{ id:a.id, parts:2 }, { id:b.id, parts:1 }]);
+  /* 2 parts 12-0-0 with 1 part 0-15-0 is 8-5-0 */
+  const ok2 = r && Math.abs(r.npk[0] - 8) < 0.01 && Math.abs(r.npk[1] - 5) < 0.01 &&
+              r.npk[2] === 0 && r.parts === 3 && r.form === "meal";
+  [a,b].forEach(x => w.DB.remove("amendments", x.id));
+  return ok2; });
+check("a blend containing a liquid refuses to claim a dry form", () => {
+  const a = w.DB.insert("amendments", { name:"Dry", n:12, p:0, k:0, form:"meal" });
+  const r = w.Products.blend([{ id:a.id, parts:1 }, { id:"fishemul", parts:1 }]);
+  w.DB.remove("amendments", a.id);
+  return r && r.form === null; });
+check("an empty blend is nothing, not a zero", () =>
+  w.Products.blend([]) === null && w.Products.blend([{ id:"nope", parts:2 }]) === null);
+
+/* ---- the label camera hands back coerced values, never raw model output ---- */
+check("the label prompt asks for the guaranteed analysis, not the marketing", () =>
+  /guaranteed analysis/i.test(w.Products.LABEL_PROMPT) &&
+  /Do not guess/.test(w.Products.LABEL_PROMPT));
+
+/* ==========================================================================
+   OUTCOMES — the easiest place in this project to lie
+   ========================================================================== */
+const ob = w.DB.insert("beds", { name:"Outcome bed", cols:4, rows:8, cell_in:12, sun_hours:8 });
+const op1 = w.DB.insert("plantings", { bed_id: ob.id, crop_id:"tomato", qty:1, status:"growing",
+  sown_on:"2026-05-01", px:12, py:12, rr:12, rc:14 });
+const op2 = w.DB.insert("plantings", { bed_id: ob.id, crop_id:"tomato", qty:1, status:"growing",
+  sown_on:"2026-05-01", px:40, py:12, rr:12, rc:14 });
+
+check("a feeding with no harvest behind it says nothing at all", () => {
+  w.Feed.log({ date:"2026-05-01", bed_id: ob.id, planting_id: op1.id, crop_id:"tomato",
+    product:"Garden-tone", n_lbs:0.01 });
+  return w.Outcomes.rows("tomato").length === 0; });
+check("a feeding joins to what that plant went on to yield", () => {
+  w.DB.insert("harvests", { date:"2026-08-01", planting_id: op1.id, bed_id: ob.id,
+    crop_id:"tomato", weight:6, unit:"lbs" });
+  const r = w.Outcomes.rows("tomato");
+  return r.length === 1 && r[0].product === "Garden-tone" && Math.abs(r[0].lbs - 6) < 1e-9; });
+check("outcomes are grouped inside one crop, never across crops", () => {
+  const lp = w.DB.insert("plantings", { bed_id: ob.id, crop_id:"lettuce", qty:1, status:"growing",
+    sown_on:"2026-05-01", px:60, py:12, rr:4, rc:6 });
+  w.Feed.log({ date:"2026-05-01", bed_id: ob.id, planting_id: lp.id, crop_id:"lettuce",
+    product:"Garden-tone", n_lbs:0.002 });
+  w.DB.insert("harvests", { date:"2026-07-01", planting_id: lp.id, bed_id: ob.id,
+    crop_id:"lettuce", weight:1, unit:"lbs" });
+  const t = w.Outcomes.byProduct("tomato").find(x => x.product === "Garden-tone");
+  const l = w.Outcomes.byProduct("lettuce").find(x => x.product === "Garden-tone");
+  const ok2 = t.n === 1 && l.n === 1 && Math.abs(t.lbs - 6) < 1e-9 && Math.abs(l.lbs - 1) < 1e-9;
+  w.DB.bulkRemove("harvests", h => h.planting_id === lp.id);
+  w.DB.bulkRemove("journal", j => j.planting_id === lp.id);
+  w.DB.remove("plantings", lp.id);
+  return ok2; });
+check("a thin record is flagged as thin rather than presented as a finding", () => {
+  const g = w.Outcomes.byProduct("tomato")[0];
+  return g.n < w.OUTCOME_MIN && g.enough === false; });
+check("the threshold is no more confident than the one Maturity already uses", () =>
+  w.OUTCOME_MIN === 3);
+check("the caveat is unconditional and points at the split trial", () => {
+  const c = w.Outcomes.caveat(w.Outcomes.byProduct("tomato"));
+  return /not a test of what works/.test(c) && /split trial/.test(c) &&
+         /cannot separate the fertiliser from the weather/.test(c); });
+check("confounds are named specifically, not waved at", () => {
+  w.Feed.log({ date:"2025-05-01", bed_id: ob.id, planting_id: op2.id, crop_id:"tomato",
+    product:"Tomato-tone", n_lbs:0.01 });
+  w.DB.insert("harvests", { date:"2025-08-01", planting_id: op2.id, bed_id: ob.id,
+    crop_id:"tomato", weight:9, unit:"lbs" });
+  const list = w.Outcomes.byProduct("tomato");
+  const cf = w.Outcomes.confounds(list[0], list[1]);
+  return cf.some(s => /different seasons/.test(s)); });
+check("a clean comparison is allowed to say it is clean", () => {
+  const a = { bedN:1, yearN:1, varietyN:1, beds:{ x:1 }, years:{ "2026":1 }, varieties:{ v:1 } };
+  const b = { bedN:1, yearN:1, varietyN:1, beds:{ x:1 }, years:{ "2026":1 }, varieties:{ v:1 } };
+  return w.Outcomes.confounds(a, b).length === 0; });
+check("what happened in her garden never moves the published rates", () => {
+  const before = w.Feed.rate("tomato").n1000;
+  w.Outcomes.byProduct("tomato");
+  return w.Feed.rate("tomato").n1000 === before && before === 3; });
+
+/* ==========================================================================
+   SPLIT TRIALS — the only comparison allowed to use the word "result"
+   ========================================================================== */
+check("a trial refuses a bed that cannot host a fair one", () => {
+  const one = w.Trials.can(ob.id, "corn");
+  return one.ok === false && /at least two/.test(one.why); });
+check("a trial refuses plants that went in on different days", () => {
+  const late = w.DB.insert("plantings", { bed_id: ob.id, crop_id:"pepper", qty:1, status:"growing",
+    sown_on:"2026-05-01", px:12, py:60, rr:9, rc:11 });
+  const later = w.DB.insert("plantings", { bed_id: ob.id, crop_id:"pepper", qty:1, status:"growing",
+    sown_on:"2026-06-01", px:30, py:60, rr:9, rc:11 });
+  const c = w.Trials.can(ob.id, "pepper");
+  const ok2 = c.ok === false && /head start/.test(c.why);
+  w.DB.remove("plantings", late.id); w.DB.remove("plantings", later.id);
+  return ok2; });
+check("a trial refuses plants with no date at all", () => {
+  const a = w.DB.insert("plantings", { bed_id: ob.id, crop_id:"kale", qty:1, status:"growing", px:12, py:60, rr:9, rc:11 });
+  const b = w.DB.insert("plantings", { bed_id: ob.id, crop_id:"kale", qty:1, status:"growing", px:30, py:60, rr:9, rc:11 });
+  const c = w.Trials.can(ob.id, "kale");
+  w.DB.remove("plantings", a.id); w.DB.remove("plantings", b.id);
+  return c.ok === false && /sown or planted date/.test(c.why); });
+
+let theTrial = null;
+check("a trial interleaves the arms instead of giving one the sunny end", () => {
+  theTrial = w.Trials.create(ob.id, "tomato", "espoma-garden-tone", "espoma-tomato-tone", "Garden-tone", "Tomato-tone");
+  const arms = w.DB.all("trialarms").filter(a => a.trial_id === theTrial.id);
+  return arms.length === 2 && arms[0].arm === "a" && arms[1].arm === "b"; });
+check("a trial with nothing picked yet says so rather than declaring a winner", () => {
+  const t2 = w.Trials.create(ob.id, "tomato", "bloodmeal", "cottonseed", "Blood meal", "Cottonseed");
+  /* the same two plantings, so clear their harvests for this one check */
+  const saved = w.DB.all("harvests").filter(h => h.planting_id === op1.id || h.planting_id === op2.id);
+  w.DB.bulkRemove("harvests", h => h.planting_id === op1.id || h.planting_id === op2.id);
+  const r = w.Trials.result(t2.id);
+  saved.forEach(h => w.DB.insert("harvests", w.DB.body("harvests", h)));
+  w.DB.bulkRemove("trialarms", a => a.trial_id === t2.id); w.DB.remove("trials", t2.id);
+  return r.state === "waiting"; });
+check("a margin inside the noise is reported as no difference, not a narrow win", () => {
+  const r = w.Trials.result(theTrial.id);
+  /* 6 lbs against 9 on equal ground is a 50% edge, so this one is real;
+     the tie branch is exercised by making them equal */
+  const h = w.DB.all("harvests").find(x => x.planting_id === op2.id);
+  const was = h.weight;
+  w.DB.update("harvests", h.id, { weight: 6.3 });          /* 5% apart */
+  const tie = w.Trials.result(theTrial.id);
+  w.DB.update("harvests", h.id, { weight: was });
+  return r.state === "edge" && tie.state === "tie" && tie.edge < w.Trials.MIN_EDGE; });
+check("a real margin names the winning half and by how much", () => {
+  const r = w.Trials.result(theTrial.id);
+  return r.state === "edge" && r.winnerLabel === "Tomato-tone" && r.edge > 0.4; });
+check("the trial note says what is held still and what is not", () =>
+  /same bed on the same day/.test(w.Trials.NOTE) && /one bed in one year/.test(w.Trials.NOTE));
+check("a trial can be closed and stops counting as running", () => {
+  const before = w.Trials.running().length;
+  w.Trials.close(theTrial.id);
+  return w.Trials.running().length === before - 1 &&
+         w.DB.find("trials", theTrial.id).status === "done"; });
+check("a planting knows which arm it is in", () => {
+  const a = w.Trials.armFor(op1.id);
+  return !!a && a.arm === "a" && a.trial.id === theTrial.id; });
+
+/* ---- the database sees all of it ---- */
+check("trials, arms and the fuller shelf are real tables and columns", () =>
+  Array.isArray(w.SCHEMA.trials) && Array.isArray(w.SCHEMA.trialarms) &&
+  w.SCHEMA.trialarms.indexOf("arm") > 0 &&
+  w.SCHEMA.amendments.indexOf("ref_id") > 0 && w.SCHEMA.amendments.indexOf("blend") > 0);
+
+/* ---- the screens ---- */
+check("the results screen leads with the caveat, above any number", () => {
+  w.OutcomeUI.open("tomato");
+  const h = w.document.getElementById("sheet-body").innerHTML;
+  w.closeSheet();
+  return h.indexOf("not a test of what works") >= 0 &&
+         h.indexOf("not a test of what works") < h.indexOf("bar-fill"); });
+check("the product sheet shows the label date and says a label is not research", () => {
+  w.ProductUI.detail("espoma-tomato-tone", "tomato");
+  const h = w.document.getElementById("sheet-body").innerHTML;
+  w.closeSheet();
+  return /This is a label, not an extension source/.test(h) && /espoma\.com/.test(h); });
+check("the picker explains whose claim is whose", () => {
+  w.ProductUI.pick("tomato");
+  const h = w.document.getElementById("sheet-body").innerHTML;
+  w.closeSheet();
+  return /maker's claim off the label/.test(h) && /this app's/.test(h); });
+
+w.DB.bulkRemove("trialarms", a => a.trial_id === theTrial.id);
+w.DB.remove("trials", theTrial.id);
+w.DB.bulkRemove("harvests", h => h.bed_id === ob.id);
+w.DB.bulkRemove("journal", j => j.bed_id === ob.id);
+w.DB.remove("plantings", op1.id); w.DB.remove("plantings", op2.id); w.DB.remove("beds", ob.id);
 
 w.DB.remove("plantings", fp.id); w.DB.remove("plantings", fbean.id); w.DB.remove("plantings", fcar.id);
 w.DB.remove("beds", fb.id); w.Cal.rebuild();

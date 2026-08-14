@@ -275,18 +275,30 @@ const FeedUI = {
       h += '<div class="card"><div class="empty sm"><span class="e">🪴</span><div class="b">Nothing on the shelf yet</div>' +
         '<div class="tiny">Until you add something, doses are worked out in the reference products the extension services publish.</div></div></div>';
     }
-    h += '<button class="btn block" style="margin-top:12px" onclick="FeedUI.editProduct()">＋ Add a product</button>';
+    h += '<div class="grid2" style="margin-top:12px">' +
+      '<button class="btn" onclick="ProductUI.pick()">＋ Pick a product</button>' +
+      '<button class="btn ghost" onclick="FeedUI.editProduct()">Type one in</button></div>';
+    if(mine.length) h += '<button class="btn ghost block sm" style="margin-top:8px" onclick="ProductUI.value()">💵 What a pound of nitrogen costs you</button>';
     openSheet("My shelf", h);
   },
 
-  editProduct(id){
+  /* `pre` is a label read off a photograph: the fields it filled are
+     marked so she can see what came from the camera and what she
+     typed, the same convention the seed packet reader uses. */
+  editProduct(id, pre){
     const a = id ? DB.find("amendments", id) : null;
-    let h = '<div class="field"><label class="f">Name, as it says on the bag</label>' +
-      '<input type="text" id="am-name" value="' + esc(a ? a.name : "") + '" placeholder="Espoma Garden-tone"></div>';
+    const v = k => pre && pre[k] !== null && pre[k] !== undefined ? pre[k] : (a ? a[k] : "");
+    const ai = k => (pre && pre[k] !== null && pre[k] !== undefined) ? ' class="ai-filled"' : '';
+    let h = '';
+    if(pre) h += '<div class="note i">📷 Read off the label. Check every number against the bag before saving — anything wrong here is wrong in every dose afterwards.</div>';
+    h += '<div class="field"><label class="f">Name, as it says on the bag</label>' +
+      '<input type="text" id="am-name"' + ai("name") + ' value="' + esc(pre && pre.name ? pre.name : (a ? a.name : "")) + '" placeholder="Espoma Garden-tone"></div>';
+    h += '<div class="field"><label class="f">Brand</label>' +
+      '<input type="text" id="am-brand"' + ai("brand") + ' value="' + esc(pre && pre.brand ? pre.brand : (a ? a.brand || "" : "")) + '" placeholder="Espoma"></div>';
     h += '<div class="grid3" style="margin-top:12px">' +
-      '<div><label class="f">N %</label><input type="number" step="0.1" id="am-n" value="' + esc(a ? a.n : "") + '" placeholder="3"></div>' +
-      '<div><label class="f">P %</label><input type="number" step="0.1" id="am-p" value="' + esc(a ? a.p : "") + '" placeholder="4"></div>' +
-      '<div><label class="f">K %</label><input type="number" step="0.1" id="am-k" value="' + esc(a ? a.k : "") + '" placeholder="4"></div></div>';
+      '<div><label class="f">N %</label><input type="number" step="0.1" id="am-n"' + ai("n") + ' value="' + esc(v("n")) + '" placeholder="3"></div>' +
+      '<div><label class="f">P %</label><input type="number" step="0.1" id="am-p"' + ai("p") + ' value="' + esc(v("p")) + '" placeholder="4"></div>' +
+      '<div><label class="f">K %</label><input type="number" step="0.1" id="am-k"' + ai("k") + ' value="' + esc(v("k")) + '" placeholder="4"></div></div>';
     h += '<div class="note i" style="margin-top:8px">The three numbers on the front of the bag, in that order. A 3-4-4 is 3% nitrogen, 4% phosphate, 4% potash.</div>';
     h += '<div class="field"><label class="f">What is it like?</label><select id="am-form">' +
       ['meal','granular','liquid','bulk'].map(f => '<option value="' + f + '"' + (a && a.form === f ? " selected" : "") + '>' +
@@ -294,8 +306,10 @@ const FeedUI = {
         '</option>').join("") + '</select></div>';
     h += '<div class="tiny muted">This only decides how a weight becomes a cup measure: Maryland Extension weighs a cup of dry meal at 0.33 lb and a cup of granular at 0.5 lb. A liquid is never converted.</div>';
     h += '<div class="grid2" style="margin-top:12px">' +
-      '<div><label class="f">Bag weight (lbs)</label><input type="number" step="0.1" id="am-bag" value="' + esc(a ? a.lbs_per_bag : "") + '" placeholder="4"></div>' +
+      '<div><label class="f">Bag weight (lbs)</label><input type="number" step="0.1" id="am-bag"' + ai("lbs_per_bag") +
+        ' value="' + esc(pre && pre.lbs_per_bag ? pre.lbs_per_bag : (a ? a.lbs_per_bag : "")) + '" placeholder="4"></div>' +
       '<div><label class="f">Bag cost ($)</label><input type="number" step="0.01" id="am-cost" value="' + esc(a ? a.cost : "") + '" placeholder="14.99"></div></div>';
+    h += '<div class="tiny muted">Fill both and the app can tell you what a pound of actual nitrogen costs you in this — the only fair way to compare two bags.</div>';
     h += '<div class="field"><label class="f">Notes</label><textarea id="am-notes">' + esc(a ? a.notes || "" : "") + '</textarea></div>';
     h += '<button class="btn block" style="margin-top:14px" onclick="FeedUI.saveProduct(' + (a ? "'" + a.id + "'" : "null") + ')">Save</button>';
     if(a) h += '<button class="btn ghost danger block" style="margin-top:8px" onclick="DB.remove(\'amendments\',\'' + a.id + '\');FeedUI.shelf()">Remove from the shelf</button>';
@@ -306,11 +320,13 @@ const FeedUI = {
     const name = $("#am-name").value.trim();
     if(!name) return toast("Give it a name");
     const rec = {
-      name: name, n: num($("#am-n").value), p: num($("#am-p").value), k: num($("#am-k").value),
+      name: name, brand: $("#am-brand") ? $("#am-brand").value.trim() || null : null,
+      n: num($("#am-n").value), p: num($("#am-p").value), k: num($("#am-k").value),
       form: $("#am-form").value, organic: "0",
       lbs_per_bag: num($("#am-bag").value) || null, cost: num($("#am-cost").value) || null,
       notes: $("#am-notes").value.trim()
     };
+    if(!rec.n && !rec.p && !rec.k) return toast("It needs at least one number off the analysis");
     if(id) DB.update("amendments", id, rec); else DB.insert("amendments", rec);
     FeedUI.shelf(); toast("Saved");
   }

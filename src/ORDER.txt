@@ -39,6 +39,8 @@ p8d_maturity.js
 p12_library.js
 p5d_usercrops.js
 p23_feed.js
+p23c_products.js
+p24_trials.js
 p14_weather.js
 p8i_microlog.js
 p15_assistant.js
@@ -51,6 +53,7 @@ p17_tips.js
 p18_help.js
 p12b_settings.js
 p23b_feedui.js
+p24b_trialui.js
 p22b_unitsui.js
 p20_calsync.js
 p21_share.js

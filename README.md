@@ -98,6 +98,22 @@ Log what you actually put on and the app tracks nitrogen per bed for the season,
 
 **What it refuses to do is guess at phosphorus.** Most established beds are already saturated with it — compost carries phosphorus and it does not leach away, which is why Minnesota's garden soils run a median of 68 ppm against 26 ppm in farm fields, and why Oregon State's own table applies *zero* bonemeal above 60 ppm. So the app computes nitrogen, quotes the published rates for potassium and lime against the soil-test values they depend on, and tells you plainly that two-thirds of a balanced 10-10-10 is probably doing nothing but running into the creek. It also tells you when you may not need to feed at all: every 1% of soil organic matter releases roughly 0.4 lb of nitrogen per 1,000 sq ft, so a well-composted bed at 5% is already supplying the whole recommendation.
 
+### The bag in your shed
+Pick your plant food by name — Espoma's Plant-tone, Garden-tone and Tomato-tone, Jobe's Organics, Dr. Earth, Neptune's Harvest, Miracle-Gro — and the app knows what is in it and works the dose out for you. Every analysis was read off the maker's own page and carries the date it was checked, because formulations change. Add anything else off the bag, or photograph the guaranteed analysis panel and let the app read it.
+
+**Simple or Advanced.** Simple picks a bag by name and tells you how much to put down. Advanced shows the percentages and the arithmetic, and lets you blend your own from single ingredients — two parts blood meal to one part greensand, and the app computes what comes out. Both modes produce exactly the same dose; the mode only decides how many numbers are on screen.
+
+**What a pound of nitrogen actually costs you.** This is the number nobody works out in the aisle. A 4 lb bag of a 3-4-4 holds 0.12 lb of nitrogen; the same money spent on blood meal buys several times that. The app ranks everything on your shelf, and it is arithmetic rather than opinion — it says nothing about which grows better tomatoes, only what you are paying for the nutrient your crops run out of every year. It will also point out, with the bag's own numbers, that most "tomato" and "vegetable" blends carry more phosphate than nitrogen — the nutrient most established beds already have too much of.
+
+### What worked — carefully
+Log a feeding against a plant and a harvest from that same plant, and the app can show you what happened with each product, per crop, per square foot.
+
+It is very deliberate about what that means. One garden with no control plot cannot separate the fertiliser from the weather, the bed or the variety, so this is presented as **a record of what happened, never a test of what works**: sample sizes are always shown, nothing is ranked until a product has three records behind it, and the differences that are actually present between two products' records — different beds, different seasons, different varieties — are listed by name underneath. None of it changes what the app recommends. The feeding rates stay the published ones.
+
+**If you want an answer you can lean on, run a split trial.** Same crop, same bed, same day, two products, two halves, alternated down the bed so neither gets the sunny end. Everything that makes an ordinary comparison unreliable is held still by construction. The app refuses to set up a trial that would not be fair — plants that went in on different dates get turned away, because a head start is worth more than any fertiliser. And a margin under 15% is reported as *no difference you could act on*, which is a genuinely useful result: buy whichever is cheaper.
+
+All of it stays on your device.
+
 ### Grow calendar
 Builds itself. Every packet in the bank generates sow, transplant and fall-sowing dates anchored to your frost dates, plus projected first-harvest dates for anything planted and warnings as seed reaches its viability limit — and the feeding dates above sit in the same timeline. Month grid, colour-coded timeline, and your own tasks alongside.
 
